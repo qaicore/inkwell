@@ -41,15 +41,17 @@ Keys: Space plays and pauses, the arrow keys step one frame, and Ctrl+Z undoes.
 
 ### Labeling a clip (`/label`)
 
-With `npm run dev` running, open http://localhost:5174/label, open the clip and type its folder id (`side-step`, `walk`, …). Or go straight to `http://localhost:5174/label?clip=/samples/<file>.mp4&id=side-step`. The clip is converted the same way the app converts it, so frame numbers match SAM's. Three passes, switched with 1, 2 and 3:
+With `npm run dev` running, open http://localhost:5174/label and open the clip. Its folder id (`side-step`, `walk`, …) comes from the file name; change it in the Clip id box if that's wrong. Or go straight to `http://localhost:5174/label?clip=/samples/<file>.mp4&id=side-step`. The clip is converted the same way the app converts it, so frame numbers match SAM's. Three passes, switched with 1, 2 and 3:
 
 1. **Roots:** click the attach point. Only every 10th frame takes a click, and after each one the page jumps 10 frames on. Right-click or Delete clears a root.
 2. **Facing:** F (front), R (his right side toward the camera), B (back) or L (his left side), on every 6th frame. The page jumps 6 frames on after each key.
 3. **Still:** drag across the timeline's bottom lane where he holds still, or press S at the start and E at the end. Clicking a stretch removes it.
 
-`[` and `]` jump to the previous or next frame to mark. The arrow keys step one frame (Shift: 10), Space plays, and Ctrl+Z undoes. Unsaved marks survive a reload in the same browser.
+`[` and `]` jump to the previous or next frame to mark. The arrow keys step one frame (Shift: 10), Space plays, and Ctrl+Z undoes. Unsaved marks survive a reload in the same browser, kept per clip id and per take: marks never carry over to another clip or another id. **Start over** clears them for the open clip.
 
-**Save to fixtures/** writes `fixtures/<id>/truth.json` (SPEC §11) and, the first time, the converted `fixtures/<id>/clip.mp4`. It only saves clips listed in `fixtures/clips.json`, so add the clip's entry there first. Commit `truth.json` yourself with `[qai-approved]`. **Download truth.json** works without the dev server.
+**Save to fixtures/** writes `fixtures/<id>/truth.json` (SPEC §11). Labels only fit the take they were made on, so it saves them with that take's converted `clip.mp4`, plus `source.json`, which records the file it was converted from. If `fixtures/<id>/` already holds another take, it asks before replacing the clip and the labels together. It only saves clips whose `fixtures/clips.json` entry names `fixtures/<id>/clip.mp4` and notes consent; when there isn't one, it shows the line to add. Commit the files yourself, `truth.json` with `[qai-approved]`. **Download truth.json** works without the dev server.
+
+Saving works from this computer. To save from another device in phone mode, open the `Label:` link that `npm run dev:phone` prints in the terminal: it carries this run's token, and other devices on the Wi-Fi can't save without it.
 
 ### On your phone
 
@@ -71,7 +73,7 @@ This serves the app over HTTPS on your Wi-Fi at port 5175; Vite prints the addre
 - `src/track/standin.ts` is the dev-only stand-in for SAM 3.1. `tools/standin.py` and `tools/standin-server.ts` are its Python fallback for browsers without WebGL 2, and `tools/setup-standin.mjs` sets that up.
 - `src/export/export.ts` re-encodes the clip with the strokes drawn in.
 - `src/app/main.ts` is the page: drawing, scrubbing, playback, tracking and controls. `src/app/engine.ts` puts its strokes on the engine: torso space around each tracked root, then the whole clip animated at once.
-- `src/app/label.ts` and `label/index.html` are the `/label` page; `src/app/truth.ts` builds, checks and writes `truth.json`, and `tools/fixtures-server.ts` saves it into `fixtures/` (dev only).
+- `src/app/label.ts` and `label/index.html` are the `/label` page; `src/app/truth.ts` builds, checks and writes `truth.json`, and `src/app/take.ts` tells whether a saved `clip.mp4` is the take being labeled. `tools/fixtures-server.ts` saves them into `fixtures/` (dev only), and `tools/clips.ts` reads `fixtures/clips.json` with the same consent rule as R2.
 - `src/types/effect.ts` is the effect JSON (SPEC §7).
 - `vite.config.ts` runs the dev server and saves exports to `renders/`.
 - `functions/` is the Pages Function: `_lib/proxy.ts` is its logic (passcode, spend cap), `_lib/spend.ts` keeps the day's spend in a D1 database bound as `SPEND_DB`, `_lib/pricing.ts` has the Meta API prices, and `api/[[path]].ts` wires them to the real API.

@@ -5,9 +5,12 @@
 //   Still   drag across the timeline's bottom lane where he holds still
 // The clip is converted exactly as the app converts it, so frame N here is
 // frame N in the file SAM gets, and that file is saved alongside the labels.
+// Labels only fit the take they were made on, so the page checks which take
+// fixtures/<clip>/ holds (src/app/take.ts) before it loads or saves labels.
 import { CanvasSink } from 'mediabunny';
 import type { Facing } from '../types/effect.ts';
 import { FPS, frameTime, frameTimes, loadClip, type Clip } from '../video/clip.ts';
+import { compareTake, describeTake, type SavedClip, type Take } from './take.ts';
 import {
   CLIP_ID,
   FACING_EVERY,
@@ -21,6 +24,7 @@ import {
   setFacing,
   setRoot,
   stillAt,
+  truthWarnings,
   validateTruth,
   type Truth,
 } from './truth.ts';
@@ -37,6 +41,7 @@ const clipIdInput = $<HTMLInputElement>('clip-id');
 const loadInput = $<HTMLInputElement>('load');
 const statusText = $<HTMLElement>('status');
 const saveButton = $<HTMLButtonElement>('save');
+const startOverButton = $<HTMLButtonElement>('start-over');
 const downloadLink = $<HTMLAnchorElement>('download');
 const playButton = $<HTMLButtonElement>('play');
 const prevButton = $<HTMLButtonElement>('prev');
@@ -55,9 +60,14 @@ const HINTS: Record<Pass, string> = {
 };
 
 let clip: Clip | null = null;
+let take: Take | null = null; // which take the open clip is
 let frames: CanvasSink | null = null;
 let frame = 0; // the frame on screen
 let targetFrame = 0; // the frame asked for last
+// The id the labels on screen belong to. A new clip takes its id from its
+// file name, except one named before it was opened (?id=, or typed in).
+let currentId = '';
+let pendingId: string | null = null;
 let truth: Truth = emptyTruth('');
 let history: Truth[] = []; // for Ctrl+Z
 let dirty = false; // changed since the last save to fixtures/
@@ -81,22 +91,30 @@ async function openClip(file: Blob, name: string) {
   updateControls();
   try {
     const next = await loadClip(file, name, (p) => setStatus(`Converting to H.264 at 30 fps… ${Math.round(p * 100)}%`));
+    setStatus('Checking which take this is…');
+    const opened = await takeOf(file, name, next);
     clip?.input.dispose();
     clip = next;
+    take = opened;
     frames = new CanvasSink(clip.track, { poolSize: 2 });
     frameBuffer.width = clip.width;
     frameBuffer.height = clip.height;
     drop.hidden = true;
     view.hidden = false;
     timeline.hidden = false;
-    if (!CLIP_ID.test(clipIdInput.value)) clipIdInput.value = idFrom(name);
-    truth = emptyTruth(clipIdInput.value);
+    // A blank sheet under this clip's own id: labels never carry over from
+    // the clip that was open before.
+    currentId = pendingId && CLIP_ID.test(pendingId) ? pendingId : idFrom(name);
+    pendingId = null;
+    clipIdInput.value = currentId;
+    truth = emptyTruth(currentId);
     history = [];
     dirty = false;
+    updateDownload();
     layout();
     await seek(0);
-    setStatus(`${clip.frameCount} frames at ${clip.width}×${clip.height}.`);
-    await loadExisting(clipIdInput.value);
+    setStatus(`${clip.frameCount} frames at ${clip.width}×${clip.height}, labeled as "${currentId}" (change the id if that's wrong).`);
+    await loadExisting(currentId);
   } catch (err) {
     console.error(err);
     setStatus(`Couldn't open that clip: ${errorText(err)}`, true);
@@ -117,10 +135,42 @@ function idFrom(name: string) {
   );
 }
 
-// Picks up where he left off: unsaved marks kept in this browser first, then
-// the clip's truth.json in fixtures/, else a blank sheet.
+// The take: the opened file's hash (the same every time it's opened) and the
+// converted clip's (different every conversion).
+async function takeOf(source: Blob, name: string, converted: Clip): Promise<Take> {
+  return {
+    source: { name, bytes: source.size, sha256: await sha256(source) },
+    sha256: await sha256(converted.file),
+    frames: converted.frameCount,
+    width: converted.width,
+    height: converted.height,
+  };
+}
+
+async function sha256(blob: Blob) {
+  const digest = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+type FixtureState = { listed: boolean; problem: string; entry: string; truth: boolean; clip: SavedClip | null; error?: string };
+async function fixtureState(id: string): Promise<FixtureState> {
+  const state = (await (await fetch(`/__fixtures/${id}/`)).json()) as FixtureState;
+  if (state.error) throw new Error(state.error);
+  return state;
+}
+
+// What fixtures/<id>/clip.mp4 is, when it isn't the open take; '' when it is.
+function otherTake(saved: SavedClip): string {
+  const same = compareTake(take!, saved);
+  if (same === 'same') return '';
+  return same === 'different' ? `another take (${describeTake(saved.take)})` : "a clip this page can't match to the open one (it has no source.json)";
+}
+
+// Picks up where he left off on this take: unsaved marks kept in this
+// browser first, then the clip's truth.json in fixtures/ if that was made on
+// this take, else a blank sheet.
 async function loadExisting(id: string) {
-  if (!CLIP_ID.test(id)) return;
+  if (!CLIP_ID.test(id) || !take) return;
   const draft = readDraft(id);
   if (draft) {
     useTruth(draft, `Restored unsaved labels for ${id} from this browser.`);
@@ -128,23 +178,31 @@ async function loadExisting(id: string) {
     return;
   }
   try {
-    const status = (await (await fetch(`/__fixtures/${id}/`)).json()) as { truth?: boolean };
-    if (!status.truth) return;
+    const state = await fixtureState(id);
+    if (!state.truth) return;
+    const other = state.clip ? otherTake(state.clip) : '';
+    if (other) {
+      setStatus(`fixtures/${id}/truth.json was made on ${other}, so this is a blank sheet. Load labels brings them in anyway.`, true);
+      return;
+    }
     const parsed: unknown = await (await fetch(`/fixtures/${id}/truth.json`, { cache: 'no-store' })).json();
     const checked = validateTruth(parsed);
     if ('problems' in checked) setStatus(`fixtures/${id}/truth.json has problems: ${checked.problems.join('; ')}`, true);
-    else useTruth(checked.truth, `Loaded fixtures/${id}/truth.json.`);
+    else useTruth(checked.truth, `Loaded fixtures/${id}/truth.json${state.clip ? '' : " (there's no clip.mp4 saved with it)"}.`);
   } catch (err) {
     console.error(err);
   }
 }
 
 function useTruth(next: Truth, message: string) {
-  truth = { ...next, clip: clipIdInput.value };
+  truth = { ...next, clip: currentId };
   history = [];
   const last = Math.max(...truth.roots.map((r) => r.frame), ...truth.facing.map((f) => f.frame), ...truth.still.map((s) => s[1]), 0);
   const warning = clip && last >= clip.frameCount ? ` They go up to frame ${last} but this clip ends at ${clip.frameCount - 1}: is it the same clip?` : '';
-  setStatus(message + warning, warning !== '');
+  const offCadence = truthWarnings(truth);
+  const note = offCadence.length > 0 ? ` Note: ${offCadence.join('; ')}.` : '';
+  setStatus(message + warning + note, warning !== '');
+  updateDownload();
   paint();
 }
 
@@ -230,9 +288,11 @@ function setPass(next: Pass) {
 
 // ---- Saving ----------------------------------------------------------------
 
+// Saves the labels, and the clip they were made on when fixtures/<id>/ doesn't
+// already hold that take: labels and clip.mp4 are only ever saved as a pair.
 async function save() {
-  if (!clip || busy) return;
-  const id = clipIdInput.value;
+  if (!clip || !take || busy) return;
+  const id = currentId;
   if (!CLIP_ID.test(id)) {
     setStatus('Give the clip an id first, like side-step (lowercase words joined by hyphens).', true);
     clipIdInput.focus();
@@ -241,27 +301,36 @@ async function save() {
   busy = true;
   updateControls();
   try {
-    const status = (await (await fetch(`/__fixtures/${id}/`)).json()) as { listed: boolean; truth: boolean; clip: boolean; error?: string };
-    if (status.error) throw new Error(status.error);
-    if (!status.listed) {
-      setStatus(`${id} isn't in fixtures/clips.json yet: add its entry (who's in it, their consent), then save again. Download truth.json keeps the labels meanwhile.`, true);
+    const state = await fixtureState(id);
+    if (!state.listed) {
+      setStatus(`${state.problem}. Add its entry to fixtures/clips.json, like ${state.entry}, then save again. Download truth.json keeps the labels meanwhile.`, true);
       return;
     }
-    const overwrite = status.truth && confirm(`fixtures/${id}/truth.json already exists. Replace it with these labels?`);
-    if (status.truth && !overwrite) {
+    const other = state.clip ? otherTake(state.clip) : '';
+    if (other && !confirm(`fixtures/${id}/clip.mp4 is ${other}. These labels were made on the open clip (${describeTake(take)}) and only fit it. Replace clip.mp4 and truth.json together?`)) {
+      setStatus(`Not saved: these labels don't fit fixtures/${id}/clip.mp4.`);
+      return;
+    }
+    if (state.truth && !other && !confirm(`fixtures/${id}/truth.json already exists. Replace it with these labels?`)) {
       setStatus('Not saved.');
       return;
     }
-    await post(`/__fixtures/${id}/truth.json`, serializeTruth({ ...truth, clip: id }), overwrite);
-    let saved = `fixtures/${id}/truth.json`;
-    if (!status.clip) {
+    // The clip first: if the labels then fail to save, the draft keeps them
+    // and saving again finishes the pair.
+    const saved = [`fixtures/${id}/truth.json`];
+    if (!state.clip || other) {
       setStatus('Saving the converted clip…');
-      await post(`/__fixtures/${id}/clip.mp4`, clip.file, false);
-      saved += ` and clip.mp4 (the converted file these frames are from)`;
+      await post(`/__fixtures/${id}/clip.mp4`, clip.file, other !== '');
+      await post(`/__fixtures/${id}/source.json`, JSON.stringify(take), true);
+      saved.push('clip.mp4 (the converted file these frames are from)');
+    } else if (!state.clip.take) {
+      await post(`/__fixtures/${id}/source.json`, JSON.stringify(take), false); // same file: record where it came from
     }
+    const result = await post(`/__fixtures/${id}/truth.json`, serializeTruth({ ...truth, clip: id }), state.truth);
     dirty = false;
     clearDraft(id);
-    setStatus(`Saved ${saved}. ${summary()}. Commit truth.json yourself with [qai-approved].`);
+    const note = result.warnings && result.warnings.length > 0 ? ` Note: ${result.warnings.join('; ')}.` : '';
+    setStatus(`Saved ${saved.join(' and ')}. ${summary()}.${note} Commit them yourself, truth.json with [qai-approved].`);
   } catch (err) {
     console.error(err);
     setStatus(`Couldn't save: ${errorText(err)}. Download truth.json keeps the labels.`, true);
@@ -271,17 +340,34 @@ async function save() {
   }
 }
 
+// Saving from another device (phone mode) needs the run's token, which only
+// the /label link printed in the dev server's terminal carries.
+const saveToken = (() => {
+  const fromUrl = new URLSearchParams(location.search).get('token');
+  try {
+    if (fromUrl) sessionStorage.setItem('inkwell-label-token', fromUrl);
+    return fromUrl ?? sessionStorage.getItem('inkwell-label-token') ?? '';
+  } catch {
+    return fromUrl ?? '';
+  }
+})();
+
 async function post(url: string, body: BodyInit, overwrite: boolean) {
-  const response = await fetch(url, { method: 'POST', body, headers: overwrite ? { 'x-overwrite': '1' } : {} });
-  const result = (await response.json().catch(() => ({}))) as { error?: string };
+  const headers: Record<string, string> = {};
+  if (overwrite) headers['x-overwrite'] = '1';
+  if (saveToken) headers['x-inkwell-token'] = saveToken;
+  const response = await fetch(url, { method: 'POST', body, headers });
+  const result = (await response.json().catch(() => ({}))) as { error?: string; warnings?: string[] };
   if (!response.ok) throw new Error(result.error ?? `${response.status} ${response.statusText}`);
+  return result;
 }
 
-// Unsaved marks survive a reload in this browser, keyed by clip id.
-const draftKey = (id: string) => `inkwell-label:${id}`;
+// Unsaved marks survive a reload in this browser, kept per clip id and take,
+// so another take under the same id never picks them up.
+const draftKey = (id: string) => `inkwell-label:${id}:${take?.source.sha256.slice(0, 16) ?? 'none'}`;
 function writeDraft() {
   try {
-    if (CLIP_ID.test(clipIdInput.value)) localStorage.setItem(draftKey(clipIdInput.value), serializeTruth(truth));
+    if (CLIP_ID.test(currentId)) localStorage.setItem(draftKey(currentId), serializeTruth(truth));
   } catch {
     // private window or storage blocked: the page still works, just without the safety net
   }
@@ -306,7 +392,7 @@ function clearDraft(id: string) {
 
 function updateDownload() {
   URL.revokeObjectURL(downloadUrl);
-  downloadUrl = URL.createObjectURL(new Blob([serializeTruth({ ...truth, clip: clipIdInput.value })], { type: 'application/json' }));
+  downloadUrl = URL.createObjectURL(new Blob([serializeTruth({ ...truth, clip: currentId })], { type: 'application/json' }));
   downloadLink.href = downloadUrl;
 }
 
@@ -494,7 +580,7 @@ function summary() {
 
 function updateControls() {
   const ready = clip !== null && !busy;
-  for (const button of [saveButton, playButton, prevButton, nextButton]) button.disabled = !ready;
+  for (const button of [saveButton, startOverButton, playButton, prevButton, nextButton]) button.disabled = !ready;
   downloadLink.hidden = clip === null;
 }
 
@@ -597,17 +683,51 @@ playButton.addEventListener('click', () => (playing ? pause() : play()));
 prevButton.addEventListener('click', () => stepMark(-1));
 nextButton.addEventListener('click', () => stepMark(1));
 saveButton.addEventListener('click', save);
+startOverButton.addEventListener('click', () => {
+  if (!clip || busy) return;
+  if (!confirm(`Clear every mark for ${currentId} on this clip? Files already saved in fixtures/ aren't touched.`)) return;
+  clearDraft(currentId);
+  truth = emptyTruth(currentId);
+  history = [];
+  dirty = false;
+  updateDownload();
+  setStatus(`Started over: a blank sheet for ${currentId}.`);
+  paint();
+});
+// A new id is a new sheet: the marks stay with the id they were made under
+// (in this browser's drafts), and the new id's own labels load, if any.
 clipIdInput.addEventListener('change', async () => {
   const id = clipIdInput.value;
   if (!CLIP_ID.test(id)) {
     setStatus('Clip ids are lowercase words joined by hyphens, like side-step.', true);
+    clipIdInput.value = currentId;
     return;
   }
-  const empty = truth.roots.length + truth.facing.length + truth.still.length === 0;
-  truth = { ...truth, clip: id };
-  if (empty && clip) await loadExisting(id);
-  else writeDraft();
+  if (!clip) {
+    pendingId = id; // names the next clip opened
+    return;
+  }
+  if (id === currentId || busy) {
+    clipIdInput.value = currentId;
+    return;
+  }
+  const marks = truth.roots.length + truth.facing.length + truth.still.length;
+  const kept = marks > 0 && dirty ? ` The marks under ${currentId} stay in this browser: switch back to ${currentId} to get them.` : '';
+  currentId = id;
+  truth = emptyTruth(id);
+  history = [];
+  dirty = false;
+  updateDownload();
   paint();
+  setStatus(`Now labeling ${id}.${kept}`);
+  busy = true;
+  updateControls();
+  try {
+    await loadExisting(id);
+  } finally {
+    busy = false;
+    updateControls();
+  }
 });
 loadInput.addEventListener('change', async () => {
   const file = loadInput.files?.[0];
@@ -656,7 +776,8 @@ document.addEventListener('click', () => {
 // ?clip=<url> opens a clip on load and ?id=<clip id> names it, e.g.
 // /label?clip=/samples/side-step.mp4&id=side-step
 const params = new URLSearchParams(location.search);
-clipIdInput.value = params.get('id') ?? '';
+pendingId = params.get('id');
+clipIdInput.value = pendingId ?? '';
 setPass('roots');
 const clipUrl = params.get('clip');
 if (clipUrl) {
