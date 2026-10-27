@@ -1,17 +1,21 @@
 /// <reference types="node" />
 // P3 (SPEC §10, physics): 10,000 steps of seeded random anchor motion. No NaN; tip speed < 20 torso heights/s;
-// once the anchor stops, the strand is settled within 2 s.
+// once the anchor stops, the strand is settled within its limit: 6 s for a strand below stiffness 0.2, 2 s for
+// stiffness 0.2 and up. A rigid stroke counts as 0.2 and up, so 2 s.
+// Source of the two limits and the 0.1 strand, Qai's decision in his words: "P3: strands below stiffness 0.2 get
+// 6 s to settle, 0.2 and up keep 2 s, and P3 also tests a 0.1 strand." The SPEC §10 P3 row is his to update to match.
 //
 // Measured on src/physics/strand.ts itself, with SPEC §8.7's parameters read from docs/SPEC.md at runtime (gravity
 // on, bend limit on). The physics module's DEFAULT_PHYSICS must equal those values too, because the app runs on it.
 // Input is seeded and synthetic: a torso pose moving smoothly on a 1080 x 1920 frame (translation up to about
-// 5 torso heights/s, rotation up to about 2 rad/s, scale +-25%) for 10,000 steps, then held still for 5 s.
+// 5 torso heights/s, rotation up to about 2 rad/s, scale +-25%) for 10,000 steps, then held still for 10 s.
 //   - No NaN: every coordinate of every node is finite after every step.
 //   - Tip speed: |tip(step) - tip(step - 1)| / dt / that step's px per torso height, max over every step.
 //   - Settled (§10 definitions): the tip moves less than 0.5 px per drawing. Checked over every drawing-long
-//     window that starts 2 s or more after the stop, to the end of the 5 s hold, so it must settle and stay settled.
+//     window that starts at the run's own limit or later, to the end of the 10 s hold, so it must settle and stay
+//     settled: a 6 s run is then confirmed still for 4 s, a 2 s run for 8 s. Each run's limit is in the evidence.
 // Stricter readings, flagged for Qai:
-//   - "the strand" is every kind: strands at stiffness 0, 0.3 and 1, and a rigid stroke, each on 3 seeds;
+//   - "the strand" is every kind: strands at stiffness 0, 0.1, 0.3 and 1, and a rigid stroke, each on 3 seeds;
 //   - "per drawing" uses the longest drawing SPEC allows, 1/8 s (8 dps), and the windows slide one step at a time.
 import { afterAll, describe, expect, it } from 'vitest';
 import { Evidence } from '../helpers/evidence.ts';
@@ -22,22 +26,32 @@ type StrandModule = typeof import('../../src/physics/strand.ts');
 const ID = 'P3';
 const MOVING_STEPS = 10_000;
 const MAX_TIP_SPEED = 20; // torso heights per second
+// Settle limits (Qai's decision, quoted in the header): SETTLE_SOFT_S for a strand below SOFT_BELOW_STIFFNESS,
+// SETTLE_S for the rest (stiffness 0.2 and up, and every rigid stroke).
 const SETTLE_S = 2;
+const SETTLE_SOFT_S = 6;
+const SOFT_BELOW_STIFFNESS = 0.2;
 const SETTLED_PX = 0.5; // per drawing (§10 definitions)
 const SLOWEST_DPS = 8; // §7: drawingsPerSecond is 12 | 8; the longer drawing is the stricter window
-const HOLD_S = 5;
+const HOLD_S = 10; // the longest limit (6 s), then 4 s of confirmed stillness
+const SETTLE_CHECK = `settled within ${SETTLE_SOFT_S} s (strand below stiffness ${SOFT_BELOW_STIFFNESS}) or ${SETTLE_S} s (the rest) of the anchor stopping`;
 const ev = new Evidence(ID, [
   'modules load',
   'DEFAULT_PHYSICS matches SPEC §8.7',
   'no NaN',
   'tip speed (max over every step)',
-  'settled within 2 s of the anchor stopping',
+  SETTLE_CHECK,
 ]);
 afterAll(() => ev.write());
+
+/** Seconds after the stop by which this kind and stiffness must be settled. */
+const settleLimitS = (kind: 'strand' | 'rigid', stiffness: number): number =>
+  kind === 'strand' && stiffness < SOFT_BELOW_STIFFNESS ? SETTLE_SOFT_S : SETTLE_S;
 
 const SEEDS = [301, 302, 303];
 const CONFIGS: { kind: 'strand' | 'rigid'; stiffness: number }[] = [
   { kind: 'strand', stiffness: 0 },
+  { kind: 'strand', stiffness: 0.1 },
   { kind: 'strand', stiffness: 0.3 },
   { kind: 'strand', stiffness: 1 },
   { kind: 'rigid', stiffness: 1 },
@@ -49,7 +63,8 @@ interface Run {
   firstNonFiniteStep: number | null;
   maxTipSpeed: number;
   maxTipSpeedStep: number;
-  worstMoveAfter2s: number;
+  settleLimitS: number;
+  worstMoveAfterLimit: number;
   settledAtS: number | null;
 }
 
@@ -70,12 +85,13 @@ function simulate(strand: StrandModule, seed: number, kind: 'strand' | 'rigid', 
     firstNonFiniteStep: null,
     maxTipSpeed: 0,
     maxTipSpeedStep: 0,
-    worstMoveAfter2s: 0,
+    settleLimitS: settleLimitS(kind, stiffness),
+    worstMoveAfterLimit: 0,
     settledAtS: null,
   };
   const holdSteps = Math.round(HOLD_S / params.dt);
   const window = Math.round(1 / SLOWEST_DPS / params.dt);
-  const settleStep = Math.round(SETTLE_S / params.dt);
+  const settleStep = Math.round(run.settleLimitS / params.dt);
   const held: V2[] = []; // tip after each hold step; held[0] = tip at the stop
   let prevTip = [...(chain.points[last] as V2)] as V2;
   for (let s = 1; s <= MOVING_STEPS + holdSteps; s++) {
@@ -105,7 +121,7 @@ function simulate(strand: StrandModule, seed: number, kind: 'strand' | 'rigid', 
     const m = dist(held[i + window]!, held[i]!);
     moves.push(Number.isFinite(m) ? m : Infinity);
   }
-  for (let i = settleStep; i < moves.length; i++) run.worstMoveAfter2s = Math.max(run.worstMoveAfter2s, moves[i]!);
+  for (let i = settleStep; i < moves.length; i++) run.worstMoveAfterLimit = Math.max(run.worstMoveAfterLimit, moves[i]!);
   // Report when it actually settled: the first window after which every window stays under 0.5 px.
   let lastBad = -1;
   for (let i = 0; i < moves.length; i++) if (!(moves[i]! < SETTLED_PX)) lastBad = i;
@@ -114,7 +130,7 @@ function simulate(strand: StrandModule, seed: number, kind: 'strand' | 'rigid', 
 }
 
 describe('P3 10,000 steps of seeded random anchor motion', () => {
-  it('P3 no NaN, tip speed < 20 torso heights/s, and settled within 2 s once the anchor stops', async () => {
+  it('P3 no NaN, tip speed < 20 torso heights/s, and settled within 6 s (strand below stiffness 0.2) or 2 s once the anchor stops', async () => {
     const strand = await recorded(ev, 'modules load', 'src/physics/strand.ts exports createChain, stepChain, DEFAULT_PHYSICS', () =>
       need('src/physics/strand.ts', { createChain: 'function', stepChain: 'function', DEFAULT_PHYSICS: 'object' }, () => import('../../src/physics/strand.ts')),
     );
@@ -138,23 +154,27 @@ describe('P3 10,000 steps of seeded random anchor motion', () => {
     ev.record('tip speed (max over every step)', { torsoHeightsPerS: fastest.maxTipSpeed, worst: `${fastest.label}, step ${fastest.maxTipSpeedStep}` },
       `< ${MAX_TIP_SPEED} torso heights/s`, fastest.maxTipSpeed < MAX_TIP_SPEED);
 
-    const unsettled = runs.filter((r) => !(r.worstMoveAfter2s < SETTLED_PX));
-    const worstSettle = runs.reduce((a, b) => (b.worstMoveAfter2s > a.worstMoveAfter2s ? b : a));
+    const unsettled = runs.filter((r) => !(r.worstMoveAfterLimit < SETTLED_PX));
+    const worstSettle = runs.reduce((a, b) => (b.worstMoveAfterLimit > a.worstMoveAfterLimit ? b : a));
     ev.record(
-      'settled within 2 s of the anchor stopping',
+      SETTLE_CHECK,
       {
-        worstTipMovePerDrawingAfter2sPx: worstSettle.worstMoveAfter2s,
-        worst: worstSettle.label,
+        worstTipMovePerDrawingAfterLimitPx: worstSettle.worstMoveAfterLimit,
+        worst: `${worstSettle.label} (limit ${worstSettle.settleLimitS} s)`,
         settledAtS: Object.fromEntries(runs.map((r) => [r.label, r.settledAtS])),
+        perRun: Object.fromEntries(runs.map((r) => [r.label, { limitS: r.settleLimitS, settledAtS: r.settledAtS, worstTipMoveAfterLimitPx: r.worstMoveAfterLimit }])),
       },
-      `tip moves < ${SETTLED_PX} px per drawing (1/${SLOWEST_DPS} s) from ${SETTLE_S} s after the stop on`,
+      `tip moves < ${SETTLED_PX} px per drawing (1/${SLOWEST_DPS} s) from the run's limit after the stop to the end of the ${HOLD_S} s hold; ` +
+        `limit ${SETTLE_SOFT_S} s for a strand below stiffness ${SOFT_BELOW_STIFFNESS}, ${SETTLE_S} s for the rest (rigid included)`,
       unsettled.length === 0,
-      unsettled.length ? `not settled by ${SETTLE_S} s: ${unsettled.map((r) => `${r.label} (settled at ${r.settledAtS ?? `never in ${HOLD_S} s`})`).join('; ')}` : '',
+      unsettled.length
+        ? `not settled by its limit: ${unsettled.map((r) => `${r.label} (limit ${r.settleLimitS} s, settled at ${r.settledAtS ?? `never in ${HOLD_S} s`})`).join('; ')}`
+        : '',
     );
 
     expect(mismatched, `P3 DEFAULT_PHYSICS differs from SPEC §8.7 in ${mismatched.join(', ')}`).toEqual([]);
     expect(nonFinite.map((r) => r.label), 'P3 NaN or Infinity in the chain').toEqual([]);
     expect(fastest.maxTipSpeed, `P3 tip speed ${fastest.maxTipSpeed} torso heights/s (${fastest.label})`).toBeLessThan(MAX_TIP_SPEED);
-    expect(unsettled.map((r) => r.label), `P3 not settled within ${SETTLE_S} s of the stop`).toEqual([]);
+    expect(unsettled.map((r) => `${r.label} (limit ${r.settleLimitS} s)`), 'P3 not settled within its limit after the stop').toEqual([]);
   });
 });

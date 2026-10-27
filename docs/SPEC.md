@@ -498,7 +498,7 @@ Each criterion has one test file, `tests/<milestone>/<ID>.test.ts`, which also w
 |---|---|---|
 | P1 | Root distance from the anchor, at every step | < 0.5 px at 1080 wide |
 | P2 | Segment length error after the constraint passes, at every step | < 2% |
-| P3 | 10,000 steps of seeded random anchor motion | No NaN; tip speed < 20 torso heights/s; once the anchor stops, the strand is settled within 2 s |
+| P3 | 10,000 steps of seeded random anchor motion, on strands at stiffness 0, 0.1, 0.3 and 1 and on a rigid stroke | No NaN; tip speed < 20 torso heights/s; once the anchor stops, the strand is settled within 2 s at stiffness 0.2 and up (rigid included), and within 6 s below 0.2 |
 | P4 | Kinds and extremes | A rigid stroke matches its target within 0.5 px at every step. A strand at stiffness 0 with gravity settles with its tip below its root |
 | P5 | Determinism | Two runs give byte-identical point arrays and identical PNGs |
 
