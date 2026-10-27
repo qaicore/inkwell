@@ -21,6 +21,11 @@ Works now:
 
 Not built yet: SAM 3.1 itself, stroke planning (Muse Wonder) and physics. Strokes move stiffly with the body for now; the rope physics will bend them.
 
+Built for the API, not run yet (the key hasn't arrived):
+
+- `npm run probe` runs SAM 3.1 (`person`, `face`, one point on the back) and Muse Wonder's facing labels on `fixtures/probe/clip.mp4`, and writes `fixtures/probe/report.md` and `strip.png`. It costs money: it prints the cost and waits for a typed `yes`. For a 10 s clip that's at most $0.44, likely about $0.25.
+- `functions/` is the Cloudflare Pages Function the app will call: it holds the key, needs the passcode for uploads, and refuses calls past `DAILY_SPEND_CAP_USD` for the day.
+
 ## Run it
 
 ```bash
@@ -50,14 +55,27 @@ This serves the app over HTTPS on your Wi-Fi at port 5175; Vite prints the addre
 - `src/export.ts` re-encodes the clip with the strokes drawn in.
 - `src/main.ts` is the page: drawing, scrubbing, playback, tracking and controls.
 - `vite.config.ts` runs the dev server and saves exports to `renders/`.
+- `functions/` is the Pages Function: `_lib/proxy.ts` is its logic (passcode, spend cap), `_lib/pricing.ts` the Meta API prices, and `api/[[path]].ts` wires them to the real API.
+- `scripts/live/` holds the only scripts that make paid calls: `probe.mjs`, and `meta.mjs`, which every paid call goes through (key, spend caps, the typed `yes`). `scripts/probe/` is the probe's free part: decoding masks, the numbers, the report and the strip.
+- `scripts/verify.mjs`, `scripts/golden-accept.mjs`, `scripts/scan-secrets.mjs` and `scripts/tree-hash.mjs` are the checking pipeline (below).
 
 `samples/` and `renders/` are gitignored. Only clips you shot go in the demo.
 
+## Checks
+
+```bash
+npm run check:fast
+npm run verify
+node scripts/scan-secrets.mjs
+```
+
+`check:fast` typechecks and runs `tests/unit/` (it runs after every code edit). `verify` stamps the tree hash, then typechecks and runs the acceptance tests in `tests/M*/` up to the milestone in `verify/ACTIVE`, writing the evidence to `verify/out/`. `scan-secrets` looks for the values in `.env` and `.dev.vars` in every file and the whole git history, and prints only where, never the value. None of them touch the network.
+
 ## Built Oct 26 – Nov 4
 
-- **Meta models:** SAM 3.1 and Muse Wonder. Neither is connected yet; they come next.
+- **Meta models:** SAM 3.1 and Muse Wonder. Neither is in the app yet; `npm run probe` is the first call to both.
 - **Open-source libraries** (from `package.json`):
   - [perfect-freehand](https://github.com/steveruizok/perfect-freehand) (MIT) turns points into the stroke outline.
   - [Mediabunny](https://mediabunny.dev) (MPL-2.0) decodes and encodes the video.
-  - Dev only, not shipped: [MediaPipe Tasks Vision](https://ai.google.dev/edge/mediapipe/solutions/vision/pose_landmarker) (Apache-2.0), the pose model standing in for SAM 3.1 while SAM isn't connected; [@vitejs/plugin-basic-ssl](https://github.com/vitejs/vite-plugin-basic-ssl) (MIT) for phone mode; [Vite](https://vite.dev) (MIT); [Vitest](https://vitest.dev) (MIT) runs the tests; [TypeScript](https://www.typescriptlang.org) (Apache-2.0); @types/node (MIT).
+  - Dev only, not shipped: [MediaPipe Tasks Vision](https://ai.google.dev/edge/mediapipe/solutions/vision/pose_landmarker) (Apache-2.0), the pose model standing in for SAM 3.1 while SAM isn't connected; [@meta-sam/parser](https://www.npmjs.com/package/@meta-sam/parser) (SAM License) reads SAM 3.1's streamed masks in the probe; the [OpenAI SDK](https://github.com/openai/openai-node) (`openai`, Apache-2.0), pointed at Meta's API, makes the probe's calls; [@vitejs/plugin-basic-ssl](https://github.com/vitejs/vite-plugin-basic-ssl) (MIT) for phone mode; [Vite](https://vite.dev) (MIT); [Vitest](https://vitest.dev) (MIT) runs the tests; [TypeScript](https://www.typescriptlang.org) (Apache-2.0); @types/node (MIT).
 - **Code:** written with Claude Code under Qai's direction, from Oct 27.

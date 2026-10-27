@@ -27,3 +27,6 @@ renders/
 # The dev-only Python stand-in: its environment, model and work files.
 .venv/
 .standin/
+
+# What scripts/live/ spent per day (its daily cap reads this).
+scripts/live/.spend.json

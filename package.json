@@ -10,7 +10,9 @@
     "typecheck": "tsc --noEmit",
     "standin:setup": "node tools/setup-standin.mjs",
     "check:fast": "tsc -p tsconfig.json && vitest run tests/unit",
-    "verify": "node scripts/verify.mjs"
+    "verify": "node scripts/verify.mjs",
+    "golden:accept": "node scripts/golden-accept.mjs",
+    "probe": "node scripts/live/probe.mjs"
   },
   "dependencies": {
     "mediabunny": "^1.62.1",
@@ -18,8 +20,10 @@
   },
   "devDependencies": {
     "@mediapipe/tasks-vision": "^1.1.1",
+    "@meta-sam/parser": "^0.1.0",
     "@types/node": "^24.19.2",
     "@vitejs/plugin-basic-ssl": "^2.3.0",
+    "openai": "^7.45.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.5",
     "vitest": "^5.0.5"
