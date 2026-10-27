@@ -1,0 +1,15 @@
+{
+  "_note": "Mirrors 'Clips required at each milestone' in docs/SPEC.md. Tests read this with verify/ACTIVE. Only Qai changes it.",
+  "M0": [],
+  "M1": ["side-step", "walk"],
+  "M2": ["side-step", "walk"],
+  "M3": ["side-step", "walk", "probe"],
+  "M4": ["side-step", "walk", "probe", "slow-turn", "spin"],
+  "M5": ["side-step", "walk", "probe", "slow-turn", "spin"],
+  "M6": ["side-step", "walk", "arm-swing", "hand-in-front", "slow-turn", "spin", "probe", "friend-turn"],
+  "turning": {
+    "M4": ["probe", "slow-turn", "spin"],
+    "M5": ["probe", "slow-turn", "spin"],
+    "M6": ["probe", "slow-turn", "spin", "friend-turn"]
+  }
+}

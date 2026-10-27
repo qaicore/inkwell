@@ -1,0 +1,22 @@
+{
+  "_note": "EXAMPLE VALUES ONLY. Qai replaces every number with his own measurements, then saves this file as reference/timing.json. Tests must fail while timing.json is missing.",
+  "source": "Qai's own frame-by-frame study, traced in Procreate. No frames stored.",
+  "dps": 12,
+  "lash": {
+    "phases": [
+      { "name": "wind-up", "drawings": 3 },
+      { "name": "strike", "drawings": 2 },
+      { "name": "overshoot", "drawings": 1 },
+      { "name": "settle", "drawings": 4 }
+    ],
+    "keys": [
+      { "drawing": 0, "tip": [0.10, 0.90] },
+      { "drawing": 3, "tip": [-0.20, 0.70] },
+      { "drawing": 5, "tip": [0.95, 0.30] },
+      { "drawing": 6, "tip": [1.10, 0.25] },
+      { "drawing": 10, "tip": [0.90, 0.35] }
+    ]
+  },
+  "followThrough": { "overshoot": 0.25, "settleDrawings": 4 },
+  "boil": { "maxPx": 1.5, "cycle": 3 }
+}

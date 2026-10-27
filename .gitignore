@@ -1,0 +1,29 @@
+# secrets: ignored from the very first commit
+.env
+.env.*
+!.env.example
+.dev.vars
+.dev.vars.*
+
+# Claude Code's local permission approvals
+.claude/settings.local.json
+
+# generated
+node_modules/
+dist/
+coverage/
+.wrangler/
+# Rooted: a bare "verify/" would also hide .claude/skills/verify/.
+/verify/
+
+# large media stays out of git; clips are tracked by fixtures/clips.json
+fixtures/**/*.mp4
+fixtures/**/*.mov
+
+# Local test clips and exported renders stay on this machine.
+samples/
+renders/
+
+# The dev-only Python stand-in: its environment, model and work files.
+.venv/
+.standin/

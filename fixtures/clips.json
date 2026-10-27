@@ -1,0 +1,6 @@
+{
+  "_note": "One entry per clip. Anyone other than Qai needs written consent noted here before the clip is used.",
+  "clips": [
+    { "id": "probe", "file": "fixtures/probe/clip.mp4", "people": ["Qai"], "consent": "self" }
+  ]
+}
