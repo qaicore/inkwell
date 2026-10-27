@@ -25,14 +25,25 @@
 //     pressure interpolated the same way, and n >= 32.
 // Preconditions: strokeOutline is a real outline (finite, positive area, moves with its points, grows with the
 // brush size), and the distance metric passes a self-check on circles.
+// Precondition, the outline follows its centerline: for each raw stroke (scaled as above), the raw-points outline,
+// built as (a) builds it (strokeOutline, same brush), must hold every raw centerline point inside it or within 0.5 px
+// of its edge, and every outline vertex must lie within brush.size + 1 px of the raw polyline. brush.size gets the
+// scale A6 gives it, which is 1: A6 never passes a scale to strokeOutline, since brush.size is already px at 1080 wide.
+// Stricter reading, flagged for Qai: "inside" is the even-odd rule, which counts a point under a self-overlapping fold
+// of the outline as outside; the canvas's nonzero fill counts it as inside and is reported alongside, not asserted.
 import { afterAll, describe, expect, it } from 'vitest';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import type { Effect, Stroke } from '../../src/types/effect.ts';
 import { Evidence } from '../helpers/evidence.ts';
+import { ROOT } from '../helpers/evidence.ts';
 import {
   dist,
+  distToBoundary,
   need,
   outlineDistance,
   polygonArea,
+  projectOnPolyline,
   readReference,
   recorded,
   specParams,
@@ -50,6 +61,11 @@ const A_PX = 1;
 const B_PX = 0.5;
 const MIN_POINTS = 32;
 const RAW = 'reference/raw-strokes.json';
+const EDGE_PX = 0.5; // precondition: how far outside the raw-points outline's edge a raw centerline point may sit
+const VERTEX_SLACK_PX = 1; // precondition: outline vertices within brush.size · BRUSH_SCALE + this of the raw polyline
+const BRUSH_SCALE = 1; // the scale A6 gives brush.size: strokeOutline's default, since brush.size is px at 1080 wide
+const FOLLOW_INSIDE = 'precondition: every raw centerline point lies inside the raw-points outline or within 0.5 px of its edge';
+const FOLLOW_NEAR = 'precondition: every raw-points outline vertex lies within brush.size + 1 px of the raw polyline';
 const ev = new Evidence(ID, [
   'metric self-check',
   'modules load',
@@ -61,6 +77,8 @@ const ev = new Evidence(ID, [
   'reference/timing.json dps and boil',
   '(b) at rest vs the stored-points outline (a), strand at stiffness 1 and rigid',
   '(b) at rest vs the raw-points outline (a), strand at stiffness 1 and rigid',
+  FOLLOW_INSIDE,
+  FOLLOW_NEAR,
 ]);
 afterAll(() => ev.write());
 
@@ -127,6 +145,22 @@ function circle(r: number, n = 256, c: V2 = [300, 300]): V2[] {
 
 const finitePoly = (o: V2[]) => o.length >= 3 && o.every((p) => Number.isFinite(p[0]) && Number.isFinite(p[1]));
 
+/** Winding number of the closed polygon around p: odd = inside by even-odd, nonzero = inside by the canvas's nonzero fill. */
+function winding(p: V2, poly: V2[]): number {
+  let w = 0;
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i]!;
+    const b = poly[(i + 1) % poly.length]!;
+    const side = (b[0] - a[0]) * (p[1] - a[1]) - (p[0] - a[0]) * (b[1] - a[1]);
+    if (a[1] <= p[1]) {
+      if (b[1] > p[1] && side > 0) w++;
+    } else if (b[1] <= p[1] && side < 0) {
+      w--;
+    }
+  }
+  return w;
+}
+
 // ---------- shared state between the two parts ----------
 
 interface Stored {
@@ -151,6 +185,68 @@ describe('A6 line fidelity', () => {
     ev.record('metric self-check', { identical: same, radius50vs50_5: half, shifted3px: shifted }, 'identical 0; radius +0.5 px -> 0.5 px; 3 px shift -> between 1 and 3 px', ok);
     expect(ok, `A6 metric self-check failed: identical ${same}, +0.5 px ${half}, 3 px shift ${shifted}`).toBe(true);
   });
+
+  it('A6 precondition: the raw-points outline follows its centerline (raw points inside it or within 0.5 px of its edge, vertices within brush.size + 1 px of the raw polyline)', async () => {
+    const insideThreshold = `inside (even-odd) or < ${EDGE_PX} px outside its edge, every raw point of every stroke`;
+    const nearThreshold = `< brush.size · ${BRUSH_SCALE} + ${VERTEX_SLACK_PX} px from the raw polyline, every outline vertex of every stroke`;
+    if (!existsSync(join(ROOT, RAW))) {
+      const why = `${RAW} missing: Qai must add it (SPEC §11)`;
+      ev.record(FOLLOW_INSIDE, 'not measured: missing input', insideThreshold, false, why);
+      ev.record(FOLLOW_NEAR, 'not measured: missing input', nearThreshold, false, why);
+      throw new Error(`A6 precondition (the outline follows its centerline) needs ${RAW}, which is missing: Qai must add it (SPEC §11)`);
+    }
+    const brush = await need('src/render/brush.ts', { strokeOutline: 'function' }, () => import('../../src/render/brush.ts'));
+    const raw = readRaw();
+    const bound = raw.brush.size * BRUSH_SCALE + VERTEX_SLACK_PX;
+    const showPx = (v: number): number | string => (Number.isFinite(v) ? v : String(v));
+
+    const problems: string[] = [];
+    let outside: { px: number; stroke: number | null; point: number | null } = { px: 0, stroke: null, point: null };
+    let pointsOutside = 0;
+    let nonzeroWorstPx = 0;
+    let nonzeroPointsOutside = 0;
+    let far: { px: number; stroke: number | null; vertex: number | null } = { px: 0, stroke: null, vertex: null };
+    let verticesBeyond = 0;
+    let rawPoints = 0;
+    let vertices = 0;
+    for (const s of raw.strokes) {
+      // Built exactly as (a) builds the raw-points outline.
+      const o = brush.strokeOutline(s.xy, s.pressure, raw.brush) as V2[];
+      rawPoints += s.xy.length;
+      if (!finitePoly(o)) {
+        problems.push(`stroke ${s.id}: the outline has ${o.length} vertices or a non-finite one`);
+        outside = { px: Infinity, stroke: s.id, point: null };
+        far = { px: Infinity, stroke: s.id, vertex: null };
+        continue;
+      }
+      vertices += o.length;
+      s.xy.forEach((p, i) => {
+        const w = winding(p, o);
+        const edge = distToBoundary(p, o);
+        const out = w % 2 !== 0 ? 0 : edge;
+        const outNonzero = w !== 0 ? 0 : edge;
+        if (out >= EDGE_PX) pointsOutside++;
+        if (outNonzero >= EDGE_PX) nonzeroPointsOutside++;
+        nonzeroWorstPx = Math.max(nonzeroWorstPx, outNonzero);
+        if (out > outside.px) outside = { px: out, stroke: s.id, point: i };
+      });
+      o.forEach((v, i) => {
+        const d = projectOnPolyline(v, s.xy).d;
+        if (d >= bound) verticesBeyond++;
+        if (d > far.px) far = { px: d, stroke: s.id, vertex: i };
+      });
+    }
+    ev.record(FOLLOW_INSIDE,
+      { worstOutsidePx: showPx(outside.px), worstStroke: outside.stroke, worstPoint: outside.point, pointsOutside, rawPoints, nonzeroFill: { worstOutsidePx: nonzeroWorstPx, pointsOutside: nonzeroPointsOutside }, problems },
+      insideThreshold, problems.length === 0 && outside.px < EDGE_PX);
+    ev.record(FOLLOW_NEAR,
+      { worstPx: showPx(far.px), worstStroke: far.stroke, worstVertex: far.vertex, verticesBeyond, vertices, boundPx: bound, brushSize: raw.brush.size, problems },
+      nearThreshold, problems.length === 0 && far.px < bound);
+
+    expect(problems, `A6 precondition: ${problems.join('; ')}`).toEqual([]);
+    expect(outside.px, `A6 precondition: raw point ${outside.point} of stroke ${outside.stroke} is ${outside.px} px outside the raw-points outline (${pointsOutside} of ${rawPoints} points ${EDGE_PX} px or more outside), must be inside or < ${EDGE_PX} px from its edge`).toBeLessThan(EDGE_PX);
+    expect(far.px, `A6 precondition: outline vertex ${far.vertex} of stroke ${far.stroke} is ${far.px} px from the raw polyline (${verticesBeyond} of ${vertices} vertices at or past the bound), must be < brush.size + ${VERTEX_SLACK_PX} = ${bound} px`).toBeLessThan(bound);
+  }, 120_000);
 
   it('A6 (a) the outline from the stored resampled points is within 1 px (mean) of the outline from the raw points, at 1080 wide', async () => {
     const brush = await recorded(ev, 'modules load', 'src/render/brush.ts exports resampleStroke, strokeOutline', () =>

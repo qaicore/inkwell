@@ -19,11 +19,16 @@
 //   - src/track/torso.ts is checked first, so placement can't pass on a wrong transform: toTorso inverts toPixels, the
 //     origin maps to (x, y), one torso unit maps to `unit` px, the rotation is by `angle`, and upright torso x/y are
 //     screen right/down (SPEC §6).
+//   - Simulated root: on every frame of the same run, node 0 of each stroke's simulated chain (frame.sim, px, no boil)
+//     is within 0.5 px of toPixels(anchor(strokeId, f), root), where root is that stroke's front-view root in torso
+//     space, read from the effect (it is [0, 0] only for strokes stored relative to their root; here it is the
+//     tendril's first point). The worst distance is recorded with its frame and stroke.
 // Stricter readings, flagged for Qai:
 //   - the changes must land on exactly the frames where floor(f·dps/30) changes, not just add up to dps per second;
 //   - the same checks also run at the other allowed rate (12 <-> 8), since SPEC §8.4 says never hard-code the pattern;
 //   - each stroke's own anchor must be used (the anchors differ per stroke);
 //   - the held drawing must really be in torso space: its root stays within 0.05 torso heights of the stroke's root.
+//   - the simulated-root check binds both runs: at reference/timing.json's dps and at the other allowed rate.
 import { afterAll, describe, expect, it } from 'vitest';
 import type { Effect, Stroke } from '../../src/types/effect.ts';
 import { Evidence } from '../helpers/evidence.ts';
@@ -38,6 +43,7 @@ const FPS = 30;
 const FRAMES = 90; // 3 s
 const PLACE_TOL_PX = 1e-6;
 const TORSO_ROOT_TOL = 0.05; // torso heights: a sanity bound, px coordinates would be hundreds
+const SIM_ROOT_TOL_PX = 0.5; // simulated root vs its anchor, px at 1080 wide (the root bound SPEC §10 P1 sets per step)
 const ev = new Evidence(ID, [
   'modules load',
   'reference/timing.json dps and boil',
@@ -48,6 +54,7 @@ const ev = new Evidence(ID, [
   'held drawing changes only where floor(f·dps/30) changes, identical between changes',
   'placed with each frame\'s own torso transform',
   'same cadence at the other allowed rate',
+  'simulated chain root: node 0 of frame.sim vs toPixels(anchor(f), front-view root)',
 ]);
 afterAll(() => ev.write());
 
@@ -126,6 +133,8 @@ interface Cadence {
   placementMaxPx: number;
   placementProblems: string[];
   torsoRootMax: number;
+  simRootWorst: { px: number; frame: number; stroke: number } | null;
+  simRootProblems: string[];
 }
 
 function measure(animate: AnimateModule['animate'], toPixels: TorsoModule['toPixels'], dps: 12 | 8, boil: { maxPx: number; cycle: number }): Cadence {
@@ -143,8 +152,11 @@ function measure(animate: AnimateModule['animate'], toPixels: TorsoModule['toPix
     placementMaxPx: 0,
     placementProblems: [],
     torsoRootMax: 0,
+    simRootWorst: null,
+    simRootProblems: [],
   };
   if (frames.length !== FRAMES) out.frameProblems.push(`animate returned ${frames.length} frames for frames: ${FRAMES}`);
+  if (frames.length !== FRAMES) out.simRootProblems.push(`animate returned ${frames.length} frames for frames: ${FRAMES}, so not every frame's root was checked`);
   frames.forEach((fr, i) => {
     if (fr.f !== i) out.frameProblems.push(`frame ${i} is labeled f = ${fr.f}`);
   });
@@ -162,6 +174,12 @@ function measure(animate: AnimateModule['animate'], toPixels: TorsoModule['toPix
     const sec = Math.floor(f / FPS);
     let any = false;
     for (const s of effect.strokes) {
+      // Simulated root: node 0 of this frame's chain (px, no boil) vs toPixels(this frame's anchor, the front-view root).
+      const simRoot = fr.sim?.find((x) => x.id === s.id)?.points[0] as V2 | undefined;
+      if (!simRoot) out.simRootProblems.push(`frame ${f}: no simulated chain (or an empty one) for stroke ${s.id}`);
+      const simErr = simRoot ? dist(simRoot, toPixels(anchors.get(s.id)!(f), s.views.front.root) as V2) : Infinity;
+      const simPx = Number.isFinite(simErr) ? simErr : Infinity;
+      if (!out.simRootWorst || simPx > out.simRootWorst.px) out.simRootWorst = { px: simPx, frame: f, stroke: s.id };
       const h = heldAt(f, s.id);
       if (!h) {
         out.frameProblems.push(`frame ${f}: no held drawing for stroke ${s.id}`);
@@ -207,6 +225,7 @@ function cadenceOk(c: Cadence): { counts: boolean; frames: boolean; placement: b
 }
 
 const head = (xs: (string | number)[]) => (xs.length > 8 ? [...xs.slice(0, 8), `... ${xs.length - 8} more`] : xs);
+const showPx = (v: number): number | string => (Number.isFinite(v) ? v : String(v));
 
 // ---------- torso transform check ----------
 
@@ -305,6 +324,17 @@ describe('A1 stepped drawings over 3 s with a moving synthetic anchor', () => {
       placementMaxPx: other.placementMaxPx,
     }, `${otherDps} changes per second on the floor(f·${otherDps}/30) frames, placed exactly`, otherOk);
 
+    const simRootOf = (c: Cadence) => ({
+      worstPx: c.simRootWorst ? showPx(c.simRootWorst.px) : 'not measured: no frames',
+      frame: c.simRootWorst?.frame ?? null,
+      stroke: c.simRootWorst?.stroke ?? null,
+      problems: head(c.simRootProblems),
+    });
+    const simRootOk = (c: Cadence) => c.simRootWorst !== null && c.simRootWorst.px < SIM_ROOT_TOL_PX && c.simRootProblems.length === 0;
+    ev.record('simulated chain root: node 0 of frame.sim vs toPixels(anchor(f), front-view root)',
+      { [`dps ${dps}`]: simRootOf(main), [`dps ${otherDps}`]: simRootOf(other) },
+      `< ${SIM_ROOT_TOL_PX} px on every frame, for every stroke, at both rates`, simRootOk(main) && simRootOk(other));
+
     expect(torsoCheck.ok, `A1 torso transform is wrong: ${JSON.stringify(torsoCheck.measured)}`).toBe(true);
     expect(minMovePx, 'A1 precondition: a synthetic anchor stood still on some frame').toBeGreaterThan(0);
     expect(main.torsoRootMax, `A1 held drawing isn't in torso space (root ${main.torsoRootMax} torso units from the stroke root)`).toBeLessThan(TORSO_ROOT_TOL);
@@ -312,5 +342,11 @@ describe('A1 stepped drawings over 3 s with a moving synthetic anchor', () => {
     expect(ok.frames, `A1 cadence: extra ${JSON.stringify(head(main.extraChanges))}, missing ${JSON.stringify(head(main.missingChanges))}, k ${JSON.stringify(head(main.reportedKMismatches))}, ${main.frameProblems.join('; ')}`).toBe(true);
     expect(ok.placement, `A1 placement off by ${main.placementMaxPx} px: ${main.placementProblems.join('; ')}`).toBe(true);
     expect(otherOk, `A1 at ${otherDps} dps: ${JSON.stringify(other.perSecond)}, extra ${other.extraChanges.length}, missing ${other.missingChanges.length}, placement ${other.placementMaxPx} px`).toBe(true);
+    for (const c of [main, other]) {
+      expect(c.simRootProblems, `A1 simulated root at ${c.dps} dps: ${c.simRootProblems.join('; ')}`).toEqual([]);
+      expect(c.simRootWorst?.px ?? Infinity,
+        `A1 simulated root (node 0 of frame.sim) is ${c.simRootWorst?.px} px from toPixels(anchor(f), front-view root) at frame ${c.simRootWorst?.frame}, stroke ${c.simRootWorst?.stroke} (${c.dps} dps), must be < ${SIM_ROOT_TOL_PX} px`,
+      ).toBeLessThan(SIM_ROOT_TOL_PX);
+    }
   });
 });
