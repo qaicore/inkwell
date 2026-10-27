@@ -7,7 +7,7 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { readEnvFile } from './lib/env.mjs';
+import { readEnvFile } from './lib/env.ts';
 
 const root = process.cwd();
 
@@ -19,12 +19,14 @@ const MIN_LENGTH = 8;
 
 const secrets = new Map(); // value -> variable names
 const tooShort = new Set();
+const unreadable = [];
 let envFiles = 0;
 for (const name of ['.env', '.dev.vars']) {
   const env = readEnvFile(join(root, name));
   if (!env) continue;
   envFiles++;
-  for (const [key, value] of Object.entries(env)) {
+  if (env.badLines.length > 0) unreadable.push(`${name} line ${env.badLines.join(', ')}`);
+  for (const [key, value] of Object.entries(env.values)) {
     if (!SECRET_NAME.test(key) || !value) continue;
     if (value.length < MIN_LENGTH) {
       tooShort.add(key);
@@ -34,7 +36,14 @@ for (const name of ['.env', '.dev.vars']) {
   }
 }
 
-// A secret that can't be scanned for can't be shown clean.
+// A secret that can't be scanned for can't be shown clean: a line that
+// isn't KEY=value may hold one, and the line itself is never printed.
+if (unreadable.length > 0) {
+  process.stdout.write(
+    `scan-secrets: ${unreadable.join('; ')} isn't KEY=value, so there's no telling what to look for. Fix it (an unclosed quote?), or save the file as UTF-8.\n`,
+  );
+  process.exit(1);
+}
 if (tooShort.size > 0) {
   process.stdout.write(
     `scan-secrets: ${[...tooShort].join(', ')} ${tooShort.size === 1 ? 'is' : 'are'} under ${MIN_LENGTH} characters: too short to scan for leaks, and easy to guess. Use a longer value.\n`,

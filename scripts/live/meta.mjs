@@ -8,7 +8,7 @@ import { createInterface } from 'node:readline/promises';
 import OpenAI from 'openai';
 import { parseVideoStream } from '@meta-sam/parser';
 import { SAM_MODEL, WONDER_MODEL } from '../../functions/_lib/pricing.ts';
-import { readEnvFile } from '../lib/env.mjs';
+import { readEnvFile } from '../lib/env.ts';
 
 export { Budget } from '../lib/budget.ts';
 
@@ -19,8 +19,10 @@ export const API_BASE = 'https://api.meta.ai/v1';
 export const LEDGER = join(import.meta.dirname, '.spend.json');
 
 export function loadKeys(root) {
-  const env = readEnvFile(join(root, '.env'));
-  if (!env) throw new Error('.env is missing. Make it with: Copy-Item env.example .env, then paste the key into it.');
+  const file = readEnvFile(join(root, '.env'));
+  if (!file) throw new Error('.env is missing. Make it with: Copy-Item env.example .env, then paste the key into it.');
+  if (file.badLines.length > 0) throw new Error(`.env line ${file.badLines.join(', ')} isn't KEY=value. Fix it, or save the file as UTF-8.`);
+  const env = file.values;
   if (!env.META_API_KEY) throw new Error('META_API_KEY is empty in .env.');
   const dailyCap = Number(env.DAILY_SPEND_CAP_USD);
   if (!env.DAILY_SPEND_CAP_USD || !Number.isFinite(dailyCap) || dailyCap <= 0) {

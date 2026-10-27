@@ -57,7 +57,7 @@ This serves the app over HTTPS on your Wi-Fi at port 5175; Vite prints the addre
 - `vite.config.ts` runs the dev server and saves exports to `renders/`.
 - `functions/` is the Pages Function: `_lib/proxy.ts` is its logic (passcode, spend cap), `_lib/spend.ts` keeps the day's spend in a D1 database bound as `SPEND_DB`, `_lib/pricing.ts` has the Meta API prices, and `api/[[path]].ts` wires them to the real API.
 - `scripts/live/` holds the only scripts that make paid calls: `probe.mjs`, and `meta.mjs`, which every paid call goes through (key, spend caps, the typed `yes`). `scripts/probe/` is the probe's free part: decoding masks, the numbers, the report and the strip.
-- `scripts/verify.mjs`, `scripts/golden-accept.mjs`, `scripts/scan-secrets.mjs` and `scripts/tree-hash.mjs` are the checking pipeline (below).
+- `scripts/verify.mjs`, `scripts/golden-accept.mjs`, `scripts/scan-secrets.mjs` and `scripts/tree-hash.mjs` are the checking pipeline (below). `scripts/lib/` holds what they share with the paid scripts: reading `.env` and the spend budget.
 
 `samples/` and `renders/` are gitignored. Only clips you shot go in the demo.
 

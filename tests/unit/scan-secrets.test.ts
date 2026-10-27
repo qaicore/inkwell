@@ -10,7 +10,7 @@ const script = resolve('scripts/scan-secrets.mjs');
 const FAKE_KEY = 'fake-key-0123456789abcdef';
 const gitEnv = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
 
-function repo(files: Record<string, string>) {
+function repo(files: Record<string, string | Buffer>) {
   const dir = mkdtempSync(join(tmpdir(), 'inkwell-scan-'));
   const git = (...args: string[]) => spawnSync('git', args, { cwd: dir, env: gitEnv, encoding: 'utf8' });
   git('init', '-q');
@@ -65,6 +65,32 @@ describe('scan-secrets', () => {
     const out = r.scan();
     expect(out.status).toBe(1);
     expect(out.stdout).toContain('PROXY_PASSCODE');
+  });
+
+  it('reads a UTF-16 .env, so its keys are still looked for', () => {
+    const env = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(`META_API_KEY=${FAKE_KEY}\r\n`, 'utf16le')]);
+    const r = repo({ '.env': env, 'a.txt': `key ${FAKE_KEY}\n` });
+    r.commit('leak');
+    const out = r.scan();
+    expect(out.status).toBe(1);
+    expect(out.stdout).toContain('a.txt:1 META_API_KEY');
+  });
+
+  it('fails on a secrets file line it cannot parse, naming only the line number', () => {
+    const r = repo({ '.env': `META_API_KEY="${FAKE_KEY}\nDAILY_SPEND_CAP_USD=5\n` });
+    r.commit('start');
+    const out = r.scan();
+    expect(out.status).toBe(1);
+    expect(out.stdout).toContain('.env line 1');
+    expect(out.stdout + out.stderr).not.toContain(FAKE_KEY);
+  });
+
+  it('strips a comment after a quoted value, so it looks for the value itself', () => {
+    const r = repo({ '.env': `META_API_KEY="${FAKE_KEY}" # from the dashboard\n`, 'a.txt': `key ${FAKE_KEY}\n` });
+    r.commit('leak');
+    const out = r.scan();
+    expect(out.status).toBe(1);
+    expect(out.stdout).toContain('a.txt:1 META_API_KEY');
   });
 
   it('has nothing to do without .env or .dev.vars', () => {
