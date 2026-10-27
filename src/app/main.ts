@@ -3,7 +3,7 @@ import { DEFAULT_BRUSH, type Point } from '../render/brush';
 import { FPS, frameTime, frameTimes, loadClip, type Clip } from '../video/clip';
 import { exportClip } from '../export/export';
 import { drawMaskTint, renderFrame, type Scene } from '../render/compose';
-import { EXAMPLE_TIMING, parseTiming, type Timing } from '../motion/timing';
+import { EXAMPLE_TIMING, validateTiming, type Timing } from '../motion/timing';
 import type { FollowMode } from '../track/standin';
 import { torsoHeights } from '../track/torso';
 import { maskHasPerson, maskNear, trackStroke, type Pose, type Tracking } from '../track/tracking';
@@ -17,6 +17,7 @@ const drop = $<HTMLElement>('drop');
 const fileInput = $<HTMLInputElement>('file');
 const clipInfo = $<HTMLElement>('clip-info');
 const statusText = $<HTMLElement>('status');
+const timingNote = $<HTMLElement>('timing-note');
 const exportButton = $<HTMLButtonElement>('export');
 const downloadLink = $<HTMLAnchorElement>('download');
 const playButton = $<HTMLButtonElement>('play');
@@ -63,19 +64,26 @@ const invalidate = () => (animation = null);
 
 // Qai's reference/timing.json sets the drawings per second and the boil. The
 // dev server serves it; until it exists (and in production builds) the
-// example file's numbers stand in.
+// example file's numbers stand in, and the header says so.
+// TODO(M4): where production builds get their timing from.
 let timing: Timing = EXAMPLE_TIMING;
+const EXAMPLE_NOTE = 'Timing: example numbers (reference/timing.json missing or invalid)';
+timingNote.textContent = EXAMPLE_NOTE;
 if (import.meta.env.DEV) {
   fetch('/reference/timing.json')
     .then((response) => (response.ok ? response.json() : null))
     .then((json) => {
-      const found = parseTiming(json);
-      if (!found) return;
-      timing = found;
+      const read = validateTiming(json);
+      if ('problem' in read) {
+        if (json !== null) timingNote.textContent = `Timing: example numbers (reference/timing.json: ${read.problem})`;
+        return;
+      }
+      timing = read.timing;
+      timingNote.textContent = '';
       invalidate();
       paint();
     })
-    .catch(() => {}); // missing: keep the example's numbers
+    .catch(() => {}); // missing (the dev server answers with the app page, not JSON): keep the example's numbers
 }
 
 // The video frame on screen, at full clip size. Every repaint starts from it.

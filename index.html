@@ -72,6 +72,9 @@
         color: var(--muted);
         font-variant-numeric: tabular-nums;
       }
+      #timing-note {
+        color: #e0b45a;
+      }
       button,
       .button,
       select {
@@ -163,7 +166,8 @@
         .size-word {
           display: none;
         }
-        #status {
+        #status,
+        #timing-note {
           order: 1; /* its own line, under the buttons */
           flex-basis: 100%;
         }
@@ -200,6 +204,7 @@
         <label class="group"><input id="show-tracking" type="checkbox" />Show tracking</label>
       </div>
       <span class="spacer"></span>
+      <span id="timing-note"></span>
       <span id="status"></span>
       <button id="export" disabled>Export MP4</button>
       <a id="download" class="button" hidden>Download</a>

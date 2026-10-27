@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { Effect, Vec2 } from '../../src/types/effect.ts';
 import { DEFAULT_PHYSICS, createChain, stepChain } from '../../src/physics/strand.ts';
-import { drawingIndex, frameAt } from '../../src/motion/timing.ts';
+import { drawingIndex, frameAt, validateTiming } from '../../src/motion/timing.ts';
+import { readFileSync } from 'node:fs';
 import { boilOffsets } from '../../src/motion/boil.ts';
 import { animate } from '../../src/motion/animate.ts';
 import { lerpTransform, toPixels, toTorso, torsoHeights, type TorsoTransform } from '../../src/track/torso.ts';
@@ -150,6 +151,17 @@ describe('motion: the drawing clock and boil', () => {
     const wide = boilOffsets(4, 7, 32, boil, 1, 2160);
     expect(wide[5][0]).toBeCloseTo(a[5][0] * 2, 12);
     expect(boilOffsets(4, 7, 32, boil, 0).every(([x, y]) => x === 0 && y === 0)).toBe(true);
+  });
+
+  it("reads timing.json, or says why it can't", () => {
+    const example = JSON.parse(readFileSync('reference/timing.example.json', 'utf8'));
+    expect(validateTiming(example)).toEqual({ timing: example });
+    expect(validateTiming(null)).toEqual({ problem: 'it is not a JSON object' });
+    expect(validateTiming({ ...example, dps: 24 })).toEqual({ problem: '"dps" must be 12 or 8' });
+    expect(validateTiming({ ...example, boil: { maxPx: -1, cycle: 3 } })).toEqual({ problem: '"boil.maxPx" must be a number of px, 0 or more' });
+    expect(validateTiming({ ...example, boil: { maxPx: 1.5, cycle: 1 } })).toEqual({ problem: '"boil.cycle" must be a whole number of drawings, 2 or more' });
+    expect('problem' in validateTiming({ ...example, lash: { keys: [{ drawing: 0, tip: [0.1] }] } })).toBe(true);
+    expect('timing' in validateTiming({ dps: 8, boil: { maxPx: 0, cycle: 2 } })).toBe(true); // no lash: fine
   });
 
   it('never boils past maxPx, not even by a rounding error', () => {

@@ -17,14 +17,25 @@ export interface Timing {
 // missing. Whatever uses them says so.
 export const EXAMPLE_TIMING: Timing = { dps: 12, boil: { maxPx: 1.5, cycle: 3 } };
 
-// timing.json's contents, or null if they don't have a usable dps and boil.
-export function parseTiming(json: unknown): Timing | null {
-  const t = json as Partial<Timing> | null;
-  if (!t || (t.dps !== 12 && t.dps !== 8)) return null;
-  const boil = t.boil;
-  if (typeof boil?.maxPx !== 'number' || !(boil.maxPx >= 0) || !Number.isInteger(boil.cycle) || boil.cycle < 2) return null;
-  return t as Timing;
+// timing.json's contents, or why they can't drive the engine: dps 12 or 8,
+// a boil, and lash keys the sheets can draw if there are any.
+export function validateTiming(json: unknown): { timing: Timing } | { problem: string } {
+  if (typeof json !== 'object' || json === null || Array.isArray(json)) return { problem: 'it is not a JSON object' };
+  const t = json as { dps?: unknown; boil?: { maxPx?: unknown; cycle?: unknown }; lash?: { keys?: unknown } };
+  if (t.dps !== 12 && t.dps !== 8) return { problem: '"dps" must be 12 or 8' };
+  if (typeof t.boil?.maxPx !== 'number' || !(t.boil.maxPx >= 0)) return { problem: '"boil.maxPx" must be a number of px, 0 or more' };
+  if (!Number.isInteger(t.boil.cycle) || (t.boil.cycle as number) < 2) return { problem: '"boil.cycle" must be a whole number of drawings, 2 or more' };
+  const keys = t.lash?.keys;
+  if (keys !== undefined && !(Array.isArray(keys) && keys.every(isKey))) {
+    return { problem: '"lash.keys" must be a list of { "drawing": <whole number>, "tip": [x, y] }' };
+  }
+  return { timing: json as Timing };
 }
+
+const isKey = (k: unknown) => {
+  const key = k as { drawing?: unknown; tip?: unknown } | null;
+  return Number.isInteger(key?.drawing) && Array.isArray(key?.tip) && key.tip.length === 2 && key.tip.every(Number.isFinite);
+};
 
 export function drawingIndex(f: number, dps: number, fps = 30): number {
   if (!Number.isInteger(f) || !Number.isInteger(dps) || !Number.isInteger(fps)) {
