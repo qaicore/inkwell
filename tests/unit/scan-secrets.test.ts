@@ -21,7 +21,7 @@ function repo(files: Record<string, string | Buffer>) {
     git('add', '-A');
     git('commit', '-q', '-m', message);
   };
-  return { dir, scan, commit };
+  return { dir, git, scan, commit };
 }
 
 describe('scan-secrets', () => {
@@ -57,6 +57,17 @@ describe('scan-secrets', () => {
     const out = r.scan();
     expect(out.status).toBe(1);
     expect(out.stdout).toContain('notes.md:1 PROXY_PASSCODE');
+  });
+
+  it('catches a key that is staged but no longer in the working tree', () => {
+    const r = repo({ '.env': `META_API_KEY=${FAKE_KEY}\n`, 'a.txt': 'nothing here\n' });
+    r.commit('start');
+    writeFileSync(join(r.dir, 'notes.md'), `key ${FAKE_KEY}\n`);
+    r.git('add', 'notes.md');
+    writeFileSync(join(r.dir, 'notes.md'), 'clean now\n'); // the working tree no longer has it; the index does
+    const out = r.scan();
+    expect(out.status).toBe(1);
+    expect(out.stdout).toContain('staged notes.md:1 META_API_KEY');
   });
 
   it('fails on a secret too short to scan for', () => {

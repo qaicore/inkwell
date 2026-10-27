@@ -1,9 +1,9 @@
 // node scripts/scan-secrets.mjs: has a secret leaked into git?
 // Loads .env and .dev.vars inside this process, then looks for each secret
 // value in every file git tracks or would track (untracked but not ignored,
-// so a leak is caught before it's committed) and in the whole history
-// (git log -p --all, commit messages included). On a hit it prints where
-// and which variable, never the value, and exits 1.
+// so a leak is caught before it's committed), in what's staged, and in the
+// whole history (git log -p --all, commit messages included). On a hit it
+// prints where and which variable, never the value, and exits 1.
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -86,35 +86,44 @@ for (const rel of files) {
   }
 }
 
-// 2. Every commit on every ref. Line numbers come from the hunk headers
-// ("@@ -a,b +c,d @@" starts the new file at line c).
-const log = git(['log', '-p', '--all', '--no-color', '--no-ext-diff']).toString();
-let commit = '';
-let file = '';
-let newLine = 0;
-let inDiff = false;
-for (const line of log.split('\n')) {
-  if (line.startsWith('commit ')) {
-    commit = line.slice(7, 14);
-    file = '';
-    inDiff = false;
-  } else if (line.startsWith('diff --git ')) {
-    inDiff = true;
-    file = line.replace(/^diff --git a\/(.*) b\/.*$/, '$1');
-  } else if (inDiff && line.startsWith('+++ ')) {
-    if (line !== '+++ /dev/null') file = line.slice(6);
-  } else if (inDiff && line.startsWith('@@')) {
-    newLine = Number(line.match(/\+(\d+)/)?.[1] ?? 0) - 1;
-  }
-  const isAdded = inDiff && line.startsWith('+') && !line.startsWith('+++ ');
-  const isContext = inDiff && line.startsWith(' ');
-  if (isAdded || isContext) newLine++;
-  for (const [value, names] of secrets) {
-    if (!line.includes(value)) continue;
-    const where = !inDiff ? '(commit message)' : isAdded || isContext ? `${file}:${newLine}` : `${file} (removed line)`;
-    hits.push(`history ${commit} ${where} ${names.join(', ')}`);
+// Hits in a patch from git log -p or git diff. Line numbers come from the
+// hunk headers ("@@ -a,b +c,d @@" starts the new file at line c). `label`
+// turns the current commit (none for a diff) into the start of a hit.
+function scanPatch(patch, label) {
+  let commit = '';
+  let file = '';
+  let newLine = 0;
+  let inDiff = false;
+  for (const line of patch.split('\n')) {
+    if (line.startsWith('commit ')) {
+      commit = line.slice(7, 14);
+      file = '';
+      inDiff = false;
+    } else if (line.startsWith('diff --git ')) {
+      inDiff = true;
+      file = line.replace(/^diff --git a\/(.*) b\/.*$/, '$1');
+    } else if (inDiff && line.startsWith('+++ ')) {
+      if (line !== '+++ /dev/null') file = line.slice(6);
+    } else if (inDiff && line.startsWith('@@')) {
+      newLine = Number(line.match(/\+(\d+)/)?.[1] ?? 0) - 1;
+    }
+    const isAdded = inDiff && line.startsWith('+') && !line.startsWith('+++ ');
+    const isContext = inDiff && line.startsWith(' ');
+    if (isAdded || isContext) newLine++;
+    for (const [value, names] of secrets) {
+      if (!line.includes(value)) continue;
+      const where = !inDiff ? '(commit message)' : isAdded || isContext ? `${file}:${newLine}` : `${file} (removed line)`;
+      hits.push(`${label(commit)} ${where} ${names.join(', ')}`);
+    }
   }
 }
+
+// 2. The index: a key that was staged and then deleted or changed in the
+// working tree is in no file and no commit yet, but the next commit takes it.
+scanPatch(git(['diff', '--cached', '-p', '--no-color', '--no-ext-diff']).toString(), () => 'staged');
+
+// 3. Every commit on every ref.
+scanPatch(git(['log', '-p', '--all', '--no-color', '--no-ext-diff']).toString(), (commit) => `history ${commit}`);
 
 if (hits.length > 0) {
   process.stdout.write(`scan-secrets: found a secret value in ${hits.length} place(s):\n${[...new Set(hits)].map((h) => `  ${h}`).join('\n')}\n`);
