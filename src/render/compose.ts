@@ -1,12 +1,10 @@
-import { drawStroke, wobbleTick, type Stroke } from './brush';
-import type { Mask, Pose } from '../track/tracking';
+import { drawStroke, type DrawnStroke } from '../app/engine';
+import type { Mask } from '../track/tracking';
 
-// What to draw over the video, and where tracking puts it on each frame.
+// What to draw over the video on each frame.
 export type Scene = {
-  strokes: Stroke[];
-  wobble: boolean;
+  strokes(frame: number): DrawnStroke[]; // already animated and placed
   personMask(frame: number): Mask | null; // null when there's no tracking
-  pose(stroke: Stroke, frame: number): Pose | null; // null leaves a stroke where it was drawn
 };
 
 // Draws one finished frame at clip size. The preview and the export both
@@ -22,13 +20,13 @@ export function renderFrame(
   scene: Scene,
 ) {
   ctx.drawImage(image, 0, 0, width, height);
-  const tick = scene.wobble ? wobbleTick(frame) : null;
-  const behind = scene.strokes.filter((stroke) => stroke.layer === 'behind');
-  for (const stroke of behind) drawStroke(ctx, stroke, tick, scene.pose(stroke, frame));
+  const strokes = scene.strokes(frame);
+  const behind = strokes.filter((stroke) => stroke.layer === 'behind');
+  for (const stroke of behind) drawStroke(ctx, stroke);
   const mask = behind.length > 0 ? scene.personMask(frame) : null;
   if (mask) ctx.drawImage(cutOut(image, mask, width, height), 0, 0, width, height);
-  for (const stroke of scene.strokes) {
-    if (stroke.layer !== 'behind') drawStroke(ctx, stroke, tick, scene.pose(stroke, frame));
+  for (const stroke of strokes) {
+    if (stroke.layer !== 'behind') drawStroke(ctx, stroke);
   }
 }
 

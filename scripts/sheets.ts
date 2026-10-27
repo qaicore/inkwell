@@ -11,7 +11,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Effect, Stroke, Vec2 } from '../src/types/effect.ts';
 import { animate, type PlacedStroke } from '../src/motion/animate.ts';
-import type { BoilParams } from '../src/motion/boil.ts';
+import { EXAMPLE_TIMING, parseTiming, type Timing } from '../src/motion/timing.ts';
 import { DEFAULT_BRUSH, resampleStroke, type Point } from '../src/render/brush.ts';
 import { contactSheet, referenceStrip, timingStrip } from '../src/render/sheet.ts';
 import { toPixels, type TorsoTransform } from '../src/track/torso.ts';
@@ -23,13 +23,9 @@ mkdirSync(dir, { recursive: true });
 
 // ---- Qai's reference, when it exists ------------------------------------------
 
-type Timing = { dps: 12 | 8; boil: BoilParams; lash?: { keys?: { drawing: number; tip: Vec2 }[] } };
 function readTiming(): Timing | null {
   const path = join(root, 'reference', 'timing.json');
-  if (!existsSync(path)) return null;
-  const t = JSON.parse(readFileSync(path, 'utf8')) as Partial<Timing>;
-  if ((t.dps !== 12 && t.dps !== 8) || typeof t.boil?.maxPx !== 'number' || typeof t.boil?.cycle !== 'number') return null;
-  return t as Timing;
+  return existsSync(path) ? parseTiming(JSON.parse(readFileSync(path, 'utf8'))) : null;
 }
 type RawStrokes = { width: number; brush: Effect['brush']; strokes: { id: number; points: Point[] }[] };
 function readRaw(): RawStrokes | null {
@@ -40,8 +36,7 @@ const timing = readTiming();
 const raw = readRaw();
 // Without timing.json the sheets still show the engine working, with the
 // example's numbers, and say so; the tests fail instead.
-const PLACEHOLDER: Timing = { dps: 12, boil: { maxPx: 1.5, cycle: 3 } };
-const used = timing ?? PLACEHOLDER;
+const used = timing ?? EXAMPLE_TIMING;
 
 // ---- The synthetic scene -----------------------------------------------------------
 

@@ -10,7 +10,9 @@ Works now:
 
 - Open a clip with the file picker, drag and drop, or `?clip=<url>`. The browser converts it to H.264 at a constant 30 fps, keeps the first 15 s and scales it to 1920 px on the long side. Frame N in the app is frame N in that file, which is the file SAM will get.
 - Pause on any frame and draw with one ink brush: pen pressure, three colors, a size slider, undo and clear.
-- Play it back at 30 fps, with a hand-drawn wobble redrawn 12 times a second.
+- Strokes move with physics (SPEC §8). Each one is a chain that lags behind the body, overshoots and settles. **Stiff** sets it for the next strokes: 0 hangs like a rope, 1 keeps the drawn shape. **Rigid** strokes follow the body exactly, like horns or a halo.
+- Play it back at 30 fps. The strokes are held for 2 or 3 frames at a time, 12 drawings a second, like hand-drawn animation, with a line boil (**Wobble**) that redraws each one slightly differently. In dev, the app reads the drawings per second and the boil from `reference/timing.json`; until that exists, it uses the example file's numbers.
+- **Save strokes** downloads your strokes exactly as drawn, as `raw-strokes.json`, for `reference/` (A6 checks the stored points against them).
 - Export an MP4 (H.264, constant 30 fps, original audio). In dev, each export is also saved to `renders/`.
 - Tracking, with a stand-in until SAM 3.1 is connected. Each stroke's root (its first point) rides the body on every frame, and the stroke turns and scales with it. Strokes set to Behind are tucked behind the person, using a person mask.
   - The stand-in is MediaPipe's pose model, run in the browser. It only loads in dev (`npm run dev`) and is left out of production builds.
@@ -19,7 +21,7 @@ Works now:
   - **Follow: body mask, like SAM** uses only the person mask: its centre, lean and size. That's what SAM's "person" prompt will give. Everything after the mask (`src/track/tracking.ts`, `src/render/compose.ts`) is what SAM's masks will feed.
   - **Show tracking** tints the mask and rings each stroke's root.
 
-Not built yet: SAM 3.1 itself, stroke planning (Muse Wonder) and physics. Strokes move stiffly with the body for now; the rope physics will bend them.
+Not built yet: SAM 3.1 itself, stroke planning (Muse Wonder), and the turn (views drawn from the side and back).
 
 Built for the API, not run yet (the key hasn't arrived):
 
@@ -65,10 +67,10 @@ This serves the app over HTTPS on your Wi-Fi at port 5175; Vite prints the addre
 - `src/motion/` is the frame loop: `timing.ts` is the drawing clock (12 or 8 drawings a second), `boil.ts` the seeded boil, and `animate.ts` runs the physics and holds each drawing between changes.
 - `src/track/torso.ts` is torso space (SPEC §8.1): strokes stored relative to the anchor, in torso heights.
 - `src/track/tracking.ts` turns masks or body points into each stroke's pose on every frame, then fills gaps and smooths out jitter.
-- `src/render/compose.ts` draws a finished frame, with Behind strokes under the person. The preview and the export both use it.
+- `src/render/compose.ts` draws a finished frame from the animated strokes, with Behind strokes under the person. The preview and the export both use it.
 - `src/track/standin.ts` is the dev-only stand-in for SAM 3.1. `tools/standin.py` and `tools/standin-server.ts` are its Python fallback for browsers without WebGL 2, and `tools/setup-standin.mjs` sets that up.
 - `src/export/export.ts` re-encodes the clip with the strokes drawn in.
-- `src/app/main.ts` is the page: drawing, scrubbing, playback, tracking and controls.
+- `src/app/main.ts` is the page: drawing, scrubbing, playback, tracking and controls. `src/app/engine.ts` puts its strokes on the engine: torso space around each tracked root, then the whole clip animated at once.
 - `src/app/label.ts` and `label/index.html` are the `/label` page; `src/app/truth.ts` builds, checks and writes `truth.json`, and `tools/fixtures-server.ts` saves it into `fixtures/` (dev only).
 - `src/types/effect.ts` is the effect JSON (SPEC §7).
 - `vite.config.ts` runs the dev server and saves exports to `renders/`.

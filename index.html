@@ -230,9 +230,16 @@
       <label class="group" aria-label="Brush size"
         ><span class="size-word">Size</span> <input id="size" type="range" min="4" max="96" value="28" /><output id="size-value">28</output></label
       >
+      <label class="group" aria-label="Stiffness of new strokes" title="0 hangs like a rope, 1 keeps the drawn shape"
+        ><span class="size-word">Stiff</span> <input id="stiffness" type="range" min="0" max="100" value="50" /><output id="stiffness-value"
+          >0.50</output
+        ></label
+      >
+      <label class="group" title="New strokes follow the body exactly, like horns or a halo"><input id="rigid" type="checkbox" />Rigid</label>
       <label class="group"><input id="wobble" type="checkbox" checked />Wobble</label>
       <button id="undo" disabled>Undo</button>
       <button id="clear" disabled>Clear</button>
+      <button id="raw-strokes" disabled title="Your strokes exactly as drawn, for reference/raw-strokes.json">Save strokes</button>
     </footer>
 
     <script type="module" src="/src/app/main.ts"></script>

@@ -1,10 +1,13 @@
 import { CanvasSink } from 'mediabunny';
-import { drawStroke, wobbleTick, type Point, type Stroke } from '../render/brush';
+import { DEFAULT_BRUSH, type Point } from '../render/brush';
 import { FPS, frameTime, frameTimes, loadClip, type Clip } from '../video/clip';
 import { exportClip } from '../export/export';
 import { drawMaskTint, renderFrame, type Scene } from '../render/compose';
+import { EXAMPLE_TIMING, parseTiming, type Timing } from '../motion/timing';
 import type { FollowMode } from '../track/standin';
+import { torsoHeights } from '../track/torso';
 import { maskHasPerson, maskNear, trackStroke, type Pose, type Tracking } from '../track/tracking';
+import { animateStrokes, drawLive, type DrawnStroke, type Stroke } from './engine';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const stage = $<HTMLElement>('stage');
@@ -22,6 +25,10 @@ const frameLabel = $<HTMLOutputElement>('frame-label');
 const sizeSlider = $<HTMLInputElement>('size');
 const sizeValue = $<HTMLOutputElement>('size-value');
 const wobbleToggle = $<HTMLInputElement>('wobble');
+const stiffnessSlider = $<HTMLInputElement>('stiffness');
+const stiffnessValue = $<HTMLOutputElement>('stiffness-value');
+const rigidToggle = $<HTMLInputElement>('rigid');
+const rawButton = $<HTMLButtonElement>('raw-strokes');
 const undoButton = $<HTMLButtonElement>('undo');
 const clearButton = $<HTMLButtonElement>('clear');
 const trackButton = $<HTMLButtonElement>('track');
@@ -46,7 +53,30 @@ let downloadUrl = '';
 // time they're needed and kept until the tracking changes.
 let makeTracking: ((mode: FollowMode) => Tracking) | null = null;
 let tracking: Tracking | null = null;
+let torsoUnits: (number | null)[] | null = null; // torso height per frame, from tracking's masks
 const strokePoses = new Map<number, Pose[] | null>();
+
+// Every frame's strokes, animated for the whole clip at once (src/app/engine.ts).
+// Worked out when first needed, and again after anything it depends on changes.
+let animation: DrawnStroke[][] | null = null;
+const invalidate = () => (animation = null);
+
+// Qai's reference/timing.json sets the drawings per second and the boil. The
+// dev server serves it; until it exists (and in production builds) the
+// example file's numbers stand in.
+let timing: Timing = EXAMPLE_TIMING;
+if (import.meta.env.DEV) {
+  fetch('/reference/timing.json')
+    .then((response) => (response.ok ? response.json() : null))
+    .then((json) => {
+      const found = parseTiming(json);
+      if (!found) return;
+      timing = found;
+      invalidate();
+      paint();
+    })
+    .catch(() => {}); // missing: keep the example's numbers
+}
 
 // The video frame on screen, at full clip size. Every repaint starts from it.
 const frameBuffer = document.createElement('canvas');
@@ -167,19 +197,35 @@ function paint() {
   ctx.imageSmoothingQuality = 'high';
   renderFrame(ctx, frameBuffer, frame, clip.width, clip.height, scene());
   if (showTracking.checked && tracking) paintTracking(clip);
-  if (live) drawStroke(ctx, live, wobbleToggle.checked ? wobbleTick(frame) : null, null, false);
+  if (live) drawLive(ctx, live);
 }
 
-// What to draw, and where tracking puts it. The preview works each stroke's
-// poses out as it needs them; the export passes in a fixed copy, so changing
-// the follow mode mid-export can't change the video halfway through.
-function scene(using = tracking, poses: (stroke: Stroke) => Pose[] | null = posesFor): Scene {
+// What to draw. The export holds on to one of these, so changing the follow
+// mode or drawing mid-export can't change the video halfway through.
+function scene(): Scene {
+  const frames = animated();
+  const using = tracking;
   return {
-    strokes: [...strokes],
-    wobble: wobbleToggle.checked,
+    strokes: (i) => frames[i] ?? [],
     personMask: (i) => (using ? maskNear(using.masks, i) : null),
-    pose: (stroke, i) => poses(stroke)?.[i] ?? null,
   };
+}
+
+function animated(): DrawnStroke[][] {
+  if (!animation) {
+    animation = clip
+      ? animateStrokes(strokes, {
+          frameCount: clip.frameCount,
+          width: clip.width,
+          height: clip.height,
+          poses: posesFor,
+          units: torsoUnits,
+          timing,
+          wobble: wobbleToggle.checked,
+        })
+      : [];
+  }
+  return animation;
 }
 
 function posesFor(stroke: Stroke) {
@@ -268,6 +314,8 @@ view.addEventListener('pointerdown', (e) => {
     frame,
     pen: e.pointerType === 'pen',
     layer: document.querySelector<HTMLInputElement>('input[name="layer"]:checked')!.value === 'behind' ? 'behind' : 'front',
+    kind: rigidToggle.checked ? 'rigid' : 'strand',
+    stiffness: Number(stiffnessSlider.value) / 100,
     points: [pointFrom(e)],
   };
   requestPaint();
@@ -285,6 +333,7 @@ function finishStroke() {
   if (!live) return;
   strokes.push(live);
   live = null;
+  invalidate();
   updateButtons();
   requestPaint();
 }
@@ -294,8 +343,31 @@ view.addEventListener('pointercancel', finishStroke);
 function undo() {
   if (busy || strokes.length === 0) return;
   strokes.pop();
+  invalidate();
   updateButtons();
   paint();
+}
+
+// Qai's strokes exactly as drawn, for reference/raw-strokes.json (A6 checks
+// the stored 32 points against them). The effect has one brush, so the size
+// is the first stroke's, in px at 1080 wide.
+function saveRawStrokes() {
+  if (!clip || strokes.length === 0) return;
+  const round = (v: number, places: number) => Number(v.toFixed(places));
+  const raw = {
+    width: clip.width,
+    brush: { ...DEFAULT_BRUSH, size: round((strokes[0].size * 1080) / clip.width, 2) },
+    strokes: strokes.map((stroke) => ({
+      id: stroke.id,
+      points: stroke.points.map(([x, y, pressure]) => [round(x, 2), round(y, 2), round(pressure, 3)]),
+    })),
+  };
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(new Blob([`${JSON.stringify(raw)}\n`], { type: 'application/json' }));
+  link.download = 'raw-strokes.json';
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href));
+  setStatus(`Saved ${strokes.length} stroke${strokes.length === 1 ? '' : 's'} as raw-strokes.json. Put it in reference/ for A6.`);
 }
 
 // ---- Exporting -----------------------------------------------------------------
@@ -307,8 +379,7 @@ async function exportVideo() {
   const startedAt = performance.now();
   try {
     const { width, height } = clip;
-    const fixedPoses = new Map(strokes.map((stroke) => [stroke.id, posesFor(stroke)]));
-    const frameScene = scene(tracking, (stroke) => fixedPoses.get(stroke.id) ?? null);
+    const frameScene = scene();
     const video = await exportClip(
       clip,
       (exportCtx, image, i) => renderFrame(exportCtx, image, i, width, height, frameScene),
@@ -360,6 +431,7 @@ function updateButtons() {
   exportButton.disabled = !ready;
   undoButton.disabled = !ready || strokes.length === 0;
   clearButton.disabled = !ready || strokes.length === 0;
+  rawButton.disabled = !ready || strokes.length === 0;
   trackButton.disabled = !ready;
 }
 
@@ -368,7 +440,9 @@ function updateButtons() {
 // Switches to the tracking for the chosen follow mode, or to none.
 function useTracking() {
   tracking = makeTracking ? makeTracking(followSelect.value as FollowMode) : null;
+  torsoUnits = tracking && clip ? torsoHeights(tracking.masks, clip.width, clip.height) : null;
   strokePoses.clear();
+  invalidate();
   trackingControls.hidden = tracking === null;
   paint();
 }
@@ -425,10 +499,21 @@ scrub.addEventListener('input', () => {
 sizeSlider.addEventListener('input', () => {
   sizeValue.value = sizeSlider.value;
 });
-wobbleToggle.addEventListener('change', paint);
+wobbleToggle.addEventListener('change', () => {
+  invalidate();
+  paint();
+});
+stiffnessSlider.addEventListener('input', () => {
+  stiffnessValue.value = (Number(stiffnessSlider.value) / 100).toFixed(2);
+});
+rigidToggle.addEventListener('change', () => {
+  stiffnessSlider.disabled = rigidToggle.checked; // rigid strokes don't use it
+});
+rawButton.addEventListener('click', saveRawStrokes);
 undoButton.addEventListener('click', undo);
 clearButton.addEventListener('click', () => {
   strokes = [];
+  invalidate();
   updateButtons();
   paint();
 });
