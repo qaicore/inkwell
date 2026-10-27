@@ -71,7 +71,11 @@ const lineOf = (buf, index) => {
   return line;
 };
 
-// 1. The working tree, as git sees it.
+// Each value as a file could hold it: UTF-8, or UTF-16LE (what Windows
+// PowerShell 5.1's ">" writes).
+const needles = [...secrets].map(([value, names]) => ({ names: names.join(', '), bytes: [Buffer.from(value), Buffer.from(value, 'utf16le')] }));
+
+// 1. The working tree, as git sees it, byte for byte, so binary files count.
 const files = git(['ls-files', '-co', '--exclude-standard', '-z']).toString().split('\0').filter(Boolean);
 let scanned = 0;
 for (const rel of files) {
@@ -79,9 +83,9 @@ for (const rel of files) {
   if (!existsSync(path) || !statSync(path).isFile()) continue;
   const buf = readFileSync(path);
   scanned++;
-  for (const [value, names] of secrets) {
-    for (let at = buf.indexOf(value); at !== -1; at = buf.indexOf(value, at + 1)) {
-      hits.push(`${rel}:${lineOf(buf, at)} ${names.join(', ')}`);
+  for (const { names, bytes } of needles) {
+    for (const needle of bytes) {
+      for (let at = buf.indexOf(needle); at !== -1; at = buf.indexOf(needle, at + 1)) hits.push(`${rel}:${lineOf(buf, at)} ${names}`);
     }
   }
 }
@@ -89,12 +93,16 @@ for (const rel of files) {
 // Hits in a patch from git log -p or git diff. Line numbers come from the
 // hunk headers ("@@ -a,b +c,d @@" starts the new file at line c). `label`
 // turns the current commit (none for a diff) into the start of a hit.
+// The patches are made with --text, so binary files show their bytes instead
+// of "Binary files differ", and NULs are dropped from each line, which turns
+// UTF-16 text back into plain characters.
 function scanPatch(patch, label) {
   let commit = '';
   let file = '';
   let newLine = 0;
   let inDiff = false;
-  for (const line of patch.split('\n')) {
+  for (const raw of patch.split('\n')) {
+    const line = raw.replaceAll('\0', '');
     if (line.startsWith('commit ')) {
       commit = line.slice(7, 14);
       file = '';
@@ -120,10 +128,14 @@ function scanPatch(patch, label) {
 
 // 2. The index: a key that was staged and then deleted or changed in the
 // working tree is in no file and no commit yet, but the next commit takes it.
-scanPatch(git(['diff', '--cached', '-p', '--no-color', '--no-ext-diff']).toString(), () => 'staged');
+scanPatch(git(['diff', '--cached', '-p', '--text', '--no-color', '--no-ext-diff']).toString(), () => 'staged');
 
-// 3. Every commit on every ref.
-scanPatch(git(['log', '-p', '--all', '--no-color', '--no-ext-diff']).toString(), (commit) => `history ${commit}`);
+// 3. Every commit on every ref. Merge commits (stashes are merges too) show
+// no diff by default; --diff-merges=first-parent diffs them against the
+// branch they joined, so a key added while resolving a merge, or one that
+// lives only in a stash, shows up.
+const log = git(['log', '-p', '--all', '--text', '--diff-merges=first-parent', '--no-color', '--no-ext-diff']);
+scanPatch(log.toString(), (commit) => `history ${commit}`);
 
 if (hits.length > 0) {
   process.stdout.write(`scan-secrets: found a secret value in ${hits.length} place(s):\n${[...new Set(hits)].map((h) => `  ${h}`).join('\n')}\n`);

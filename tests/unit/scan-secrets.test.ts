@@ -70,6 +70,56 @@ describe('scan-secrets', () => {
     expect(out.stdout).toContain('staged notes.md:1 META_API_KEY');
   });
 
+  it('finds a key in a UTF-16 file and in a binary file, in the tree and in history', () => {
+    const utf16 = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(`notes\r\nkey ${FAKE_KEY}\r\n`, 'utf16le')]);
+    const binary = Buffer.concat([Buffer.from([0, 1, 2, 255]), Buffer.from(FAKE_KEY), Buffer.from([0, 0])]);
+    const r = repo({ '.env': `META_API_KEY=${FAKE_KEY}\n`, 'notes.txt': utf16, 'blob.bin': binary });
+    r.commit('leak');
+    let out = r.scan();
+    expect(out.status).toBe(1);
+    expect(out.stdout).toContain('notes.txt:2 META_API_KEY');
+    expect(out.stdout).toContain('blob.bin:1 META_API_KEY');
+
+    writeFileSync(join(r.dir, 'notes.txt'), 'clean\n');
+    writeFileSync(join(r.dir, 'blob.bin'), Buffer.from([0, 1]));
+    r.commit('clean');
+    out = r.scan();
+    expect(out.status).toBe(1); // still in history
+    expect(out.stdout).toMatch(/history [0-9a-f]{7} notes\.txt:2 META_API_KEY/);
+    expect(out.stdout).toMatch(/history [0-9a-f]{7} blob\.bin:1 META_API_KEY/);
+    expect(out.stdout + out.stderr).not.toContain(FAKE_KEY);
+  });
+
+  it('finds a key that only a merge resolution added', () => {
+    const r = repo({ '.env': `META_API_KEY=${FAKE_KEY}\n`, 'a.txt': 'start\n' });
+    r.commit('start');
+    r.git('checkout', '-q', '-b', 'side');
+    writeFileSync(join(r.dir, 'b.txt'), 'side\n');
+    r.commit('side');
+    r.git('checkout', '-q', '-');
+    writeFileSync(join(r.dir, 'c.txt'), 'main\n');
+    r.commit('main');
+    r.git('merge', '-q', '--no-ff', '--no-commit', 'side');
+    writeFileSync(join(r.dir, 'a.txt'), `start\nkey ${FAKE_KEY}\n`); // in neither branch, only in the merge
+    r.commit('merge side');
+    const merge = r.git('rev-parse', '--short=7', 'HEAD').stdout.trim();
+    writeFileSync(join(r.dir, 'a.txt'), 'start\n');
+    r.commit('drop it');
+    const out = r.scan();
+    expect(out.status).toBe(1);
+    expect(out.stdout).toContain(`history ${merge} a.txt:2 META_API_KEY`);
+  });
+
+  it('finds a key that lives only in a stash', () => {
+    const r = repo({ '.env': `META_API_KEY=${FAKE_KEY}\n`, 'a.txt': 'start\n' });
+    r.commit('start');
+    writeFileSync(join(r.dir, 'a.txt'), `start\nkey ${FAKE_KEY}\n`);
+    r.git('stash', '-q'); // the working tree is clean again, and nothing was committed
+    const out = r.scan();
+    expect(out.status).toBe(1);
+    expect(out.stdout).toMatch(/history [0-9a-f]{7} a\.txt:2 META_API_KEY/);
+  });
+
   it('fails on a secret too short to scan for', () => {
     const r = repo({ '.env': 'PROXY_PASSCODE=1234\n' });
     r.commit('start');
