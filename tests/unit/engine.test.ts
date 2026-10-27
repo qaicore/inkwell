@@ -48,17 +48,52 @@ describe('physics: the strand chain', () => {
     expect(length(before, chain.points[31])).toBeLessThan(1e-3);
   });
 
-  it('keeps a stiff stroke within the bend limit of its drawn angle at the root while the body runs into it', () => {
+  it('keeps a stroke of stiffness 0.3 or more within the bend limit of its drawn angle at the root while the body runs into it', () => {
     // Drawn pointing right; the root runs right at a segment length per step,
     // which buckled the stroke into a loop before the root joint was limited.
     const target = arc(32, 10);
-    const chain = createChain(target, 'strand', 0.3);
     const limit = (DEFAULT_PHYSICS.bendLimitDeg! * Math.PI) / 180;
-    for (let s = 0; s < 120; s++) {
-      const moved = target.map((p): Vec2 => [p[0] + 10 * s, p[1]]);
-      stepChain(chain, moved, 420);
-      const first = Math.atan2(chain.points[1][1] - chain.points[0][1], chain.points[1][0] - chain.points[0][0]);
-      expect(Math.abs(first)).toBeLessThanOrEqual(limit + 1e-9);
+    for (const stiffness of [0.3, 0.6, 1]) {
+      const chain = createChain(target, 'strand', stiffness);
+      for (let s = 0; s < 120; s++) {
+        const moved = target.map((p): Vec2 => [p[0] + 10 * s, p[1]]);
+        stepChain(chain, moved, 420);
+        const first = Math.atan2(chain.points[1][1] - chain.points[0][1], chain.points[1][0] - chain.points[0][0]);
+        expect(Math.abs(first)).toBeLessThanOrEqual(limit + 1e-9);
+      }
+    }
+  });
+
+  // Hangs a stroke drawn from [500, 500] at `heading` for 12 s and returns its tip.
+  function hang(heading: number, stiffness: number): Vec2 {
+    const target = arc(32, 10).map((p): Vec2 => {
+      const [x, y] = [p[0] - 500, p[1] - 500];
+      return [500 + x * Math.cos(heading) - y * Math.sin(heading), 500 + x * Math.sin(heading) + y * Math.cos(heading)];
+    });
+    const chain = createChain(target, 'strand', stiffness);
+    for (let s = 0; s < 120 * 12; s++) stepChain(chain, target, 420);
+    return chain.points[31];
+  }
+
+  it('lets a nearly-rope stroke drawn upward fall and hang below its root', () => {
+    // The root joint loosens as stiffness falls toward 0, so at 0.01 nothing
+    // holds it up by its root.
+    const tip = hang(-Math.PI / 2, 0.01);
+    expect(tip[1]).toBeGreaterThan(500 + 300);
+  });
+
+  it('changes how a stroke hangs gradually with stiffness, with no jump', () => {
+    // Drawn pointing right, hung at stiffness 0, 0.01, … 0.4: the tip's height
+    // may only change a little from one step of 0.01 to the next (at most
+    // 31 px now). Holding the root at the full limit from any stiffness above
+    // 0 made it jump 127 px between 0 and 0.01. A stroke drawn straight up
+    // isn't used here: between 0.01 and 0.02 its shape pull starts to win
+    // over gravity and it stands up, root limit or not.
+    let previous = hang(0, 0);
+    for (let i = 1; i <= 40; i++) {
+      const tip = hang(0, i / 100);
+      expect(Math.abs(tip[1] - previous[1]), `stiffness ${i / 100}`).toBeLessThan(40);
+      previous = tip;
     }
   });
 

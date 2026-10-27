@@ -19,6 +19,7 @@ export interface PhysicsParams {
 export const DEFAULT_PHYSICS: PhysicsParams = { dt: 1 / 120, passes: 8, damping: 0.04, gravity: 2, bendLimitDeg: 35 };
 const PULL = 0.5; // shape pull k = PULL · stiffness²
 const FTL_DAMPING = 0.9; // share of a child's correction taken out of its parent's velocity (Müller et al.)
+const ROOT_HELD_FROM = 0.3; // stiffness from which the root joint is held to the full bend limit
 
 export interface Chain {
   kind: 'strand' | 'rigid';
@@ -102,13 +103,22 @@ export function stepChain(chain: Chain, targetPx: Vec2[], unitPx: number, params
 
   // 4. Bend limit: no joint bends more than the limit away from the target's
   // bend at that joint. Measuring against the target, not a straight line,
-  // keeps a curve Qai drew; it only stops kinks he didn't draw. A stroke with
-  // any stiffness has a drawn angle at the root too, where it leaves the
-  // body, and keeps it within the limit; without that, a body moving along
-  // the stroke faster than its nodes can follow buckles it at the root into
-  // a loop that rolls down to the tip. A rope (stiffness 0) has no drawn shape
-  // to keep, so it is free at the root and hangs straight down (P4).
-  if (params.bendLimitDeg !== null) limitBends(points, targetPx, (params.bendLimitDeg * Math.PI) / 180, chain.stiffness > 0);
+  // keeps a curve Qai drew; it only stops kinks he didn't draw.
+  if (params.bendLimitDeg !== null) {
+    const limit = (params.bendLimitDeg * Math.PI) / 180;
+    limitBends(points, targetPx, limit, rootLimit(chain.stiffness, limit));
+  }
+}
+
+// How far the first segment may turn from the drawn angle where the stroke
+// leaves the body. Held to the full limit, a body moving along the stroke
+// faster than its nodes can follow can't buckle it at the root into a loop
+// that rolls down to the tip. A rope (stiffness 0) has no drawn shape to keep,
+// so it is free there (π) and hangs straight down (P4). In between, the limit
+// tightens linearly with stiffness, so a small change in stiffness is a small
+// change in how the stroke hangs.
+function rootLimit(stiffness: number, limit: number) {
+  return Math.PI - (Math.PI - limit) * Math.min(1, stiffness / ROOT_HELD_FROM);
 }
 
 // The direction to restore segment a→b along, and its length measured that
@@ -152,9 +162,9 @@ function follow(points: Vec2[], i: number, length: number, before: Vec2): Vec2 {
 // Rebuilds the chain root to tip from its segments, keeping each segment's
 // length and direction, except that a joint bent past the limit (measured
 // from the target's bend there) is turned back to the limit. Everything past
-// that joint shifts with it, so no length changes. With `root`, the first
-// segment is held within the limit of the target's first segment too.
-function limitBends(points: Vec2[], target: Vec2[], limit: number, root: boolean) {
+// that joint shifts with it, so no length changes. The first segment is held
+// within `root` of the target's first segment.
+function limitBends(points: Vec2[], target: Vec2[], limit: number, root: number) {
   const n = points.length;
   const lengths = new Array<number>(n - 1);
   const headings = new Array<number>(n - 1);
@@ -162,10 +172,11 @@ function limitBends(points: Vec2[], target: Vec2[], limit: number, root: boolean
     lengths[i] = distance(points[i], points[i + 1]);
     headings[i] = heading(points[i], points[i + 1]);
   }
-  for (let i = root ? 0 : 1; i < n - 1; i++) {
+  for (let i = 0; i < n - 1; i++) {
     const drawn = heading(target[i], target[i + 1]);
     const off = i === 0 ? wrap(headings[0] - drawn) : wrap(headings[i] - headings[i - 1] - wrap(drawn - heading(target[i - 1], target[i])));
-    if (Math.abs(off) > limit) headings[i] -= off - Math.sign(off) * limit;
+    const max = i === 0 ? root : limit;
+    if (Math.abs(off) > max) headings[i] -= off - Math.sign(off) * max;
     const [x, y] = points[i];
     points[i + 1] = [x + lengths[i] * Math.cos(headings[i]), y + lengths[i] * Math.sin(headings[i])];
   }
