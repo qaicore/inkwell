@@ -5,10 +5,9 @@
 // The cap works by reservation: before forwarding a paid call, it adds that
 // call's worst-case cost to today's total and refuses the call if that would
 // pass the cap. It never refunds the difference, so the real spend can only
-// come in under the recorded one. Today's total lives in a KV namespace, which
-// is eventually consistent: two calls in the same instant could both pass, so
-// the cap can be exceeded by at most one call's worth. Exact counting would
-// need a Durable Object, which this doesn't need yet.
+// come in under the recorded one. The add-and-compare is one atomic step in
+// the store (spend.ts keeps it in D1), so calls arriving together can't all
+// slip under the cap.
 //
 // A call is priced from exactly what gets forwarded. Only the keys below are
 // forwarded, and a request carrying any other key is refused, since keys like
@@ -16,10 +15,10 @@
 // proxy can't see.
 import { MAX_CLIP_FRAMES, SAM_MODEL, WONDER_MODEL, samCost, wonderMaxCost } from './pricing.ts';
 
-// The subset of a Cloudflare KV namespace this uses.
+// Today's spend total. reserve() adds `usd` to `day`'s total only if the total
+// stays within `cap`, as one atomic step, and says whether it did.
 export interface SpendStore {
-  get(key: string): Promise<string | null>;
-  put(key: string, value: string, options?: { expirationTtl?: number }): Promise<void>;
+  reserve(day: string, usd: number, cap: number): Promise<boolean>;
 }
 
 export interface ProxyEnv {
@@ -56,8 +55,8 @@ function sameSecret(given: string, expected: string): boolean {
   return diff === 0;
 }
 
-export function spendKey(now: Date): string {
-  return `spend:${now.toISOString().slice(0, 10)}`; // one total per UTC day
+export function spendDay(now: Date): string {
+  return now.toISOString().slice(0, 10); // one total per UTC day
 }
 
 // The image parts of a Wonder `input`, or a message if it holds something the
@@ -95,7 +94,7 @@ function textLength(payload: Json, images: Set<Json>): number {
 export async function handleProxy(request: Request, path: string, env: ProxyEnv, deps: ProxyDeps): Promise<Response> {
   const cap = Number(env.DAILY_SPEND_CAP_USD);
   if (!env.META_API_KEY || !env.SPEND || !env.DAILY_SPEND_CAP_USD || !Number.isFinite(cap) || cap < 0) {
-    return json(503, 'The proxy is not configured: it needs META_API_KEY, DAILY_SPEND_CAP_USD and the SPEND KV binding.');
+    return json(503, 'The proxy is not configured: it needs META_API_KEY, DAILY_SPEND_CAP_USD and the SPEND_DB D1 binding.');
   }
   if (request.method !== 'POST') return json(405, 'Only POST is proxied.');
 
@@ -134,11 +133,8 @@ export async function handleProxy(request: Request, path: string, env: ProxyEnv,
     return json(404, 'Unknown route.');
   }
 
-  if (cost > 0) {
-    const key = spendKey((deps.now ?? (() => new Date()))());
-    const spent = Number((await env.SPEND.get(key)) ?? 0) || 0;
-    if (spent + cost > cap) return json(429, `Today's spend cap of $${cap.toFixed(2)} is reached.`);
-    await env.SPEND.put(key, String(spent + cost), { expirationTtl: 2 * 24 * 3600 });
+  if (cost > 0 && !(await env.SPEND.reserve(spendDay((deps.now ?? (() => new Date()))()), cost, cap))) {
+    return json(429, `Today's spend cap of $${cap.toFixed(2)} is reached.`);
   }
 
   const headers = new Headers({ authorization: `Bearer ${env.META_API_KEY}` });

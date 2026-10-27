@@ -1,17 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { PASSCODE_HEADER, WONDER_MAX_OUTPUT_TOKENS, handleProxy, spendKey, type ProxyEnv, type SpendStore } from '../../functions/_lib/proxy.ts';
+import { PASSCODE_HEADER, WONDER_MAX_OUTPUT_TOKENS, handleProxy, spendDay, type ProxyEnv, type SpendStore } from '../../functions/_lib/proxy.ts';
 import { MAX_CLIP_FRAMES, samCost, wonderMaxCost } from '../../functions/_lib/pricing.ts';
 
 // Offline: a fake upstream that records what it was sent, and an in-memory KV.
 const UPSTREAM = 'https://upstream.test/v1';
 const NOW = new Date('2026-10-27T15:00:00Z');
 
-function memoryStore(): SpendStore & { data: Map<string, string> } {
-  const data = new Map<string, string>();
+function memoryStore(): SpendStore & { data: Map<string, number> } {
+  const data = new Map<string, number>();
   return {
     data,
-    get: async (key) => data.get(key) ?? null,
-    put: async (key, value) => void data.set(key, value),
+    reserve: async (day, usd, cap) => {
+      const total = (data.get(day) ?? 0) + usd;
+      if (total > cap) return false;
+      data.set(day, total);
+      return true;
+    },
   };
 }
 
@@ -62,7 +66,7 @@ describe('proxy: spend cap', () => {
     const third = await call('responses', { body: sam });
     expect(third.status).toBe(429);
     expect(sent).toHaveLength(2);
-    expect(Number((env.SPEND as ReturnType<typeof memoryStore>).data.get(spendKey(NOW)))).toBeCloseTo(2 * samCost(MAX_CLIP_FRAMES), 9);
+    expect(Number((env.SPEND as ReturnType<typeof memoryStore>).data.get(spendDay(NOW)))).toBeCloseTo(2 * samCost(MAX_CLIP_FRAMES), 9);
   });
 
   it('caps Wonder output tokens and counts its images', async () => {
@@ -123,7 +127,7 @@ describe('proxy: pricing what it forwards', () => {
     const body = wonder({ input: [{ type: 'message', role: 'user', content }], max_output_tokens: 4000 });
     expect((await call('responses', { body })).status).toBe(200);
     expect(sent).toHaveLength(1);
-    const reserved = Number((env.SPEND as ReturnType<typeof memoryStore>).data.get(spendKey(NOW)));
+    const reserved = Number((env.SPEND as ReturnType<typeof memoryStore>).data.get(spendDay(NOW)));
     expect(reserved).toBeGreaterThan(wonderMaxCost(8, prompt.length, 4000));
     expect(reserved).toBeLessThan(wonderMaxCost(8, prompt.length + 1000, 4000));
   });
