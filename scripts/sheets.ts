@@ -11,29 +11,58 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Effect, Stroke, Vec2 } from '../src/types/effect.ts';
 import { animate, type PlacedStroke } from '../src/motion/animate.ts';
-import { EXAMPLE_TIMING, parseTiming, type Timing } from '../src/motion/timing.ts';
+import { EXAMPLE_TIMING, validateTiming } from '../src/motion/timing.ts';
 import { DEFAULT_BRUSH, resampleStroke, type Point } from '../src/render/brush.ts';
 import { contactSheet, fit, lineStrip, referenceStrip, timingStrip, type View } from '../src/render/sheet.ts';
 import { toPixels, type TorsoTransform } from '../src/track/torso.ts';
 
 const root = process.cwd();
-const milestone = readFileSync(join(root, 'verify', 'ACTIVE'), 'utf8').replace(/^﻿/, '').trim();
+
+// Text as Windows tools may write it: UTF-16 with a byte-order mark
+// (PowerShell 5.1's ">"), or UTF-8 with or without one.
+function readText(path: string): string {
+  const b = readFileSync(path);
+  const s = b[0] === 0xff && b[1] === 0xfe ? b.toString('utf16le') : b.toString('utf8');
+  return s.replace(/^\uFEFF/, '');
+}
+
+// verify.mjs passes the milestone it has already read and checked; run by
+// hand, this reads verify/ACTIVE itself.
+const activePath = join(root, 'verify', 'ACTIVE');
+const milestone = (process.argv[2] ?? (existsSync(activePath) ? readText(activePath) : '')).trim();
+if (!/^M\d+$/.test(milestone)) {
+  process.stderr.write(`sheets: needs a milestone id like M1 (from verify/ACTIVE), not "${milestone}"\n`);
+  process.exit(1);
+}
 const dir = join(root, 'verify', 'out', milestone);
 mkdirSync(dir, { recursive: true });
 
 // ---- Qai's reference, when it exists ------------------------------------------
 
-function readTiming(): Timing | null {
-  const path = join(root, 'reference', 'timing.json');
-  return existsSync(path) ? parseTiming(JSON.parse(readFileSync(path, 'utf8'))) : null;
+// A reference file's JSON, or whether it's missing or unreadable.
+function readReference(name: string): { json: unknown } | { missing: true } | { problem: string } {
+  const path = join(root, 'reference', name);
+  if (!existsSync(path)) return { missing: true };
+  try {
+    return { json: JSON.parse(readText(path)) };
+  } catch (err) {
+    return { problem: `not valid JSON (${(err as Error).message})` };
+  }
 }
+const timingFile = readReference('timing.json');
+const timingRead = 'json' in timingFile ? validateTiming(timingFile.json) : timingFile;
+const timing = 'timing' in timingRead ? timingRead.timing : null;
+// Why the example's numbers stand in, if they do: missing, or there but rejected.
+const timingGap = 'missing' in timingRead ? 'missing' : 'problem' in timingRead ? `rejected (${timingRead.problem})` : '';
+
 type RawStrokes = { width: number; brush: Effect['brush']; strokes: { id: number; points: Point[] }[] };
-function readRaw(): RawStrokes | null {
-  const path = join(root, 'reference', 'raw-strokes.json');
-  return existsSync(path) ? (JSON.parse(readFileSync(path, 'utf8')) as RawStrokes) : null;
+const rawFile = readReference('raw-strokes.json');
+const rawProblem = 'problem' in rawFile ? rawFile.problem : 'json' in rawFile && !isRaw(rawFile.json) ? 'not { width, brush, strokes: [{ id, points: [[x, y, pressure]] }] }' : '';
+const raw = 'json' in rawFile && !rawProblem ? (rawFile.json as RawStrokes) : null;
+function isRaw(json: unknown) {
+  const r = json as Partial<RawStrokes> | null;
+  return typeof r?.width === 'number' && r.width > 0 && typeof r.brush === 'object' && Array.isArray(r.strokes) && r.strokes.every((s) => Array.isArray(s?.points));
 }
-const timing = readTiming();
-const raw = readRaw();
 // Without timing.json the sheets still show the engine working, with the
 // example's numbers, and say so; the tests fail instead.
 const used = timing ?? EXAMPLE_TIMING;
@@ -110,7 +139,7 @@ const frames = animate({ effect, frames: FRAMES, anchor: (id, f) => anchors.get(
 const source = 'SYNTHETIC STAND-IN: a seeded side-step anchor and demo strokes, not a clip and not Qai\'s strokes';
 const timingLine = timing
   ? `timing from reference/timing.json: ${used.dps} dps, boil ${used.boil.maxPx} px every ${used.boil.cycle} drawings`
-  : `reference/timing.json MISSING: placeholder ${used.dps} dps, boil ${used.boil.maxPx} px every ${used.boil.cycle} drawings (the example's numbers)`;
+  : `reference/timing.json ${timingGap.replace(/^\w+/, (word) => word.toUpperCase())}: placeholder ${used.dps} dps, boil ${used.boil.maxPx} px every ${used.boil.cycle} drawings (the example's numbers)`;
 const strokesLine = 'strokes: 1 tail (red, strand, stiffness 0.3, behind), 2 tendril (strand, stiffness 0.15), 3-4 horns (rigid); gravity and damping from SPEC §8.7';
 
 writeFileSync(
@@ -200,7 +229,8 @@ if (keys && keys.length > 0) {
     });
   }
 } else {
-  refCells.push({ title: 'lash keys', note: 'reference/timing.json is missing, so there are no keys to draw yet. Qai adds it from his traced lash (SPEC §11).' });
+  const why = timing ? 'has no lash keys' : `is ${timingGap}`;
+  refCells.push({ title: 'lash keys', note: `reference/timing.json ${why}, so there are no keys to draw yet. Qai adds them from his traced lash (SPEC §11).` });
 }
 if (raw) {
   const s = 1080 / raw.width;
@@ -214,7 +244,8 @@ if (raw) {
     })),
   });
 } else {
-  refCells.push({ title: 'raw strokes (A6)', note: 'reference/raw-strokes.json is missing: Qai exports his strokes from the app (SPEC §11).' });
+  const why = rawProblem ? `is rejected (${rawProblem})` : 'is missing';
+  refCells.push({ title: 'raw strokes (A6)', note: `reference/raw-strokes.json ${why}: Qai exports his strokes from the app with Save strokes (SPEC §11).` });
 }
 refCells.push({ title: 'demo effect at rest (synthetic)', strokes: frames[0].placed.map((p) => ({ ...p, id: 1 })) });
 writeFileSync(
@@ -240,8 +271,8 @@ writeFileSync(
       milestone,
       source: 'synthetic',
       note: source,
-      timing: timing ? 'reference/timing.json' : 'missing: placeholder values',
-      rawStrokes: raw ? 'reference/raw-strokes.json' : 'missing',
+      timing: timing ? 'reference/timing.json' : `${timingGap}: placeholder values`,
+      rawStrokes: raw ? 'reference/raw-strokes.json' : rawProblem ? `rejected (${rawProblem})` : 'missing',
       frames: FRAMES,
       drawings: new Set(frames.map((f) => f.k)).size,
       dps: used.dps,
@@ -251,4 +282,4 @@ writeFileSync(
     2,
   )}\n`,
 );
-process.stdout.write(`sheets: ${milestone} contact sheets from ${timing ? 'reference timing' : 'placeholder timing'} (synthetic stand-in motion)\n`);
+process.stdout.write(`sheets: ${milestone} contact sheets from ${timing ? 'reference timing' : `placeholder timing (reference/timing.json ${timingGap})`} (synthetic stand-in motion)\n`);

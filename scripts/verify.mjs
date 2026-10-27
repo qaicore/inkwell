@@ -77,9 +77,11 @@ if (dirs.length === 0) {
 
 // The sheets are pictures of the engine, not a criterion, so a failure here
 // is reported and fails the run, but never hides the test results above.
+// They go in the active milestone's folder, so they need one; sheets.ts gets
+// the id checked above instead of reading verify/ACTIVE again.
 let sheetsStatus = 0;
-if (upTo >= 1) {
-  const sheets = spawnSync(process.execPath, [join(root, 'scripts', 'sheets.ts')], { cwd: root, stdio: 'inherit' });
+if (active && upTo >= 1) {
+  const sheets = spawnSync(process.execPath, [join(root, 'scripts', 'sheets.ts'), active], { cwd: root, stdio: 'inherit' });
   sheetsStatus = sheets.status ?? 1;
   if (sheetsStatus !== 0) process.stderr.write('verify: scripts/sheets.ts failed, so there are no contact sheets\n');
 }
