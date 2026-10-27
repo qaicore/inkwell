@@ -8,7 +8,9 @@
     "noEmit": true,
     "allowImportingTsExtensions": true,
     "isolatedModules": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
     "skipLibCheck": true
   },
-  "include": ["src", "tools", "vite.config.ts"]
+  "include": ["src", "tools", "functions", "scripts/**/*.ts", "tests/unit", "vite.config.ts", "vitest.config.ts"]
 }

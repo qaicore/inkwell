@@ -59,5 +59,5 @@ This serves the app over HTTPS on your Wi-Fi at port 5175; Vite prints the addre
 - **Open-source libraries** (from `package.json`):
   - [perfect-freehand](https://github.com/steveruizok/perfect-freehand) (MIT) turns points into the stroke outline.
   - [Mediabunny](https://mediabunny.dev) (MPL-2.0) decodes and encodes the video.
-  - Dev only, not shipped: [MediaPipe Tasks Vision](https://ai.google.dev/edge/mediapipe/solutions/vision/pose_landmarker) (Apache-2.0), the pose model standing in for SAM 3.1 while SAM isn't connected; [@vitejs/plugin-basic-ssl](https://github.com/vitejs/vite-plugin-basic-ssl) (MIT) for phone mode; [Vite](https://vite.dev) (MIT); [TypeScript](https://www.typescriptlang.org) (Apache-2.0); @types/node (MIT).
+  - Dev only, not shipped: [MediaPipe Tasks Vision](https://ai.google.dev/edge/mediapipe/solutions/vision/pose_landmarker) (Apache-2.0), the pose model standing in for SAM 3.1 while SAM isn't connected; [@vitejs/plugin-basic-ssl](https://github.com/vitejs/vite-plugin-basic-ssl) (MIT) for phone mode; [Vite](https://vite.dev) (MIT); [Vitest](https://vitest.dev) (MIT) runs the tests; [TypeScript](https://www.typescriptlang.org) (Apache-2.0); @types/node (MIT).
 - **Code:** written with Claude Code under Qai's direction, from Oct 27.
