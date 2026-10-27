@@ -75,13 +75,17 @@ export function validateTruth(value: unknown): { truth: Truth } | { problems: st
   if (t.fps !== 30) problems.push('"fps" must be 30 (frames of the converted clip)');
   const ascending = (frames: number[]) => frames.every((f, i) => i === 0 || f > frames[i - 1]);
 
+  // The order checks look only at marks whose frame is valid; the rest are
+  // already listed as problems.
+  const frames = (marks: unknown[]) => marks.filter((m): m is { frame: number } => isObject(m) && isFrame(m.frame)).map((m) => m.frame);
+
   if (!Array.isArray(t.roots)) problems.push('"roots" must be a list');
   else {
     t.roots.forEach((r, i) => {
       const ok = isObject(r) && isFrame(r.frame) && Array.isArray(r.xy) && r.xy.length === 2 && r.xy.every(Number.isFinite);
       if (!ok) problems.push(`roots[${i}] must be { "frame": <whole number>, "xy": [x, y] }`);
     });
-    if (!ascending(t.roots.map((r) => (r as { frame: number }).frame))) problems.push('"roots" must be in frame order, one per frame');
+    if (!ascending(frames(t.roots))) problems.push('"roots" must be in frame order, one per frame');
   }
   if (!Array.isArray(t.facing)) problems.push('"facing" must be a list');
   else {
@@ -90,7 +94,7 @@ export function validateTruth(value: unknown): { truth: Truth } | { problems: st
         problems.push(`facing[${i}] must be { "frame": <whole number>, "label": ${FACINGS.map((l) => `"${l}"`).join(' | ')} }`);
       }
     });
-    if (!ascending(t.facing.map((f) => (f as { frame: number }).frame))) problems.push('"facing" must be in frame order, one per frame');
+    if (!ascending(frames(t.facing))) problems.push('"facing" must be in frame order, one per frame');
   }
   if (!Array.isArray(t.still)) problems.push('"still" must be a list');
   else {
@@ -104,6 +108,19 @@ export function validateTruth(value: unknown): { truth: Truth } | { problems: st
   }
   return problems.length > 0 ? { problems } : { truth: value as Truth };
 }
+
+// Marks off the §11 cadence: a valid file, but not one the page makes, so
+// worth a look before it's saved or used.
+export function truthWarnings(truth: Truth): string[] {
+  const warnings: string[] = [];
+  const offRoots = truth.roots.filter((r) => r.frame % ROOT_EVERY !== 0).map((r) => r.frame);
+  const offFacing = truth.facing.filter((f) => f.frame % FACING_EVERY !== 0).map((f) => f.frame);
+  if (offRoots.length > 0) warnings.push(`roots off every ${ROOT_EVERY}th frame: ${listFrames(offRoots)}`);
+  if (offFacing.length > 0) warnings.push(`facing marks off every ${FACING_EVERY}th frame: ${listFrames(offFacing)}`);
+  return warnings;
+}
+
+const listFrames = (frames: number[]) => (frames.length > 6 ? `${frames.slice(0, 6).join(', ')} and ${frames.length - 6} more` : frames.join(', '));
 
 // The file as saved: the key order of SPEC §11, one mark per line, so a diff
 // of two labeling passes reads frame by frame.

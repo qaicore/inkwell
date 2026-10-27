@@ -8,6 +8,7 @@ import {
   setFacing,
   setRoot,
   stillAt,
+  truthWarnings,
   validateTruth,
 } from '../../src/app/truth.ts';
 
@@ -99,5 +100,23 @@ describe('truth: the saved file', () => {
     expect(problems.some((p) => p.startsWith('still[0]'))).toBe(true);
     expect(problems.some((p) => p.startsWith('still[2] overlaps'))).toBe(true);
     expect(validateTruth([])).toEqual({ problems: ['truth.json must be a JSON object'] });
+  });
+
+  it('lists null and junk marks as problems instead of throwing', () => {
+    const result = validateTruth({ clip: 'walk', fps: 30, roots: [null, 7], facing: [null, { frame: 6, label: 'front' }], still: [] });
+    expect(result).toEqual({
+      problems: [
+        'roots[0] must be { "frame": <whole number>, "xy": [x, y] }',
+        'roots[1] must be { "frame": <whole number>, "xy": [x, y] }',
+        'facing[0] must be { "frame": <whole number>, "label": "front" | "right" | "back" | "left" }',
+      ],
+    });
+  });
+
+  it('warns about marks off the every-10th and every-6th cadence, and only those', () => {
+    let truth = setRoot(setRoot(emptyTruth('walk'), 10, [1, 1]), 13, [1, 1]);
+    truth = setFacing(setFacing(truth, 6, 'front'), 7, 'left');
+    expect(truthWarnings(truth)).toEqual(['roots off every 10th frame: 13', 'facing marks off every 6th frame: 7']);
+    expect(truthWarnings(setRoot(emptyTruth('walk'), 0, [1, 1]))).toEqual([]);
   });
 });
