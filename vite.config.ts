@@ -51,6 +51,23 @@ export default defineConfig(({ mode }) => {
       host: phone ? true : undefined,
       // The Python stand-in's environment and work files aren't source.
       watch: { ignored: ['**/.venv/**', '**/.standin/**'] },
+      // Files the dev server never serves, even on request; phone mode serves
+      // the whole Wi-Fi. Setting this replaces Vite's defaults, so they're
+      // listed again first; then .dev.vars, where the Meta key lives, and
+      // Wrangler's local state.
+      fs: {
+        deny: [
+          '.env',
+          '.env.*',
+          '*.{crt,pem,key,p12,pfx,cer,der}',
+          '.npmrc',
+          '.yarnrc.yml',
+          '**/.git/**',
+          '.dev.vars',
+          '.dev.vars.*',
+          '**/.wrangler/**',
+        ],
+      },
     },
     // The stand-in tracker is only imported when you press Track. Bundle it
     // up front, or Vite finds it then and reloads the page mid-run.
