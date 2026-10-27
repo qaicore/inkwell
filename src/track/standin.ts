@@ -1,6 +1,6 @@
 import { FilesetResolver, PoseLandmarker, type MPMask, type NormalizedLandmark } from '@mediapipe/tasks-vision';
 import { CanvasSink } from 'mediabunny';
-import { FPS, frameTimes, type Clip } from './clip';
+import { FPS, frameTimes, type Clip } from '../video/clip';
 import { followMask, followPoints, maskHasPerson, type Mask, type PointSet, type Tracking } from './tracking';
 
 // DEV ONLY: a stand-in for SAM 3.1, so everything after tracking can be built

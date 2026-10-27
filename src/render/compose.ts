@@ -1,5 +1,5 @@
 import { drawStroke, wobbleTick, type Stroke } from './brush';
-import type { Mask, Pose } from './tracking';
+import type { Mask, Pose } from '../track/tracking';
 
 // What to draw over the video, and where tracking puts it on each frame.
 export type Scene = {

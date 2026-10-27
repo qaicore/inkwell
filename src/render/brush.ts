@@ -1,6 +1,6 @@
 import { getStroke, type StrokeOptions } from 'perfect-freehand';
-import { FPS } from './clip';
-import { applyPose, type Pose } from './tracking';
+import { FPS } from '../video/clip';
+import { applyPose, type Pose } from '../track/tracking';
 
 export type Point = [x: number, y: number, pressure: number];
 

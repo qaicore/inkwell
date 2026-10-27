@@ -1,5 +1,5 @@
 # DEV ONLY: the stand-in pose model, run in Python for browsers that can't
-# give the page WebGL 2. Same model and settings as src/standin.ts. The dev
+# give the page WebGL 2. Same model and settings as src/track/standin.ts. The dev
 # server (tools/standin-server.ts) runs it as
 #   python standin.py <clip> <model> <clip width> <clip height> <mask width> <mask height>
 # and sends what it prints straight back to the page: a 4-byte length, a JSON
@@ -71,7 +71,7 @@ with vision.PoseLandmarker.create_from_options(options) as landmarker:
         has_mask.append(bool(result.segmentation_masks))
         if result.segmentation_masks:
             values = result.segmentation_masks[0].numpy_view().reshape(mask_height, mask_width)
-            # Same tightened edge as toMask() in src/standin.ts.
+            # Same tightened edge as toMask() in src/track/standin.ts.
             masks[i] = np.clip((values - 0.45) / 0.1 * 255, 0, 255).round().astype(np.uint8)
 
 header = json.dumps({'bodies': bodies, 'hasMask': has_mask}).encode()

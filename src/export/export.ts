@@ -1,5 +1,5 @@
 import { BufferTarget, Conversion, Mp4OutputFormat, Output, Quality } from 'mediabunny';
-import { FPS, retryInSoftware, type Clip } from './clip';
+import { FPS, retryInSoftware, type Clip } from '../video/clip';
 
 export type DrawFrame = (ctx: CanvasRenderingContext2D, image: CanvasImageSource, frame: number) => void;
 

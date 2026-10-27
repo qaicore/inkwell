@@ -1,10 +1,10 @@
 import { CanvasSink } from 'mediabunny';
-import { drawStroke, wobbleTick, type Point, type Stroke } from './brush';
-import { FPS, frameTime, frameTimes, loadClip, type Clip } from './clip';
-import { exportClip } from './export';
-import { drawMaskTint, renderFrame, type Scene } from './render';
-import type { FollowMode } from './standin';
-import { maskHasPerson, maskNear, trackStroke, type Pose, type Tracking } from './tracking';
+import { drawStroke, wobbleTick, type Point, type Stroke } from '../render/brush';
+import { FPS, frameTime, frameTimes, loadClip, type Clip } from '../video/clip';
+import { exportClip } from '../export/export';
+import { drawMaskTint, renderFrame, type Scene } from '../render/compose';
+import type { FollowMode } from '../track/standin';
+import { maskHasPerson, maskNear, trackStroke, type Pose, type Tracking } from '../track/tracking';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const stage = $<HTMLElement>('stage');
@@ -386,7 +386,7 @@ if (import.meta.env.DEV) {
     const startedAt = performance.now();
     try {
       setStatus('Loading the stand-in tracker…');
-      const { runStandIn, standInTracking } = await import('./standin');
+      const { runStandIn, standInTracking } = await import('../track/standin');
       const standIn = await runStandIn(tracked, setStatus);
       if (clip !== tracked) return;
       makeTracking = (mode) => standInTracking(standIn, mode, tracked);

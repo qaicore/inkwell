@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyPose, followMask, maskHasPerson, maskNear, type Mask } from '../../src/tracking.ts';
+import { applyPose, followMask, maskHasPerson, maskNear, type Mask } from '../../src/track/tracking.ts';
 
 // A tall rectangle of "person" at its own resolution, the shape a body mask has.
 function rectMask(width: number, height: number, left: number, top: number, w: number, h: number): Mask {
