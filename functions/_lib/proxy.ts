@@ -9,6 +9,11 @@
 // is eventually consistent: two calls in the same instant could both pass, so
 // the cap can be exceeded by at most one call's worth. Exact counting would
 // need a Durable Object, which this doesn't need yet.
+//
+// A call is priced from exactly what gets forwarded. Only the keys below are
+// forwarded, and a request carrying any other key is refused, since keys like
+// `instructions`, `tools` or `previous_response_id` add billed input the
+// proxy can't see.
 import { MAX_CLIP_FRAMES, SAM_MODEL, WONDER_MODEL, samCost, wonderMaxCost } from './pricing.ts';
 
 // The subset of a Cloudflare KV namespace this uses.
@@ -32,6 +37,12 @@ export interface ProxyDeps {
 
 export const PASSCODE_HEADER = 'x-inkwell-passcode';
 export const WONDER_MAX_OUTPUT_TOKENS = 4000;
+export const FORWARDED_KEYS = ['model', 'input', 'text', 'max_output_tokens', 'stream', 'metadata'];
+// The Wonder content parts it can price: text by its length, an image at the ceiling.
+const WONDER_PARTS = ['input_text', 'input_image'];
+
+type Json = Record<string, unknown>;
+const isObject = (value: unknown): value is Json => typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const json = (status: number, message: string) =>
   new Response(JSON.stringify({ error: { message } }), { status, headers: { 'content-type': 'application/json' } });
@@ -47,6 +58,26 @@ function sameSecret(given: string, expected: string): boolean {
 
 export function spendKey(now: Date): string {
   return `spend:${now.toISOString().slice(0, 10)}`; // one total per UTC day
+}
+
+// The image parts of a Wonder `input`, or a message if it holds something the
+// proxy can't price (an input_file, an item_reference, a function output...).
+function wonderImages(input: unknown): Set<Json> | string {
+  const images = new Set<Json>();
+  if (input === undefined || typeof input === 'string') return images;
+  if (!Array.isArray(input)) return '`input` must be a string or a list of messages.';
+  for (const item of input) {
+    if (!isObject(item) || (item.type !== undefined && item.type !== 'message')) return 'Only message items are proxied in `input`.';
+    if (typeof item.content === 'string') continue;
+    if (!Array.isArray(item.content)) return 'A message\'s `content` must be a string or a list of parts.';
+    for (const part of item.content) {
+      if (!isObject(part) || typeof part.type !== 'string' || !WONDER_PARTS.includes(part.type)) {
+        return `Only ${WONDER_PARTS.join(' and ')} parts are proxied.`;
+      }
+      if (part.type === 'input_image') images.add(part);
+    }
+  }
+  return images;
 }
 
 // `path` is what follows /api/ in the request URL, e.g. "files" or "responses".
@@ -66,20 +97,24 @@ export async function handleProxy(request: Request, path: string, env: ProxyEnv,
     body = await request.arrayBuffer();
     cost = 0; // uploading isn't billed; the SAM calls that read the file are
   } else if (path === 'responses') {
-    let payload: Record<string, unknown>;
+    let payload: unknown;
     try {
       payload = JSON.parse(await request.text());
     } catch {
       return json(400, 'The request body is not JSON.');
     }
+    if (!isObject(payload)) return json(400, 'The request body must be a JSON object.');
+    const unknown = Object.keys(payload).filter((key) => !FORWARDED_KEYS.includes(key));
+    if (unknown.length > 0) return json(400, `The proxy can't price ${unknown.join(', ')}, so it doesn't forward them.`);
     if (payload.model === SAM_MODEL) {
       cost = samCost(MAX_CLIP_FRAMES);
     } else if (payload.model === WONDER_MODEL) {
+      const images = wonderImages(payload.input);
+      if (typeof images === 'string') return json(400, images);
       const asked = Number(payload.max_output_tokens);
-      payload.max_output_tokens = asked > 0 ? Math.min(asked, WONDER_MAX_OUTPUT_TOKENS) : WONDER_MAX_OUTPUT_TOKENS;
-      const text = JSON.stringify(payload.input ?? '');
-      const images = text.split('"input_image"').length - 1;
-      cost = wonderMaxCost(images, text.length, payload.max_output_tokens as number);
+      const maxOutput = asked > 0 ? Math.min(asked, WONDER_MAX_OUTPUT_TOKENS) : WONDER_MAX_OUTPUT_TOKENS;
+      payload.max_output_tokens = maxOutput;
+      cost = wonderMaxCost(images.size, JSON.stringify(payload).length, maxOutput);
     } else {
       return json(400, `Only ${SAM_MODEL} and ${WONDER_MODEL} are proxied.`);
     }

@@ -79,6 +79,41 @@ describe('proxy: spend cap', () => {
   });
 });
 
+describe('proxy: pricing what it forwards', () => {
+  const wonder = (fields: object) => JSON.stringify({ model: 'muse-wonder-1.0', ...fields });
+
+  it('refuses keys it cannot price, so nothing rides along unpriced', async () => {
+    const { sent, call } = setup({ DAILY_SPEND_CAP_USD: '5' });
+    const extras = [{ instructions: 'x'.repeat(900_000) }, { previous_response_id: 'resp_1' }, { conversation: 'conv_1' }, { tools: [{ type: 'web_search' }] }];
+    for (const extra of extras) expect((await call('responses', { body: wonder({ input: 'hi', ...extra }) })).status).toBe(400);
+    expect((await call('responses', { body: JSON.stringify({ model: 'sam-3.1', input: [], instructions: 'x' }) })).status).toBe(400);
+    expect(sent).toHaveLength(0);
+  });
+
+  it('refuses Wonder input it cannot price: files, video, references to earlier items', async () => {
+    const { sent, call } = setup({ DAILY_SPEND_CAP_USD: '5' });
+    for (const part of [{ type: 'input_file', file_id: 'file_1' }, { type: 'input_video', file_id: 'file_1' }]) {
+      expect((await call('responses', { body: wonder({ input: [{ role: 'user', content: [part] }] }) })).status).toBe(400);
+    }
+    expect((await call('responses', { body: wonder({ input: [{ type: 'item_reference', id: 'msg_1' }] }) })).status).toBe(400);
+    expect(sent).toHaveLength(0);
+  });
+
+  it('prices every forwarded character, wherever it sits', async () => {
+    // 900k characters at a token per 3 characters is $1.20 of input, past a $1 cap.
+    const { sent, call } = setup({ DAILY_SPEND_CAP_USD: '1' });
+    const big = 'x'.repeat(900_000);
+    const bodies = [
+      wonder({ input: big }),
+      wonder({ input: [{ role: 'user', content: [{ type: 'input_text', text: big }] }] }),
+      wonder({ input: 'hi', text: { format: { type: 'text' }, note: big } }),
+      wonder({ input: 'hi', metadata: { note: big } }),
+    ];
+    for (const body of bodies) expect((await call('responses', { body })).status).toBe(429);
+    expect(sent).toHaveLength(0);
+  });
+});
+
 describe('proxy: what it lets through', () => {
   it('only proxies the two models, and only POST to known routes', async () => {
     const { sent, call } = setup();
@@ -86,6 +121,12 @@ describe('proxy: what it lets through', () => {
     expect((await call('responses', { body: 'not json' })).status).toBe(400);
     expect((await call('models', { body: '{}' })).status).toBe(404);
     expect((await call('responses', { method: 'GET' })).status).toBe(405);
+    expect(sent).toHaveLength(0);
+  });
+
+  it('refuses a body that is JSON but not an object', async () => {
+    const { sent, call } = setup();
+    for (const body of ['null', '[]', '42', '"sam-3.1"']) expect((await call('responses', { body })).status).toBe(400);
     expect(sent).toHaveLength(0);
   });
 
