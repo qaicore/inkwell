@@ -2,6 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import basicSsl from '@vitejs/plugin-basic-ssl';
 import { defineConfig, type Plugin } from 'vite';
+import { fixturesServer } from './tools/fixtures-server.ts';
 import { readBody, standInServer } from './tools/standin-server.ts';
 
 // Dev only: the app POSTs each finished export to /__renders/<name>, and this
@@ -41,7 +42,8 @@ export default defineConfig(({ mode }) => {
   // on its own port and cache, so it can run alongside `npm run dev`.
   const phone = mode === 'phone';
   return {
-    plugins: [saveRenders(), standInServer(), ...(phone ? [basicSsl()] : [])],
+    // fixturesServer also serves the dev-only /label page (label/index.html).
+    plugins: [saveRenders(), standInServer(), fixturesServer(), ...(phone ? [basicSsl()] : [])],
     cacheDir: phone ? 'node_modules/.vite-phone' : undefined,
     server: {
       port: phone ? 5175 : 5174,

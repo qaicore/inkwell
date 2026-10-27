@@ -37,6 +37,18 @@ Open http://localhost:5174. To open a test clip straight away, put it in `sample
 
 Keys: Space plays and pauses, the arrow keys step one frame, and Ctrl+Z undoes.
 
+### Labeling a clip (`/label`)
+
+With `npm run dev` running, open http://localhost:5174/label, open the clip and type its folder id (`side-step`, `walk`, …). Or go straight to `http://localhost:5174/label?clip=/samples/<file>.mp4&id=side-step`. The clip is converted the same way the app converts it, so frame numbers match SAM's. Three passes, switched with 1, 2 and 3:
+
+1. **Roots:** click the attach point. Only every 10th frame takes a click, and after each one the page jumps 10 frames on. Right-click or Delete clears a root.
+2. **Facing:** F (front), R (his right side toward the camera), B (back) or L (his left side), on every 6th frame. The page jumps 6 frames on after each key.
+3. **Still:** drag across the timeline's bottom lane where he holds still, or press S at the start and E at the end. Clicking a stretch removes it.
+
+`[` and `]` jump to the previous or next frame to mark. The arrow keys step one frame (Shift: 10), Space plays, and Ctrl+Z undoes. Unsaved marks survive a reload in the same browser.
+
+**Save to fixtures/** writes `fixtures/<id>/truth.json` (SPEC §11) and, the first time, the converted `fixtures/<id>/clip.mp4`. It only saves clips listed in `fixtures/clips.json`, so add the clip's entry there first. Commit `truth.json` yourself with `[qai-approved]`. **Download truth.json** works without the dev server.
+
 ### On your phone
 
 ```bash
@@ -54,6 +66,8 @@ This serves the app over HTTPS on your Wi-Fi at port 5175; Vite prints the addre
 - `src/track/standin.ts` is the dev-only stand-in for SAM 3.1. `tools/standin.py` and `tools/standin-server.ts` are its Python fallback for browsers without WebGL 2, and `tools/setup-standin.mjs` sets that up.
 - `src/export/export.ts` re-encodes the clip with the strokes drawn in.
 - `src/app/main.ts` is the page: drawing, scrubbing, playback, tracking and controls.
+- `src/app/label.ts` and `label/index.html` are the `/label` page; `src/app/truth.ts` builds, checks and writes `truth.json`, and `tools/fixtures-server.ts` saves it into `fixtures/` (dev only).
+- `src/types/effect.ts` is the effect JSON (SPEC §7).
 - `vite.config.ts` runs the dev server and saves exports to `renders/`.
 - `functions/` is the Pages Function: `_lib/proxy.ts` is its logic (passcode, spend cap), `_lib/spend.ts` keeps the day's spend in a D1 database bound as `SPEND_DB`, `_lib/pricing.ts` has the Meta API prices, and `api/[[path]].ts` wires them to the real API.
 - `scripts/live/` holds the only scripts that make paid calls: `probe.mjs`, and `meta.mjs`, which every paid call goes through (key, spend caps, the typed `yes`). `scripts/probe/` is the probe's free part: decoding masks, the numbers, the report and the strip.

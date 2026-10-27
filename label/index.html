@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Inkwell · label</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #121214;
+        --panel: #1b1b1f;
+        --line: #2d2d34;
+        --text: #ececf1;
+        --muted: #9a9aa6;
+        --accent: #e8203a;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      [hidden] {
+        display: none !important;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+      }
+      body {
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        height: 100dvh;
+        background: var(--bg);
+        color: var(--text);
+        font: 13px/1.4 system-ui, sans-serif;
+        -webkit-user-select: none;
+        user-select: none;
+      }
+      header,
+      footer {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px 14px;
+        padding: 8px max(12px, env(safe-area-inset-right)) 8px max(12px, env(safe-area-inset-left));
+        background: var(--panel);
+        border: 0 solid var(--line);
+      }
+      header {
+        border-bottom-width: 1px;
+        padding-top: max(8px, env(safe-area-inset-top));
+      }
+      footer {
+        border-top-width: 1px;
+        padding-bottom: max(8px, env(safe-area-inset-bottom));
+      }
+      button,
+      input,
+      .button {
+        touch-action: manipulation;
+      }
+      .brand {
+        font-weight: 700;
+        letter-spacing: 0.02em;
+      }
+      .spacer {
+        flex: 1;
+      }
+      #status,
+      output,
+      .hint {
+        color: var(--muted);
+        font-variant-numeric: tabular-nums;
+      }
+      #status.error {
+        color: #ff8a95;
+      }
+      button,
+      .button,
+      input[type='text'] {
+        font: inherit;
+        color: var(--text);
+        text-decoration: none;
+        background: #2a2a31;
+        border: 1px solid #3a3a43;
+        border-radius: 6px;
+        padding: 5px 10px;
+        cursor: pointer;
+      }
+      input[type='text'] {
+        width: 11em;
+        cursor: text;
+        -webkit-user-select: text;
+        user-select: text;
+      }
+      input[type='text']:invalid {
+        border-color: var(--accent);
+      }
+      button:disabled,
+      .button:has(input:disabled) {
+        opacity: 0.45;
+        cursor: default;
+      }
+      .group {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      #stage {
+        position: relative;
+        display: grid;
+        place-items: center;
+        min-height: 0;
+        overflow: hidden;
+        padding: 12px;
+      }
+      #view {
+        touch-action: none;
+        cursor: crosshair;
+        background: #000;
+        box-shadow: 0 0 0 1px var(--line);
+      }
+      #drop {
+        position: absolute;
+        inset: 12px;
+        display: grid;
+        place-content: center;
+        gap: 6px;
+        text-align: center;
+        color: var(--muted);
+        border: 2px dashed var(--line);
+        border-radius: 12px;
+      }
+      #drop.over {
+        border-color: var(--accent);
+        color: var(--text);
+      }
+      #timeline {
+        flex-basis: 100%;
+        height: 54px;
+        touch-action: none;
+        cursor: pointer;
+      }
+      .pass {
+        display: flex;
+        border: 1px solid #3a3a43;
+        border-radius: 6px;
+        overflow: hidden;
+      }
+      .pass label {
+        padding: 5px 10px;
+        cursor: pointer;
+      }
+      .pass input {
+        display: none;
+      }
+      .pass label:has(input:checked) {
+        background: #3a3a43;
+      }
+      kbd {
+        font: inherit;
+        padding: 0 4px;
+        border: 1px solid #3a3a43;
+        border-radius: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <span class="brand">Inkwell · label</span>
+      <label class="button">Open clip<input id="file" type="file" accept="video/*" hidden /></label>
+      <label class="group"
+        >Clip id
+        <input id="clip-id" type="text" placeholder="side-step" pattern="[a-z0-9]+(-[a-z0-9]+)*" spellcheck="false" autocomplete="off"
+      /></label>
+      <label class="button">Load labels<input id="load" type="file" accept="application/json,.json" hidden /></label>
+      <span class="spacer"></span>
+      <span id="status"></span>
+      <button id="save" disabled>Save to fixtures/</button>
+      <a id="download" class="button" hidden download="truth.json">Download truth.json</a>
+    </header>
+
+    <main id="stage">
+      <canvas id="view" hidden></canvas>
+      <div id="drop">
+        <strong>Drop a clip here, or use Open clip</strong>
+        <span>It's converted to H.264 at 30 fps first, the same way the app does, so the frame numbers match SAM's.</span>
+        <span>Then three passes: <b>Roots</b> (click the attach point every 10th frame), <b>Facing</b> (<kbd>F</kbd> <kbd>R</kbd> <kbd>B</kbd> <kbd>L</kbd> every 6th frame), <b>Still</b> (drag on the timeline's bottom lane).</span>
+      </div>
+    </main>
+
+    <footer>
+      <div class="pass" role="radiogroup" aria-label="Pass">
+        <label><input type="radio" name="pass" value="roots" checked />1 Roots</label>
+        <label><input type="radio" name="pass" value="facing" />2 Facing</label>
+        <label><input type="radio" name="pass" value="still" />3 Still</label>
+      </div>
+      <button id="play" disabled>Play</button>
+      <button id="prev" disabled title="Previous frame to mark ([)">◀ mark</button>
+      <button id="next" disabled title="Next frame to mark (])">mark ▶</button>
+      <output id="frame-label">frame –</output>
+      <output id="progress"></output>
+      <span class="spacer"></span>
+      <span id="hint" class="hint"></span>
+      <canvas id="timeline" hidden></canvas>
+    </footer>
+
+    <script type="module" src="/src/app/label.ts"></script>
+  </body>
+</html>
