@@ -75,15 +75,15 @@ export function standInServer(): Plugin {
 // about 15 MB; phone mode opens them to the whole Wi-Fi, so cap them.
 const MAX_UPLOAD = 300 * 1024 * 1024;
 
-class TooLarge extends Error {}
+export class TooLarge extends Error {}
 
-// Reads a request body, refusing it as soon as it passes MAX_UPLOAD.
-export async function readBody(req: AsyncIterable<unknown>) {
+// Reads a request body, refusing it as soon as it passes `max` bytes.
+export async function readBody(req: AsyncIterable<unknown>, max = MAX_UPLOAD) {
   const chunks: Buffer[] = [];
   let total = 0;
   for await (const chunk of req) {
     total += (chunk as Buffer).length;
-    if (total > MAX_UPLOAD) throw new TooLarge(`uploads are limited to ${MAX_UPLOAD / 1024 / 1024} MB`);
+    if (total > max) throw new TooLarge(`uploads here are limited to ${+(max / 1024 / 1024).toFixed(2)} MB`);
     chunks.push(chunk as Buffer);
   }
   return Buffer.concat(chunks);
