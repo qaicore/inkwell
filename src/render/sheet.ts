@@ -36,7 +36,8 @@ export interface SheetOptions {
 }
 
 // One cell per drawing: the frame where drawing k is first shown, placed
-// with that frame's transform, over the figure.
+// with that frame's transform. Behind strokes go under the figure and front
+// ones over it, as compose.ts does with the person mask.
 export function contactSheet(o: SheetOptions): Buffer {
   const firsts = o.frames.filter((fr, i) => i === 0 || fr.k !== o.frames[i - 1].k);
   const rows = Math.ceil(firsts.length / o.columns);
@@ -56,8 +57,9 @@ export function contactSheet(o: SheetOptions): Buffer {
     ctx.clip();
     const zoom = o.cell / o.crop.size;
     ctx.setTransform(zoom, 0, 0, zoom, left - o.crop.x * zoom, top - o.crop.y * zoom);
+    drawStrokes(ctx, fr.placed, o.effect, o.scale, ['behind']);
     figure(ctx, o.body(fr.f));
-    drawStrokes(ctx, fr.placed, o.effect, o.scale);
+    drawStrokes(ctx, fr.placed, o.effect, o.scale, ['front']);
     ctx.restore();
     ctx.strokeStyle = '#dcdce2';
     ctx.lineWidth = 1;
