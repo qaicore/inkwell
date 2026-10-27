@@ -13,7 +13,7 @@ node_modules/
 dist/
 coverage/
 .wrangler/
-# Rooted: a bare "verify/" would also hide .claude/skills/verify/.
+# Rooted, so only the top-level verify/ output folder is ignored.
 /verify/
 
 # large media stays out of git; clips are tracked by fixtures/clips.json

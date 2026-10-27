@@ -1,8 +1,9 @@
 ---
 name: tracking-auditor
-description: Audits tracking, turn-reading and Wonder-vs-rule numbers against hand-marked ground truth, and re-derives one result independently to catch metric bugs. Use in /verify for M2 through M6.
+description: Audits tracking, turn-reading and Wonder-vs-rule numbers against hand-marked ground truth, and re-derives one result independently to catch metric bugs. Use in /run-checkers for M2 through M6.
 tools: Read, Grep, Glob, Bash, Write
 model: sonnet
+effort: medium
 color: green
 ---
 

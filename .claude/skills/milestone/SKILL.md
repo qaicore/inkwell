@@ -25,7 +25,7 @@ Qai's notes for this run: $ARGUMENTS
    - Add unit tests in `tests/unit/`.
    - Explain the idea in 2–3 lines in the commit message.
 5. **Verify.**
-   - Run `npm run verify`, then `/verify`.
+   - Run `npm run verify`, then `/run-checkers`.
    - Make no edits while the checkers run.
    - Fix the must_fix items, then repeat.
    - After 5 rounds without all PASS, stop and report to Qai: what fails, the evidence files, and your best hypothesis.

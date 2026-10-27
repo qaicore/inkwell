@@ -1,8 +1,9 @@
 ---
 name: acceptance-judge
-description: Independent PASS/FAIL judge of a milestone's acceptance criteria against docs/SPEC.md. Use in /verify for every milestone. Never fixes code.
+description: Independent PASS/FAIL judge of a milestone's acceptance criteria against docs/SPEC.md. Use in /run-checkers for every milestone. Never fixes code.
 tools: Read, Grep, Glob, Bash, Write
 model: opus
+effort: medium
 color: red
 ---
 

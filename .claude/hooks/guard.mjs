@@ -31,7 +31,7 @@ rel = rel.replaceAll('\\', '/').replace(/^\.\//, '');
 if (rel) {
   const verdict = rel.match(/^verify\/verdicts\/([\w-]+)\.json$/i);
   if (verdict && verdict[1].toLowerCase() !== who.toLowerCase()) {
-    deny(`Only the ${verdict[1]} subagent may write its own verdict. Fix the code and run /verify instead.`);
+    deny(`Only the ${verdict[1]} subagent may write its own verdict. Fix the code and run /run-checkers instead.`);
   }
   if (/^verify\/out\//i.test(rel)) deny('verify/out/ is written only by npm run verify.');
   if (!setupEdits) {

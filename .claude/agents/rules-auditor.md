@@ -1,8 +1,9 @@
 ---
 name: rules-auditor
-description: Checks hackathon rules and repo hygiene (secrets, anime material, attribution, network use in tests, weakened checks). Use in /verify at every milestone and before submission.
+description: Checks hackathon rules and repo hygiene (secrets, anime material, attribution, network use in tests, weakened checks). Use in /run-checkers at every milestone and before submission.
 tools: Read, Grep, Glob, Bash, Write
 model: sonnet
+effort: medium
 color: yellow
 ---
 

@@ -29,6 +29,7 @@ rmSync(claimPath, { force: true });
 
 const REQUIRED = {
   M0: ['acceptance-judge', 'rules-auditor'],
+  M1: ['acceptance-judge', 'motion-critic', 'rules-auditor'],
   M2: ['acceptance-judge', 'tracking-auditor', 'rules-auditor'],
 };
 const required = REQUIRED[milestone] ?? ['acceptance-judge', 'motion-critic', 'tracking-auditor', 'rules-auditor'];
@@ -48,7 +49,7 @@ if (!tree) problems.push('scripts/tree-hash.mjs failed, so freshness cannot be c
 for (const name of required) {
   const p = join(verifyDir, 'verdicts', `${name}.json`);
   if (!existsSync(p)) {
-    problems.push(`${name}: no verdict yet (run /verify)`);
+    problems.push(`${name}: no verdict yet (run /run-checkers)`);
     continue;
   }
   let v;
@@ -90,6 +91,6 @@ writeFileSync(statePath, JSON.stringify(state));
 const list = `- ${problems.join('\n- ')}`;
 const next =
   state.blocks < 3
-    ? 'Fix the code, run npm run verify and /verify, then write the id to verify/CLAIM again.'
+    ? 'Fix the code, run npm run verify and /run-checkers, then write the id to verify/CLAIM again.'
     : 'Do not write verify/CLAIM again. Stop and report these problems to Qai, with the evidence files.';
 say({ decision: 'block', reason: `Milestone ${milestone} is not verified (claim ${state.blocks} of 3):\n${list}\n${next}` });

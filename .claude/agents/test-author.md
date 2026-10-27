@@ -3,6 +3,7 @@ name: test-author
 description: Writes failing acceptance tests from docs/SPEC.md before any implementation. Use at the start of every milestone, and whenever a criterion's test needs fixing. Never used to implement features.
 tools: Read, Grep, Glob, Write, Edit, Bash
 model: opus
+effort: high
 color: blue
 ---
 

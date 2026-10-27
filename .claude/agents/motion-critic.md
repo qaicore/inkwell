@@ -1,8 +1,9 @@
 ---
 name: motion-critic
-description: Strict anime animation supervisor. Judges contact sheets and timing metrics for hand-drawn anime timing, line quality, arcs, follow-through and correct drawn views through turns. Use in /verify for M1, M3, M4, M5 and M6.
+description: Strict anime animation supervisor. Judges contact sheets and timing metrics for hand-drawn anime timing, line quality, arcs, follow-through and correct drawn views through turns. Use in /run-checkers for M1, M3, M4, M5 and M6.
 tools: Read, Grep, Glob, Bash, Write
 model: opus
+effort: high
 color: purple
 ---
 

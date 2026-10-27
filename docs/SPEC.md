@@ -62,7 +62,7 @@ Breaking any of these can disqualify the project or make the checks meaningless.
    - the running app, through `functions/` with its spend cap
    - `scripts/live/`, where every script has a spend cap and a confirmation prompt
 
-   Tests, hooks and `/verify` read cached fixtures and never touch the network. `npm run probe` and `npm run fixtures:refresh` cost money: run them only when Qai says go.
+   Tests, hooks and `/run-checkers` read cached fixtures and never touch the network. `npm run probe` and `npm run fixtures:refresh` cost money: run them only when Qai says go.
 5. **Qai owns the checks.** Don't edit any of these:
    - thresholds in this file
    - `reference/`
@@ -140,7 +140,7 @@ If work falls behind, cut in this order: wear this effect (X3), Wonder's turn la
 1. **Start.** Qai types `/milestone <id>` to begin.
 2. **Tests first.** The `test-author` subagent writes failing tests for the milestone's criteria. Commit them alone and tag the commit `milestone-<id>-tests`. Don't write or edit those tests yourself; if one is wrong, send it back to test-author with the reason, and tell Qai.
 3. **Build in small steps.** After every code edit, the PostToolUse hook runs `npm run check:fast`. Fix what it reports before the next step. Add unit tests in `tests/unit/` for each module.
-4. **Verify.** Run `npm run verify` (it writes `verify/out/` and stamps `verify/out/tree.txt`). Then run `/verify`, which runs the checker subagents in parallel. Make no edits until every checker has returned.
+4. **Verify.** Run `npm run verify` (it writes `verify/out/` and stamps `verify/out/tree.txt`). Then run `/run-checkers`, which runs the checker subagents in parallel. Make no edits until every checker has returned.
 5. **Fix and repeat.** After 5 rounds without all PASS, stop and report to Qai: what fails, the evidence files, and your best hypothesis.
 6. **Claim.** When every verdict passes, write the milestone id to `verify/CLAIM` with the Write tool as your last action. Then end the turn with the handoff for Qai. The Stop hook re-checks the verdicts; if it sends you back, do what it says.
 7. **Sign-off.** Qai compares `verify/out/<id>/sheet.png` with `verify/out/<id>/reference-strip.png`. He replies "approved", or says what's off in animator terms: "strike lands a drawing late", "overshoot too small", "boil too strong", "side view pops". The checkers can't act on "looks off". Only his "approved" finishes a milestone. Then run `npm run golden:accept -- <id>`, ask him to commit the goldens himself, and delete `verify/ACTIVE`. His commit:
@@ -153,7 +153,7 @@ If work falls behind, cut in this order: wear this effect (X3), Wonder's turn la
 
 **When a checker keeps failing.** After 5 rounds Claude stops and reports. Qai decides: change the threshold (his own `[qai-approved]` commit), or cut that criterion's feature.
 
-**Cost.** `/verify` spawns up to four agents, so run it at milestone gates, not after every edit. The edit hook covers each edit. If usage limits bite, run `/verify` only at the end of each milestone.
+**Cost.** `/run-checkers` spawns up to four agents, so run it at milestone gates, not after every edit. The edit hook covers each edit. If usage limits bite, run `/run-checkers` only at the end of each milestone.
 
 **Commands** (PowerShell-safe: one command per line):
 
