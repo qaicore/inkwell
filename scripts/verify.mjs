@@ -8,6 +8,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
+import { localBin } from './lib/bin.ts';
 
 const root = process.cwd();
 const out = join(root, 'verify', 'out');
@@ -46,10 +47,19 @@ const upTo = active ? Number(active.slice(1)) : Infinity;
 const dirs = milestoneDirs.filter((n) => n <= upTo).map((n) => `tests/M${n}/`);
 process.stdout.write(`verify: tree ${tree}, milestone ${active || '(none active: all)'}, running ${dirs.join(' ') || 'nothing'}\n`);
 
-// npm's .bin shims are .cmd files on Windows, so run through the shell there.
-const run = (cmd) => spawnSync(cmd, { cwd: root, encoding: 'utf8', shell: true, stdio: ['ignore', 'pipe', 'pipe'] });
+// tsc and vitest run straight from node_modules with this node, with no
+// shell in between. npx would fetch a missing package from the registry
+// instead, so without node_modules verify stops here.
+let bins;
+try {
+  bins = { tsc: localBin(root, 'typescript', 'tsc'), vitest: localBin(root, 'vitest') };
+} catch (err) {
+  process.stderr.write(`verify: ${err.message}\n`);
+  process.exit(1);
+}
+const node = (bin, args, options) => spawnSync(process.execPath, [bin, ...args], { cwd: root, ...options });
 
-const tsc = run('npx tsc -p tsconfig.acceptance.json');
+const tsc = node(bins.tsc, ['-p', 'tsconfig.acceptance.json'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 const tscText = `${tsc.stdout ?? ''}${tsc.stderr ?? ''}`.trim();
 writeFileSync(join(out, 'typecheck.txt'), `${tsc.status === 0 ? 'PASS' : 'FAIL'}\n${tscText}\n`);
 process.stdout.write(`verify: acceptance typecheck ${tsc.status === 0 ? 'passed' : 'FAILED'}\n${tscText ? `${tscText}\n` : ''}`);
@@ -58,10 +68,9 @@ let testsStatus = 1;
 if (dirs.length === 0) {
   process.stderr.write('verify: no tests/M* folders to run\n');
 } else {
-  const vitest = spawnSync(
-    `npx vitest run ${dirs.join(' ')} --reporter=default --reporter=json --outputFile.json=verify/out/tests.json`,
-    { cwd: root, shell: true, stdio: 'inherit' },
-  );
+  const vitest = node(bins.vitest, ['run', ...dirs, '--reporter=default', '--reporter=json', '--outputFile.json=verify/out/tests.json'], {
+    stdio: 'inherit',
+  });
   testsStatus = vitest.status ?? 1;
 }
 
