@@ -13,10 +13,14 @@
 //     milestone's tests can't be loosened later; tests/helpers/ (shared by those tests) is checked from the
 //     earliest tests tag. Each tag must exist, be an ancestor of HEAD, and contain tests/M<n>.
 //   - "Loosened" is judged conservatively, per commit without the approval token: a removed line carrying a
-//     number, an assertion, a comparison, control flow or a pass flag (comment-only lines and unchanged moves
-//     of non-assertion lines excepted); an added skip/only/todo/fails, catch, ts-ignore, env gate or bare
-//     return; a deleted or renamed test file. Anything else (new tests, new imports) passes.
+//     number, an assertion, a comparison, control flow, a pass flag or a string literal (comment-only lines,
+//     import lines and unchanged moves of non-assertion lines excepted); an added skip/only/todo/fails, catch,
+//     ts-ignore, env gate or bare return; a deleted or renamed test file. Anything else (new tests, new
+//     imports) passes.
 //   - The status check covers tests/M<n> and tests/helpers/ too, untracked files included.
+//   - The tests/helpers/ scan skips the commits the milestone-M<n>-tests tags point at: that is where each
+//     milestone's tests, and the helpers they share, are written. Every later commit to tests/helpers/ is
+//     checked, and the tests/M<n> scans skip nothing.
 import { afterAll, describe, expect, it } from 'vitest';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -56,6 +60,10 @@ const COMMENT_ONLY = /^\s*\/\/|^\s*\/\*.*\*\/\s*$/;
 const ASSERTION = /\bexpect\b|\bassert\b|\.to[A-Z]\w*\s*\(|\.not\b|\bfail\s*\(|\bthrow\b/;
 const WEAKENING_REMOVAL =
   /\d|\bexpect\b|\bassert\b|\.to[A-Z]\w*|\.not\b|[<>]|[!=]==?|\b(it|test|describe)\s*[.(]|\bthreshold\b|\bpass\b|\bthrow\b|\bfail\b|&&|\|\||\?|\bif\b|\breturn\b|\bfor\b|\bwhile\b|\bevery\b|\bsome\b|\bfilter\b|\bfind\b|\bMath\.|\brecord\b|\bexpected\b/;
+// A removed string literal can narrow what a check covers ('docs/SPEC.md' dropped from a list) or widen what
+// it allows ('.jpg' added to one). Import lines are exempt: fixing a path there loosens nothing.
+const STRING_LITERAL = /(['"`]).*?\1/;
+const IMPORT_LINE = /^(?:import\b|export\b.*\bfrom\b|\}\s*from\b)/;
 const WEAKENING_ADDITION =
   /\.(skip|todo|fails|only|skipIf|runIf)\b|\b(xit|xtest|xdescribe|fit|fdescribe)\s*\(|\bcatch\b|@ts-(nocheck|ignore|expect-error)|\bprocess\.env\b|\breturn\s*;|\bpass\s*[:=]\s*true\b|\bif\s*\(\s*(true|false|0|1)\s*\)|\bretry\s*:|\bpassWithNoTests\b/;
 
@@ -92,7 +100,7 @@ function looseningFindings(patch: string): string[] {
         addedPool.set(t, n - 1);
         continue;
       }
-      if (WEAKENING_REMOVAL.test(t)) findings.push(`${f.name}: removed or changed "${t.slice(0, 160)}"`);
+      if (WEAKENING_REMOVAL.test(t) || (STRING_LITERAL.test(t) && !IMPORT_LINE.test(t))) findings.push(`${f.name}: removed or changed "${t.slice(0, 160)}"`);
     }
     for (const a of f.added) {
       const t = a.trim();
@@ -153,6 +161,11 @@ function testDirsUpTo(active: number): number[] {
   return out;
 }
 
+// The commits the tests/helpers/ scan checks: not approved ones, and not a milestone's own tests commit.
+function helperCommitsToCheck(commits: Commit[], testsTags: Set<string>): Commit[] {
+  return commits.filter((c) => !c.approved && !testsTags.has(c.hash));
+}
+
 // ---------- the tests ----------
 
 describe('R5 no weakened checks', () => {
@@ -167,12 +180,24 @@ describe('R5 no weakened checks', () => {
       ['test skipped', d("-  it('A1 holds', () => {\n+  it.skip('A1 holds', () => {"), true],
       ['error swallowed', d('+    try { run(); } catch { /* ignore */ }'), true],
       ['file deleted', d('-  expect(1).toBe(1);', 'deleted file mode 100644\n'), true],
+      ['protected path dropped from a list', d("-  'docs/SPEC.md',"), true],
+      ['allowed list widened', d("-const ALLOWED_PREFIXES = ['src/sam/', 'functions/'];\n+const ALLOWED_PREFIXES = ['src/sam/', 'functions/', 'src/'];"), true],
+      ['extension added to a set', d("-const DRAWING_EXTS = new Set(['.svg', '.png']);\n+const DRAWING_EXTS = new Set(['.svg', '.png', '.jpg']);"), true],
+      ['multi-line import path fixed', d("-} from '../../src/motion/hold.ts';\n+} from '../../src/motion/held.ts';"), false],
       ['import path fixed', d("-import { hold } from '../../src/motion/hold.ts';\n+import { hold } from '../../src/motion/held.ts';"), false],
       ['new test added', d("+  it('A1 also checks placement', () => {\n+    expect(slide).toBeLessThan(0.5);\n+  });"), false],
       ['comment reworded', d('-  // 3 s at 30 fps\n+  // three seconds at 30 fps'), false],
       ['non-assertion line re-indented', d('-  const clip = synthClip(seed);\n+    const clip = synthClip(seed);'), false],
     ];
     const wrong = cases.filter(([, patch, flagged]) => (looseningFindings(patch).length > 0) !== flagged).map(([n]) => n);
+    // The helpers scan skips the tests-tag commit and approved commits, and nothing else.
+    const commits: Commit[] = [
+      { hash: 'later', subject: 'adds a catch to a helper', approved: false },
+      { hash: 'tagged', subject: 'test(M1): acceptance tests', approved: false },
+      { hash: 'signed', subject: 'approved change', approved: true },
+    ];
+    const kept = helperCommitsToCheck(commits, new Set(['tagged'])).map((c) => c.hash);
+    if (kept.join(',') !== 'later') wrong.push(`helpers scan kept ${JSON.stringify(kept)}, not ["later"]`);
     ev.record('loosening detector self-check', { misjudged: wrong }, [], wrong.length === 0);
     expect(wrong, 'R5 loosening detector misjudged a planted case').toEqual([]);
   });
@@ -207,6 +232,7 @@ describe('R5 no weakened checks', () => {
     const tagProblems: string[] = [];
     const findings: string[] = [];
     let earliestTests: string | null = null;
+    const testsTags = new Set<string>();
     for (const n of dirs) {
       const dir = `tests/M${n}`;
       const tag = `milestone-M${n}-tests`;
@@ -224,14 +250,14 @@ describe('R5 no weakened checks', () => {
         continue;
       }
       earliestTests ??= c;
+      testsTags.add(c);
       for (const commit of commitsTouching(`${c}..HEAD`, [dir])) {
         if (commit.approved) continue;
         for (const f of looseningFindings(patchOf(commit.hash, [dir]))) findings.push(`${commit.hash.slice(0, 7)} "${commit.subject}": ${f}`);
       }
     }
     if (earliestTests) {
-      for (const commit of commitsTouching(`${earliestTests}..HEAD`, [HELPERS])) {
-        if (commit.approved) continue;
+      for (const commit of helperCommitsToCheck(commitsTouching(`${earliestTests}..HEAD`, [HELPERS]), testsTags)) {
         for (const f of looseningFindings(patchOf(commit.hash, [HELPERS]))) findings.push(`${commit.hash.slice(0, 7)} "${commit.subject}": ${f}`);
       }
     }
