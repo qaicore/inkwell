@@ -120,6 +120,16 @@ describe('scan-secrets', () => {
     expect(out.stdout).toMatch(/history [0-9a-f]{7} a\.txt:2 META_API_KEY/);
   });
 
+  it('masks a key that sits in a file name, in the tree and in history', () => {
+    const r = repo({ '.env': `META_API_KEY=${FAKE_KEY}\n`, [`notes-${FAKE_KEY}.txt`]: 'nothing here\n' });
+    r.commit('leak');
+    const out = r.scan();
+    expect(out.status).toBe(1);
+    expect(out.stdout).toContain('notes-[redacted].txt (file name) META_API_KEY');
+    expect(out.stdout).toMatch(/history [0-9a-f]{7} notes-\[redacted\]\.txt \(diff header/);
+    expect(out.stdout + out.stderr).not.toContain(FAKE_KEY);
+  });
+
   it('fails on a secret too short to scan for', () => {
     const r = repo({ '.env': 'PROXY_PASSCODE=1234\n' });
     r.commit('start');

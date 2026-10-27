@@ -55,10 +55,16 @@ if (envFiles === 0 || secrets.size === 0) {
   process.exit(0);
 }
 
+// Everything printed after this point names files, and a file's name can
+// hold a key too, so every value is masked first (longest first, in case one
+// value contains another).
+const values = [...secrets.keys()].sort((a, b) => b.length - a.length);
+const redact = (text) => values.reduce((out, value) => out.replaceAll(value, '[redacted]'), text);
+
 const git = (args) => {
   const r = spawnSync('git', args, { cwd: root, maxBuffer: 1 << 30 });
   if (r.status !== 0) {
-    process.stderr.write(`scan-secrets: git ${args[0]} failed: ${r.stderr.toString().trim()}\n`);
+    process.stderr.write(redact(`scan-secrets: git ${args[0]} failed: ${r.stderr.toString().trim()}\n`));
     process.exit(2);
   }
   return r.stdout;
@@ -73,7 +79,7 @@ const lineOf = (buf, index) => {
 
 // Each value as a file could hold it: UTF-8, or UTF-16LE (what Windows
 // PowerShell 5.1's ">" writes).
-const needles = [...secrets].map(([value, names]) => ({ names: names.join(', '), bytes: [Buffer.from(value), Buffer.from(value, 'utf16le')] }));
+const needles = [...secrets].map(([value, names]) => ({ value, names: names.join(', '), bytes: [Buffer.from(value), Buffer.from(value, 'utf16le')] }));
 
 // 1. The working tree, as git sees it, byte for byte, so binary files count.
 const files = git(['ls-files', '-co', '--exclude-standard', '-z']).toString().split('\0').filter(Boolean);
@@ -83,7 +89,8 @@ for (const rel of files) {
   if (!existsSync(path) || !statSync(path).isFile()) continue;
   const buf = readFileSync(path);
   scanned++;
-  for (const { names, bytes } of needles) {
+  for (const { value, names, bytes } of needles) {
+    if (rel.includes(value)) hits.push(`${rel} (file name) ${names}`);
     for (const needle of bytes) {
       for (let at = buf.indexOf(needle); at !== -1; at = buf.indexOf(needle, at + 1)) hits.push(`${rel}:${lineOf(buf, at)} ${names}`);
     }
@@ -117,10 +124,15 @@ function scanPatch(patch, label) {
     }
     const isAdded = inDiff && line.startsWith('+') && !line.startsWith('+++ ');
     const isContext = inDiff && line.startsWith(' ');
+    const isRemoved = inDiff && line.startsWith('-') && !line.startsWith('--- ');
     if (isAdded || isContext) newLine++;
     for (const [value, names] of secrets) {
       if (!line.includes(value)) continue;
-      const where = !inDiff ? '(commit message)' : isAdded || isContext ? `${file}:${newLine}` : `${file} (removed line)`;
+      const where = !inDiff
+        ? '(commit message)'
+        : isAdded || isContext
+          ? `${file}:${newLine}`
+          : `${file} ${isRemoved ? '(removed line)' : '(diff header: a file name or hunk context)'}`;
       hits.push(`${label(commit)} ${where} ${names.join(', ')}`);
     }
   }
@@ -138,7 +150,7 @@ const log = git(['log', '-p', '--all', '--text', '--diff-merges=first-parent', '
 scanPatch(log.toString(), (commit) => `history ${commit}`);
 
 if (hits.length > 0) {
-  process.stdout.write(`scan-secrets: found a secret value in ${hits.length} place(s):\n${[...new Set(hits)].map((h) => `  ${h}`).join('\n')}\n`);
+  process.stdout.write(redact(`scan-secrets: found a secret value in ${hits.length} place(s):\n${[...new Set(hits)].map((h) => `  ${h}`).join('\n')}\n`));
   process.exit(1);
 }
 const checked = [...new Set([...secrets.values()].flat())].join(', ');
