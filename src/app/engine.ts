@@ -80,6 +80,12 @@ export function animateStrokes(strokes: Stroke[], m: ClipMotion): DrawnStroke[][
   );
 }
 
+// One stroke on every frame. Strokes never touch each other, so this is the
+// stroke's own share of animateStrokes, and the page can keep it per stroke.
+export function animateStroke(stroke: Stroke, m: ClipMotion): DrawnStroke[] {
+  return animateStrokes([stroke], m).map((frame) => frame[0]);
+}
+
 // Fills one stroke's outline: the same brush code the engine's tests and
 // contact sheets use, with the stroke's own size.
 export function drawStroke(ctx: CanvasRenderingContext2D, stroke: DrawnStroke) {

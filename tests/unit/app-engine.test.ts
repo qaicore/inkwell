@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { animateStrokes, type ClipMotion, type Stroke } from '../../src/app/engine.ts';
+import { animateStroke, animateStrokes, type ClipMotion, type Stroke } from '../../src/app/engine.ts';
 import { EXAMPLE_TIMING } from '../../src/motion/timing.ts';
 import type { Pose } from '../../src/track/tracking.ts';
 
@@ -23,6 +23,15 @@ function motion(poses: Pose[] | null): ClipMotion {
 }
 
 describe('the app on the engine', () => {
+  it('animates each stroke on its own exactly as it does among the others, so the page can cache it per stroke', () => {
+    const rope: Stroke = { ...stroke('strand'), id: 2, stiffness: 0, frame: 0 };
+    const rigid = stroke('rigid');
+    const m = { ...motion(null), wobble: true };
+    const together = animateStrokes([rigid, rope], m);
+    expect(animateStroke(rigid, m)).toEqual(together.map((frame) => frame[0]));
+    expect(animateStroke(rope, m)).toEqual(together.map((frame) => frame[1]));
+  });
+
   it('puts a rigid stroke where it was drawn, on the frame it was drawn on, without tracking', () => {
     const frames = animateStrokes([stroke('rigid')], motion(null));
     const drawn = frames[10][0];

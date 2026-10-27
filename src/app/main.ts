@@ -7,7 +7,7 @@ import { EXAMPLE_TIMING, validateTiming, type Timing } from '../motion/timing';
 import type { FollowMode } from '../track/standin';
 import { torsoHeights } from '../track/torso';
 import { maskHasPerson, maskNear, trackStroke, type Pose, type Tracking } from '../track/tracking';
-import { animateStrokes, drawLive, type DrawnStroke, type Stroke } from './engine';
+import { animateStroke, drawLive, type DrawnStroke, type Stroke } from './engine';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const stage = $<HTMLElement>('stage');
@@ -58,9 +58,16 @@ let torsoUnits: (number | null)[] | null = null; // torso height per frame, from
 const strokePoses = new Map<number, Pose[] | null>();
 
 // Every frame's strokes, animated for the whole clip at once (src/app/engine.ts).
-// Worked out when first needed, and again after anything it depends on changes.
+// Each stroke's drawings over the whole clip, by stroke id, worked out when
+// first needed. Strokes move independently, so a new stroke is animated on
+// its own and undo drops one entry; a new clip, tracking, timing or wobble
+// changes every stroke (invalidate). `animation` is the same, frame by frame.
+const perStroke = new Map<number, DrawnStroke[]>();
 let animation: DrawnStroke[][] | null = null;
-const invalidate = () => (animation = null);
+const invalidate = () => {
+  perStroke.clear();
+  animation = null;
+};
 
 // Qai's reference/timing.json sets the drawings per second and the boil. The
 // dev server serves it; until it exists (and in production builds) the
@@ -220,18 +227,23 @@ function scene(): Scene {
 }
 
 function animated(): DrawnStroke[][] {
+  if (!clip) return [];
   if (!animation) {
-    animation = clip
-      ? animateStrokes(strokes, {
-          frameCount: clip.frameCount,
-          width: clip.width,
-          height: clip.height,
-          poses: posesFor,
-          units: torsoUnits,
-          timing,
-          wobble: wobbleToggle.checked,
-        })
-      : [];
+    const motion = {
+      frameCount: clip.frameCount,
+      width: clip.width,
+      height: clip.height,
+      poses: posesFor,
+      units: torsoUnits,
+      timing,
+      wobble: wobbleToggle.checked,
+    };
+    const each = strokes.map((stroke) => {
+      let drawn = perStroke.get(stroke.id);
+      if (!drawn) perStroke.set(stroke.id, (drawn = animateStroke(stroke, motion)));
+      return drawn;
+    });
+    animation = Array.from({ length: clip.frameCount }, (_, f) => each.map((drawn) => drawn[f]));
   }
   return animation;
 }
@@ -294,8 +306,8 @@ new ResizeObserver(layout).observe(stage);
 
 // ---- Drawing -------------------------------------------------------------------
 
-// Screen position to clip pixels. A mouse has no pressure, so it gets a
-// placeholder and the brush works pressure out from speed instead.
+// Screen position to clip pixels. A mouse has no pressure, so it draws at
+// an even 0.5; the brush doesn't make pressure up from speed.
 function pointFrom(e: PointerEvent): Point {
   const box = view.getBoundingClientRect();
   return [
@@ -339,9 +351,12 @@ view.addEventListener('pointermove', (e) => {
 
 function finishStroke() {
   if (!live) return;
-  strokes.push(live);
+  // A tap, or a press that never moved, has no direction to draw or
+  // resample along: drop it.
+  const distinct = new Set(live.points.map(([x, y]) => `${x},${y}`)).size;
+  if (distinct >= 2) strokes.push(live);
   live = null;
-  invalidate();
+  animation = null; // the new stroke is animated on its own
   updateButtons();
   requestPaint();
 }
@@ -350,8 +365,8 @@ view.addEventListener('pointercancel', finishStroke);
 
 function undo() {
   if (busy || strokes.length === 0) return;
-  strokes.pop();
-  invalidate();
+  perStroke.delete(strokes.pop()!.id);
+  animation = null;
   updateButtons();
   paint();
 }
