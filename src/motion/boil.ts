@@ -11,7 +11,8 @@ export interface BoilParams {
 }
 
 // One offset per centerline point, in px at `width` wide. `wobble` (0..1)
-// scales it per stroke. Each offset's length is at most maxPx · wobble.
+// scales it per stroke. Each offset's length is at most maxPx · wobble
+// (times width / 1080), never a rounding error over.
 export function boilOffsets(k: number, strokeId: number, count: number, boil: BoilParams, wobble: number, width = 1080): Vec2[] {
   const amount = boil.maxPx * wobble * (width / 1080);
   const phase = ((k % boil.cycle) + boil.cycle) % boil.cycle;
@@ -19,14 +20,12 @@ export function boilOffsets(k: number, strokeId: number, count: number, boil: Bo
   const y = smoothNoise(strokeId, phase, 1);
   return Array.from({ length: count }, (_, i): Vec2 => {
     const t = count > 1 ? i / (count - 1) : 0;
-    let dx = x(t);
-    let dy = y(t);
-    const length = Math.hypot(dx, dy);
-    if (length > 1) {
-      dx /= length;
-      dy /= length;
-    }
-    return [dx * amount, dy * amount];
+    const dx = x(t);
+    const dy = y(t);
+    // Clamped to length 1, then scaled a hair under `amount`: rounding in the
+    // divide and the multiply can otherwise land an ulp past maxPx.
+    const scale = (amount / Math.max(1, Math.hypot(dx, dy))) * (1 - 1e-12);
+    return [dx * scale, dy * scale];
   });
 }
 

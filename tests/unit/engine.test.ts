@@ -116,6 +116,20 @@ describe('motion: the drawing clock and boil', () => {
     expect(wide[5][0]).toBeCloseTo(a[5][0] * 2, 12);
     expect(boilOffsets(4, 7, 32, boil, 0).every(([x, y]) => x === 0 && y === 0)).toBe(true);
   });
+
+  it('never boils past maxPx, not even by a rounding error', () => {
+    // maxPx 1.5 used to give 1.5000000000000004 on some points.
+    for (const maxPx of [0.25, 1, 1.5, 2, 3.7]) {
+      for (const width of [360, 1080, 1179, 1920, 2160]) {
+        const limit = maxPx * (width / 1080);
+        for (let id = 0; id < 200; id++) {
+          for (let k = 0; k < 4; k++) {
+            for (const [x, y] of boilOffsets(k, id, 32, { maxPx, cycle: 4 }, 1, width)) expect(Math.hypot(x, y)).toBeLessThanOrEqual(limit);
+          }
+        }
+      }
+    }
+  });
 });
 
 describe('torso space', () => {
