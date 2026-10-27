@@ -1,0 +1,24 @@
+{
+  "name": "inkwell",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:phone": "vite --mode phone",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "standin:setup": "node tools/setup-standin.mjs"
+  },
+  "dependencies": {
+    "mediabunny": "^1.62.1",
+    "perfect-freehand": "^1.2.3"
+  },
+  "devDependencies": {
+    "@mediapipe/tasks-vision": "^1.1.1",
+    "@types/node": "^24.19.2",
+    "@vitejs/plugin-basic-ssl": "^2.3.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5"
+  }
+}
