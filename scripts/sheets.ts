@@ -1,7 +1,7 @@
 // The contact sheets for the active milestone (SPEC §8.6), written by
-// npm run verify next to the test evidence: sheet.png, timing-strip.png and
-// reference-strip.png in the milestone's folder, plus sheets.json saying what
-// they were made from. motion-critic reads them.
+// npm run verify next to the test evidence: sheet.png, timing-strip.png,
+// line-strip.png and reference-strip.png in the milestone's folder, plus
+// sheets.json saying what they were made from. motion-critic reads them.
 //
 // Until the required clips have masks, the motion comes from a seeded,
 // synthetic side-step (a stand-in for a tracked anchor) and the strokes are a
@@ -13,7 +13,7 @@ import type { Effect, Stroke, Vec2 } from '../src/types/effect.ts';
 import { animate, type PlacedStroke } from '../src/motion/animate.ts';
 import { EXAMPLE_TIMING, parseTiming, type Timing } from '../src/motion/timing.ts';
 import { DEFAULT_BRUSH, resampleStroke, type Point } from '../src/render/brush.ts';
-import { contactSheet, fit, referenceStrip, timingStrip, type View } from '../src/render/sheet.ts';
+import { contactSheet, fit, lineStrip, referenceStrip, timingStrip, type View } from '../src/render/sheet.ts';
 import { toPixels, type TorsoTransform } from '../src/track/torso.ts';
 
 const root = process.cwd();
@@ -135,6 +135,44 @@ writeFileSync(
     strokeId: 1,
     anchor: anchors.get(1)!,
     banner: [source, timingLine, 'stroke 1 (the tail): the anchor steps right over frames 9-21, holds, steps back over frames 48-60, then holds'],
+  }),
+);
+
+// The tail at twice the frame's size for boil.cycle + 1 drawings in a row, at
+// the end of the clip, when the body has held still for nearly a second. The
+// tail is nearly settled by then, so most of what changes from cell to cell is
+// the boil, and the last cell's boil repeats the first's. The banner says how
+// much of it is still the physics.
+const firsts = frames.filter((fr, i) => i === 0 || fr.k !== frames[i - 1].k);
+const lineDrawings = firsts.slice(-(used.boil.cycle + 1));
+const tailFrom = (fr: (typeof frames)[number], points: Vec2[]): Vec2[] => {
+  const anchor = anchors.get(1)!(fr.f);
+  return points.map((p): Vec2 => [p[0] - anchor.x, p[1] - anchor.y]);
+};
+const simTail = (fr: (typeof frames)[number]) => tailFrom(fr, fr.sim.find((s) => s.id === 1)!.points);
+const physicsMove = Math.max(
+  ...lineDrawings.slice(1).map((fr, i) => {
+    const [a, b] = [simTail(lineDrawings[i]), simTail(fr)];
+    return Math.max(...a.map((p, j) => Math.hypot(p[0] - b[j][0], p[1] - b[j][1])));
+  }),
+);
+writeFileSync(
+  join(dir, 'line-strip.png'),
+  lineStrip({
+    cells: lineDrawings.map((fr) => {
+      const anchor = anchors.get(1)!(fr.f);
+      return { title: `drawing ${fr.k} (frame ${fr.f}, boil phase ${fr.k % used.boil.cycle})`, stroke: fr.placed.find((p) => p.id === 1)!, root: [anchor.x, anchor.y] };
+    }),
+    effect,
+    scale: WIDTH / 1080,
+    zoom: 2,
+    columns: 2,
+    banner: [
+      source,
+      timingLine,
+      `stroke 1 (the tail) at 2x the frame's pixels, the last ${used.boil.cycle + 1} drawings of the clip; each cell is shifted so the root is in the same place; grid: 10 frame px`,
+      `the physics still moves the tail up to ${physicsMove.toFixed(1)} px from one drawing to the next here; the rest of the change is the boil (up to ${used.boil.maxPx} px per point)`,
+    ],
   }),
 );
 

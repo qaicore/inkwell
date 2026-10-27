@@ -90,7 +90,7 @@ npm run verify
 node scripts/scan-secrets.mjs
 ```
 
-`check:fast` typechecks and runs `tests/unit/` (it runs after every code edit). `verify` stamps the tree hash, then typechecks and runs the acceptance tests in `tests/M*/` up to the milestone in `verify/ACTIVE`, writing the evidence to `verify/out/`. From M1 on it also draws the contact sheets (`sheet.png`, `timing-strip.png`, `reference-strip.png`) into the milestone's folder there. Until the clips have masks they show a synthetic side-step and demo strokes, and say so in red at the top. `scan-secrets` looks for the values in `.env` and `.dev.vars` in every file and the whole git history, and prints only where, never the value. None of them touch the network.
+`check:fast` typechecks and runs `tests/unit/` (it runs after every code edit). `verify` stamps the tree hash, then typechecks and runs the acceptance tests in `tests/M*/` up to the milestone in `verify/ACTIVE`, writing the evidence to `verify/out/`. From M1 on it also draws the contact sheets (`sheet.png`, `timing-strip.png`, `line-strip.png`, `reference-strip.png`) into the milestone's folder there. Until the clips have masks they show a synthetic side-step and demo strokes, and say so in red at the top. `scan-secrets` looks for the values in `.env` and `.dev.vars` in every file and the whole git history, and prints only where, never the value. None of them touch the network.
 
 ## Built Oct 26 – Nov 4
 

@@ -3,7 +3,7 @@
 // draw with the same brush code as the app (Node only: @napi-rs/canvas).
 import { createCanvas, type SKRSContext2D } from '@napi-rs/canvas';
 import type { Effect, Vec2 } from '../types/effect.ts';
-import type { AnimatedFrame } from '../motion/animate.ts';
+import type { AnimatedFrame, PlacedStroke } from '../motion/animate.ts';
 import { toPixels, toTorso, type TorsoTransform } from '../track/torso.ts';
 import { drawStrokes } from './headless.ts';
 
@@ -188,6 +188,64 @@ export function referenceStrip(o: {
       wrapText(ctx, c.note ?? '', left + 10, top + 24, o.cell - 20);
     }
     text(ctx, c.title, left + 6, top + o.cell + 16, INK);
+  });
+  return canvas.toBuffer('image/png');
+}
+
+// One stroke, big enough to judge the line and its boil: consecutive drawings
+// at `zoom` times the frame's own pixels, each shifted so its root sits at
+// the same spot, over a faint grid of 10 frame px.
+export function lineStrip(o: {
+  cells: { title: string; stroke: PlacedStroke; root: Vec2 }[];
+  effect: Effect;
+  scale: number; // brush scale: frame width / 1080
+  zoom: number;
+  columns: number;
+  banner: string[];
+}): Buffer {
+  const strokes = o.cells.map((c) => ({ ...c.stroke, points: c.stroke.points.map((p): Vec2 => [p[0] - c.root[0], p[1] - c.root[1]]) }));
+  const all = strokes.flatMap((s) => s.points);
+  const pad = o.effect.brush.size * o.scale * 2;
+  const x0 = Math.min(...all.map((p) => p[0])) - pad;
+  const y0 = Math.min(...all.map((p) => p[1])) - pad;
+  const x1 = Math.max(...all.map((p) => p[0])) + pad;
+  const y1 = Math.max(...all.map((p) => p[1])) + pad;
+  const width = Math.ceil((x1 - x0) * o.zoom);
+  const height = Math.ceil((y1 - y0) * o.zoom);
+  const rows = Math.ceil(o.cells.length / o.columns);
+  const bannerHeight = 18 * o.banner.length + 12;
+  const labelHeight = 22;
+  const canvas = createCanvas(Math.max(Math.min(o.columns, o.cells.length) * width, 900), bannerHeight + rows * (height + labelHeight));
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = PAPER;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  banner(ctx, o.banner);
+  o.cells.forEach((c, n) => {
+    const left = (n % o.columns) * width;
+    const top = bannerHeight + Math.floor(n / o.columns) * (height + labelHeight);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(left, top, width, height);
+    ctx.clip();
+    ctx.setTransform(o.zoom, 0, 0, o.zoom, left - x0 * o.zoom, top - y0 * o.zoom);
+    ctx.strokeStyle = '#eeeef2';
+    ctx.lineWidth = 1 / o.zoom;
+    ctx.beginPath();
+    for (let x = Math.ceil(x0 / 10) * 10; x < x1; x += 10) {
+      ctx.moveTo(x, y0);
+      ctx.lineTo(x, y1);
+    }
+    for (let y = Math.ceil(y0 / 10) * 10; y < y1; y += 10) {
+      ctx.moveTo(x0, y);
+      ctx.lineTo(x1, y);
+    }
+    ctx.stroke();
+    drawStrokes(ctx, [strokes[n]], o.effect, o.scale);
+    ctx.restore();
+    ctx.strokeStyle = '#dcdce2';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(left + 0.5, top + 0.5, width - 1, height - 1);
+    text(ctx, c.title, left + 6, top + height + 16, INK);
   });
   return canvas.toBuffer('image/png');
 }
