@@ -21,6 +21,7 @@
   "devDependencies": {
     "@mediapipe/tasks-vision": "^1.1.1",
     "@meta-sam/parser": "^0.1.0",
+    "@napi-rs/canvas": "^1.0.11",
     "@types/node": "^24.19.2",
     "@vitejs/plugin-basic-ssl": "^2.3.0",
     "openai": "^7.45.0",

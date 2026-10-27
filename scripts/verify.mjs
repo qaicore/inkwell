@@ -4,6 +4,7 @@
 // 2. Typechecks the acceptance tests (tsconfig.acceptance.json) into verify/out/typecheck.txt.
 // 3. Runs tests/M0 .. tests/<ACTIVE> with vitest's JSON reporter into verify/out/tests.json. Each test
 //    writes its own verify/out/<ID>.json. Earlier milestones' tests re-run at every milestone.
+// 4. From M1 on, draws the contact sheets into verify/out/<ACTIVE>/ (scripts/sheets.ts) for motion-critic.
 // Reads only local files: no network, no keys.
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
@@ -74,4 +75,13 @@ if (dirs.length === 0) {
   testsStatus = vitest.status ?? 1;
 }
 
-process.exit(tsc.status === 0 && testsStatus === 0 ? 0 : 1);
+// The sheets are pictures of the engine, not a criterion, so a failure here
+// is reported and fails the run, but never hides the test results above.
+let sheetsStatus = 0;
+if (upTo >= 1) {
+  const sheets = spawnSync(process.execPath, [join(root, 'scripts', 'sheets.ts')], { cwd: root, stdio: 'inherit' });
+  sheetsStatus = sheets.status ?? 1;
+  if (sheetsStatus !== 0) process.stderr.write('verify: scripts/sheets.ts failed, so there are no contact sheets\n');
+}
+
+process.exit(tsc.status === 0 && testsStatus === 0 && sheetsStatus === 0 ? 0 : 1);
