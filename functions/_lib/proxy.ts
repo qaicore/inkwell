@@ -80,6 +80,17 @@ function wonderImages(input: unknown): Set<Json> | string {
   return images;
 }
 
+// The forwarded JSON's length, priced as text, minus each inline image's
+// base64: Wonder bills an image once (at IMAGE_TOKENS_MAX), not by its bytes.
+// Only the image parts found above are skipped, so a `data:` string anywhere
+// else is still priced.
+function textLength(payload: Json, images: Set<Json>): number {
+  return JSON.stringify(payload, function (this: unknown, key: string, value: unknown) {
+    const inline = key === 'image_url' && images.has(this as Json) && typeof value === 'string' && value.startsWith('data:');
+    return inline ? '' : value;
+  }).length;
+}
+
 // `path` is what follows /api/ in the request URL, e.g. "files" or "responses".
 export async function handleProxy(request: Request, path: string, env: ProxyEnv, deps: ProxyDeps): Promise<Response> {
   const cap = Number(env.DAILY_SPEND_CAP_USD);
@@ -114,7 +125,7 @@ export async function handleProxy(request: Request, path: string, env: ProxyEnv,
       const asked = Number(payload.max_output_tokens);
       const maxOutput = asked > 0 ? Math.min(asked, WONDER_MAX_OUTPUT_TOKENS) : WONDER_MAX_OUTPUT_TOKENS;
       payload.max_output_tokens = maxOutput;
-      cost = wonderMaxCost(images.size, JSON.stringify(payload).length, maxOutput);
+      cost = wonderMaxCost(images.size, textLength(payload, images), maxOutput);
     } else {
       return json(400, `Only ${SAM_MODEL} and ${WONDER_MODEL} are proxied.`);
     }

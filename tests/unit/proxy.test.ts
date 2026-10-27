@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PASSCODE_HEADER, WONDER_MAX_OUTPUT_TOKENS, handleProxy, spendKey, type ProxyEnv, type SpendStore } from '../../functions/_lib/proxy.ts';
-import { MAX_CLIP_FRAMES, samCost } from '../../functions/_lib/pricing.ts';
+import { MAX_CLIP_FRAMES, samCost, wonderMaxCost } from '../../functions/_lib/pricing.ts';
 
 // Offline: a fake upstream that records what it was sent, and an in-memory KV.
 const UPSTREAM = 'https://upstream.test/v1';
@@ -110,6 +110,28 @@ describe('proxy: pricing what it forwards', () => {
       wonder({ input: 'hi', metadata: { note: big } }),
     ];
     for (const body of bodies) expect((await call('responses', { body })).status).toBe(429);
+    expect(sent).toHaveLength(0);
+  });
+
+  it('counts an inline image once, not its base64 as text', async () => {
+    // The probe's call: 8 PNG frames at 768 px, roughly 700 KB of base64 each.
+    // Priced as text that's about $7.50, past the $5 cap; priced as images, cents.
+    const { env, sent, call } = setup({ DAILY_SPEND_CAP_USD: '5' });
+    const image = { type: 'input_image', image_url: `data:image/png;base64,${'A'.repeat(700_000)}` };
+    const prompt = 'Label each numbered frame. '.repeat(40);
+    const content = [{ type: 'input_text', text: prompt }, ...Array.from({ length: 8 }, () => image)];
+    const body = wonder({ input: [{ type: 'message', role: 'user', content }], max_output_tokens: 4000 });
+    expect((await call('responses', { body })).status).toBe(200);
+    expect(sent).toHaveLength(1);
+    const reserved = Number((env.SPEND as ReturnType<typeof memoryStore>).data.get(spendKey(NOW)));
+    expect(reserved).toBeGreaterThan(wonderMaxCost(8, prompt.length, 4000));
+    expect(reserved).toBeLessThan(wonderMaxCost(8, prompt.length + 1000, 4000));
+  });
+
+  it('still prices a data: string outside an image part', async () => {
+    const { sent, call } = setup({ DAILY_SPEND_CAP_USD: '1' });
+    const body = wonder({ input: 'hi', metadata: { image_url: `data:${'x'.repeat(900_000)}` } });
+    expect((await call('responses', { body })).status).toBe(429);
     expect(sent).toHaveLength(0);
   });
 });
