@@ -28,7 +28,7 @@ import { drawMarker, drawNumber, tile, tintMask } from '../probe/image.ts';
 import { framesFromRecords, parseCachedOutput } from '../probe/masks.ts';
 import { encodePng } from '../probe/png.ts';
 import { bodyHeights, chooseBackPoint, jumpStats, percentile, renderReport } from '../probe/report.ts';
-import { Budget, confirm, loadKeys, makeClient, samVideo, uploadVideo, wonderJson } from './meta.mjs';
+import { Budget, LEDGER, confirm, loadKeys, makeClient, samVideo, uploadVideo, wonderJson } from './meta.mjs';
 
 const RUN_CAP_USD = 1.0; // this run, on top of DAILY_SPEND_CAP_USD across runs
 const WONDER_FRAMES = 8;
@@ -127,7 +127,7 @@ async function main() {
   if (pending.length > 0) {
     if (args.reportOnly) throw new Stop(`--report-only needs every response cached. Missing: ${pending.map((p) => p.name).join(', ')}.`);
     const keys = loadKeys(root);
-    const budget = new Budget({ runCap: RUN_CAP_USD, dailyCap: keys.dailyCap });
+    const budget = new Budget({ runCap: RUN_CAP_USD, dailyCap: keys.dailyCap, ledger: LEDGER });
     const worst = pending.reduce((sum, p) => sum + p.worst, 0);
     const likely = pending.reduce((sum, p) => sum + (p.name === 'Wonder facing' ? wonderMaxCost(wonderFrames.length, promptText.length, 1000) : p.worst), 0);
     log('', 'Paid calls this run (Meta API, prices from dev.meta.ai/docs/pricing-rate-limits):');
@@ -149,18 +149,18 @@ async function main() {
 
     const sam = async (name, text, metadata) => {
       const label = `SAM ${name}`;
-      budget.allow(label, samEach);
+      const held = budget.reserve(label, samEach);
       log(`${label}...`);
       let res;
       try {
         res = await samVideo(client, { fileId: meta.fileId, text, metadata });
       } catch (err) {
-        budget.record(`${label} (failed)`, samEach, 'failed mid-call; counted at the estimate');
+        // The reservation stays counted: a call that failed partway may still bill.
         throw new Stop(`${label} failed: ${err.message}\nIf the file id expired, run again with --fresh to re-upload.`);
       }
       const frames = res.usage?.video_frames_processed;
       const spend = { name: label, usd: frames === undefined ? samEach : samCost(frames), detail: frames === undefined ? 'no usage reported; counted at the estimate' : `${frames} frames` };
-      budget.record(spend.name, spend.usd, spend.detail);
+      budget.settle(held, spend.usd);
       return {
         clipSha256: sha,
         model: SAM_MODEL,
@@ -204,18 +204,18 @@ async function main() {
       let labels = null;
       for (let attempt = 1; attempt <= 2 && !labels; attempt++) {
         const label = `Wonder facing, try ${attempt}`;
-        budget.allow(label, wonderWorst);
+        const held = budget.reserve(label, wonderWorst);
         log(`${label}...`);
         let reply;
         try {
           reply = await wonderJson(client, { content, name: 'facing_labels', schema: FACING_SCHEMA, maxOutputTokens: WONDER_MAX_OUTPUT_TOKENS });
         } catch (err) {
-          budget.record(`${label} (failed)`, wonderWorst, 'failed; counted at the bound');
+          // The reservation stays counted at the bound.
           throw new Stop(`${label} failed: ${err.message}\nThe SAM results are cached; running again only redoes Wonder.`);
         }
         const usd = reply.usage ? wonderCost(reply.usage) : wonderWorst;
         const detail = reply.usage ? `${reply.usage.input_tokens} in, ${reply.usage.output_tokens} out` : 'no usage reported; counted at the bound';
-        budget.record(label, usd, detail);
+        budget.settle(held, usd);
         const check = checkFacing(reply.text ?? '', wonderFrames);
         attempts.push({ status: reply.status, usage: reply.usage, text: reply.text, problems: check.ok ? [] : check.problems, spend: { name: label, usd, detail } });
         if (check.ok) labels = check.labels;
