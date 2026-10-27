@@ -139,10 +139,19 @@ export function timingStrip(o: {
   return canvas.toBuffer('image/png');
 }
 
+// A square of the frame, px.
+export interface View {
+  x: number;
+  y: number;
+  size: number;
+}
+
 // Reference cells: each is a set of strokes already in px, drawn with the
-// effect's brush and fitted to the cell, or a note saying what's missing.
+// effect's brush, or a note saying what's missing. A cell shows `view` when
+// it has one, so cells that share a view share a scale and a root position;
+// otherwise it's fitted to its strokes. `root` marks the root with a dot.
 export function referenceStrip(o: {
-  cells: { title: string; strokes?: AnimatedFrame['placed']; note?: string }[];
+  cells: { title: string; strokes?: AnimatedFrame['placed']; view?: View; root?: Vec2; note?: string }[];
   effect: Effect;
   cell: number;
   scale: number;
@@ -160,18 +169,20 @@ export function referenceStrip(o: {
     ctx.strokeStyle = '#dcdce2';
     ctx.strokeRect(left + 0.5, top + 0.5, o.cell - 1, o.cell - 1);
     if (c.strokes && c.strokes.length > 0) {
-      const all = c.strokes.flatMap((s) => s.points);
-      const pad = o.effect.brush.size * o.scale * 2;
-      const x0 = Math.min(...all.map((p) => p[0])) - pad;
-      const y0 = Math.min(...all.map((p) => p[1])) - pad;
-      const size = Math.max(Math.max(...all.map((p) => p[0])) + pad - x0, Math.max(...all.map((p) => p[1])) + pad - y0);
+      const view = c.view ?? fit(c.strokes.flatMap((s) => s.points), o.effect.brush.size * o.scale * 2);
       ctx.save();
       ctx.beginPath();
       ctx.rect(left, top, o.cell, o.cell);
       ctx.clip();
-      const zoom = o.cell / size;
-      ctx.setTransform(zoom, 0, 0, zoom, left - x0 * zoom, top - y0 * zoom);
+      const zoom = o.cell / view.size;
+      ctx.setTransform(zoom, 0, 0, zoom, left - view.x * zoom, top - view.y * zoom);
       drawStrokes(ctx, c.strokes, o.effect, o.scale);
+      if (c.root) {
+        ctx.fillStyle = MUTED;
+        ctx.beginPath();
+        ctx.arc(c.root[0], c.root[1], 4 / zoom, 0, Math.PI * 2);
+        ctx.fill();
+      }
       ctx.restore();
     } else {
       wrapText(ctx, c.note ?? '', left + 10, top + 24, o.cell - 20);
@@ -179,6 +190,14 @@ export function referenceStrip(o: {
     text(ctx, c.title, left + 6, top + o.cell + 16, INK);
   });
   return canvas.toBuffer('image/png');
+}
+
+// The smallest square around `points`, with `pad` px on every side.
+export function fit(points: Vec2[], pad: number): View {
+  const x0 = Math.min(...points.map((p) => p[0])) - pad;
+  const y0 = Math.min(...points.map((p) => p[1])) - pad;
+  const size = Math.max(Math.max(...points.map((p) => p[0])) + pad - x0, Math.max(...points.map((p) => p[1])) + pad - y0);
+  return { x: x0, y: y0, size };
 }
 
 // A plain gray figure standing in for the person mask: head, torso, arms

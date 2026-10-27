@@ -13,7 +13,7 @@ import type { Effect, Stroke, Vec2 } from '../src/types/effect.ts';
 import { animate, type PlacedStroke } from '../src/motion/animate.ts';
 import { EXAMPLE_TIMING, parseTiming, type Timing } from '../src/motion/timing.ts';
 import { DEFAULT_BRUSH, resampleStroke, type Point } from '../src/render/brush.ts';
-import { contactSheet, referenceStrip, timingStrip } from '../src/render/sheet.ts';
+import { contactSheet, fit, referenceStrip, timingStrip, type View } from '../src/render/sheet.ts';
 import { toPixels, type TorsoTransform } from '../src/track/torso.ts';
 
 const root = process.cwd();
@@ -138,17 +138,28 @@ writeFileSync(
   }),
 );
 
-const refCells: { title: string; strokes?: PlacedStroke[]; note?: string }[] = [];
+const refCells: { title: string; strokes?: PlacedStroke[]; view?: View; root?: Vec2; note?: string }[] = [];
 const keys = timing?.lash?.keys;
 if (keys && keys.length > 0) {
-  // Each key as a strand from the root to Qai's tip position, in the same brush.
+  // timing.json gives each key's tip position only, not the drawn pose, so a
+  // key is a straight line from the root to that tip. All key cells share one
+  // view, so their scale and the root's place match and the tips compare.
+  const rootPx: Vec2 = [540, 900];
+  const tipPx = (tip: Vec2): Vec2 => [rootPx[0] + tip[0] * UNIT, rootPx[1] + tip[1] * UNIT];
+  const view = fit([rootPx, ...keys.map((key) => tipPx(key.tip))], effect.brush.size * 4);
   for (const key of keys) {
+    const [x, y] = tipPx(key.tip);
     const line: Point[] = Array.from({ length: 50 }, (_, i) => {
       const s = i / 49;
-      return [540 + key.tip[0] * UNIT * s, 900 + key.tip[1] * UNIT * s, 0.95 - 0.5 * s];
+      return [rootPx[0] + (x - rootPx[0]) * s, rootPx[1] + (y - rootPx[1]) * s, 0.95 - 0.5 * s];
     });
     const { points, pressure } = resampleStroke(line, 32);
-    refCells.push({ title: `lash key at drawing ${key.drawing}`, strokes: [{ id: 1, points, pressure, layer: 'front' }] });
+    refCells.push({
+      title: `drawing ${key.drawing}: tip at (${key.tip[0]}, ${key.tip[1]})`,
+      strokes: [{ id: 1, points, pressure, layer: 'front' }],
+      view,
+      root: rootPx,
+    });
   }
 } else {
   refCells.push({ title: 'lash keys', note: 'reference/timing.json is missing, so there are no keys to draw yet. Qai adds it from his traced lash (SPEC §11).' });
@@ -170,7 +181,18 @@ if (raw) {
 refCells.push({ title: 'demo effect at rest (synthetic)', strokes: frames[0].placed.map((p) => ({ ...p, id: 1 })) });
 writeFileSync(
   join(dir, 'reference-strip.png'),
-  referenceStrip({ cells: refCells, effect: { ...effect, strokes: [effect.strokes[0]] }, cell: 260, scale: WIDTH / 1080, banner: ['REFERENCE: Qai\'s keys and strokes in the effect\'s brush (stroke color is the demo palette\'s first)', timingLine] }),
+  referenceStrip({
+    cells: refCells,
+    effect: { ...effect, strokes: [effect.strokes[0]] },
+    cell: 260,
+    scale: WIDTH / 1080,
+    banner: [
+      'REFERENCE: Qai\'s lash keys and raw strokes in the effect\'s brush (stroke color is the demo palette\'s first)',
+      timingLine,
+      'lash keys: each key\'s tip position from timing.json (torso heights from the root, the dot), drawn as a straight root-to-tip line, not a drawn pose; the key cells share one scale and root position',
+      'the other cells are each fitted to their own strokes',
+    ],
+  }),
 );
 
 writeFileSync(
