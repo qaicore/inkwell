@@ -106,6 +106,8 @@ const VALID_VARIANTS: { name: string; text: string }[] = [
   { name: 'valid, pretty-printed, edge values', text: JSON.stringify({ strokes: VALID_OBJ.strokes.map((s, i) => ({ ...s, stiffness: i === 0 ? 0 : s.stiffness, wobble: i === 1 ? 1 : s.wobble, bodyAngle: i === 2 ? 359.5 : s.bodyAngle })) }, null, 2) },
 ];
 const EXPECTED: Obj[] = VALID_OBJ.strokes;
+/** What a valid variant says: the strokes in its own text, parsed here (not by the validator under test). */
+const sentStrokes = (text: string): Obj[] => (JSON.parse(text) as { strokes: Obj[] }).strokes;
 
 function mutate(fn: (strokes: Obj[]) => void): string {
   const o = clone(VALID_OBJ);
@@ -223,8 +225,8 @@ describe('W2 schema check, one retry, nearest-mask fallback', () => {
     ev.record('nearest-mask rule baseline', rule.map(pick), 'one plan per stroke; concept anchor "person" or "face" (the masks given); the torso stroke on "person"; one default stiffness and layer', ruleOk);
 
     // The validator on its own.
-    const accepts = VALID_VARIANTS.map((v) => ({ name: v.name, r: mods.schema.validatePlan(v.text, IDS) }));
-    const badAccept = accepts.filter((a) => !a.r.ok || !samePlans(a.r.strokes, EXPECTED)).map((a) => `${a.name}: ${a.r.ok ? 'fields differ from the response' : a.r.problems.join(', ')}`);
+    const accepts = VALID_VARIANTS.map((v) => ({ name: v.name, expected: sentStrokes(v.text), r: mods.schema.validatePlan(v.text, IDS) }));
+    const badAccept = accepts.filter((a) => !a.r.ok || !samePlans(a.r.strokes, a.expected)).map((a) => `${a.name}: ${a.r.ok ? 'fields differ from the response' : a.r.problems.join(', ')}`);
     ev.record('validator accepts every valid response', `${accepts.length - badAccept.length}/${accepts.length}`, `${accepts.length}/${accepts.length}, fields as sent`, badAccept.length === 0, badAccept.join('; '));
     const rejects = INVALID.map((b) => {
       try {
@@ -244,7 +246,7 @@ describe('W2 schema check, one retry, nearest-mask fallback', () => {
       const failures: string[] = [];
       for (const v of VALID_VARIANTS) {
         const o = await run(mods.plan, [v.text]);
-        const ok = !o.threw && o.calls === 1 && o.result?.source === 'wonder' && o.result.attempts === 1 && samePlans(o.result.strokes, EXPECTED) && (o.result.note === null || o.result.note === undefined || o.result.note === '');
+        const ok = !o.threw && o.calls === 1 && o.result?.source === 'wonder' && o.result.attempts === 1 && samePlans(o.result.strokes, sentStrokes(v.text)) && (o.result.note === null || o.result.note === undefined || o.result.note === '');
         outcomes.push({ scenario: `valid first (${v.name})`, ok, why: o.threw ?? `calls ${o.calls}, source ${o.result?.source}, attempts ${o.result?.attempts}, note ${JSON.stringify(o.result?.note)}` });
         if (!ok) failures.push(v.name);
       }
