@@ -29,7 +29,12 @@ export type Tracking = {
 // filled, jitter smoothed, and exactly where it was drawn on its own frame.
 // Null if the tracking never finds it.
 export function trackStroke(tracking: Tracking, root: Vec, frame: number, fps: number): Pose[] | null {
-  const filled = fillGaps(tracking.follow(root, frame));
+  return smoothTrack(tracking.follow(root, frame), root, frame, fps);
+}
+
+// The same, from raw poses (null where lost) for a root drawn on `frame`.
+export function smoothTrack(raw: (Pose | null)[], root: Vec, frame: number, fps: number): Pose[] | null {
+  const filled = fillGaps(raw);
   if (!filled) return null;
   return relativeTo(smooth(filled, fps), root, frame);
 }
@@ -55,7 +60,16 @@ export function followMask(
   width: number,
   height: number,
 ): (Pose | null)[] {
-  const shapes = masks.map((mask) => (mask ? shapeOf(mask, width, height) : null));
+  return followShapes(masks.map((mask) => (mask ? shapeOf(mask, width, height) : null)), root, frame);
+}
+
+// A mask's centre, long axis, elongation (0 round, 1 a line) and size (the
+// side of a square of the same area), in clip pixels.
+export type Shape = { x: number; y: number; axis: number; stretch: number; size: number };
+
+// Follows a root with one shape per frame (null where lost): the root keeps
+// its place relative to the shape's centre, axis and size.
+export function followShapes(shapes: (Shape | null)[], root: Vec, frame: number): (Pose | null)[] {
   const start = shapes[frame];
   const poses: (Pose | null)[] = shapes.map(() => null);
   if (!start) return poses;
@@ -97,10 +111,7 @@ export function maskNear(masks: (Mask | null)[], frame: number, reach = 15): Mas
   return null;
 }
 
-type Shape = { x: number; y: number; axis: number; stretch: number; size: number };
-
-// A mask's centre, long axis, elongation (0 round, 1 a line) and size (the
-// side of a square of the same area), in clip pixels.
+// The shape of a whole-frame mask.
 function shapeOf(mask: Mask, width: number, height: number): Shape | null {
   const sx = width / mask.width;
   const sy = height / mask.height;
