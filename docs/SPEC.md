@@ -96,7 +96,7 @@ M0 and M1 need no key at all: every criterion that needs SAM or Wonder output st
 | M2 | Thu Oct 29 | The probe run; cached SAM fixtures for the required clips; Wonder plan call with schema check and one retry; override UI; nearest-mask baseline; Gate 1 (one full run, clip to playback; ugly is fine); the six brushes and the brush picker (§8.8) | PROBE, K1–K3, W1, W2, W3, G1, B1–B3 | PROBE, K1–K3, W1, G1 (W2 and W3 can use recorded responses; B1–B3 are API-free) |
 | M3 | Fri Oct 30 | Turn: facing from Qai's turn keys (§8.5); views mode (draw side and back over a faint front); view blending; layering and occlusion; single-view fallback | T2–T5, A3, A4, A7 | T4 and the re-run K criteria; T2, T3, T5 and A3, A4, A7 are API-free |
 | M4 | Sat Oct 31 | Wonder facing labels and fusion; MP4 export; deploy with cached samples; Gate 2 | T1, W1 (final), X1, X2, G2 | T1, W1, G2 (X1 and X2's server test are API-free) |
-| M5 | Sun Nov 1 | In priority order: finish M3 if it slipped; then the slam (§8.9): ground strokes for the cracks, the slam preset (A5) and the electric bursts; then, only if Gate 2 passed on Saturday and the slam passes, the gallery with search and wear this effect (X3), with a 5-hour cap. Feature freeze at 11 PM | A5, S1–S4, L1; X3 if built | X3 |
+| M5 | Sun Nov 1 | In priority order: finish M3 if it slipped; then the slam (§8.9): ground strokes for the cracks, the slam preset (A5) and the electric bursts; then, only if Gate 2 passed on Saturday and the slam passes, the gallery with search and wear this effect (X3), with a 5-hour cap. Feature freeze at 11 PM | A5, S1–S5, L1; X3 if built | X3 |
 | M6 | Mon Nov 2 | Every suite on the full clip set; README scoreboards | all | yes |
 
 **M0 checklist:**
@@ -138,7 +138,7 @@ Pause other projects (Furr, the Suspect rebuild) until Nov 5. The live final is 
 
 ### Cut order
 
-If work falls behind, cut in this order: publishing (X4), the gallery and wear this effect (X3), the electric bursts (keep the cracks), Wonder's turn labels (the turn keys carry the turn), rigid presets, the textured and fine-tip brushes (keep ink and neon), wobble polish, export polish. Never cut the tests or the demo video. No switching projects after the probe; from then on, only cuts.
+If work falls behind, cut in this order: publishing (X4), the gallery and wear this effect (X3), the shockwave ring, the electric bursts (keep the cracks), Wonder's turn labels (the turn keys carry the turn), rigid presets, the textured and fine-tip brushes (keep ink and neon), wobble polish, export polish. Never cut the tests or the demo video. No switching projects after the probe; from then on, only cuts.
 
 ## 4. The milestone loop
 
@@ -229,7 +229,7 @@ reference/   Qai's timing sheet and drawn views
 verify/      generated and gitignored: out/, verdicts/, tmp/, ACTIVE, CLAIM
 ```
 
-**Stack.** Vite and strict TypeScript with one canvas, on Cloudflare Pages with one Pages Function (the setup Qai shipped Suspect on). The OpenAI SDK pointed at `https://api.meta.ai/v1`. perfect-freehand for the brush: the physics moves its input points and the outline is redrawn every drawing, so the line stays his. The project (clip ID plus strokes) moves between iPad Safari (drawing) and desktop Chrome (export) as one JSON file.
+**Stack.** Vite and strict TypeScript with one canvas (plus one WebGL canvas for the slam's noise effects, §8.9), on Cloudflare Pages with one Pages Function (the setup Qai shipped Suspect on). The OpenAI SDK pointed at `https://api.meta.ai/v1`. perfect-freehand for the brush: the physics moves its input points and the outline is redrawn every drawing, so the line stays his. The project (clip ID plus strokes) moves between iPad Safari (drawing) and desktop Chrome (export) as one JSON file.
 
 **Rules for the code:**
 - **Deterministic.** A fixed timestep of 1/120 s and seeded randomness, so the same input gives byte-identical output. The goldens depend on this.
@@ -274,6 +274,8 @@ interface Moment {
   xy: [number, number];                       // impact point, frame pixels
   by: 'body' | 'effect';                      // his fist (Qai taps the frame), or the end of the slam preset
   bursts?: { color: 0 | 1 | 2; brush: BrushId; count: number; seed: number };  // electric arcs out from xy
+  ring?: { color: 0 | 1 | 2; seed: number };  // shockwave ring along the floor, fist slams
+  ease?: Partial<Record<'cracks' | 'ring' | 'bursts', 'linear' | 'in' | 'out' | 'hold-snap'>>;  // missing = 'out'
 }
 interface Effect {
   version: 1;
@@ -458,6 +460,8 @@ Fling on turns isn't a separate force. The root sweeps around the torso (§8.5),
 | neon glow | radius 12 px, intensity 0.8, at 1080 wide |
 | crack draw-on | 4 drawings |
 | electric bursts | 8 arcs, 6 drawings long, reach 0.6 torso heights |
+| shockwave ring | 8 drawings long, reach 1.5 torso heights, band 0.15 torso heights, noise threshold 0.55, height 0.3 × width |
+| slam easing | ease-out (cubic) for cracks, ring and bursts |
 
 ### 8.8 Brushes
 
@@ -478,11 +482,16 @@ All six brushes are perfect-freehand outlines of the same simulated centerline, 
 
 ### 8.9 Moments: the slam
 
-The hero test (§1) is a spin, a fist slam, then a kagune slam. The spin is the turn (§8.5). The slam adds three things:
+The hero test (§1) is a spin, a fist slam, then a kagune slam. The spin is the turn (§8.5). The slam adds four things:
 
 - **Ground strokes (the cracks).** Qai draws the cracks on the floor in one frame. They're anchored to fixed frame pixels, not to his body, which works because the camera is on a tripod. They stay hidden until the fist slam, then draw on from the impact point outward (`appear`, 4 drawings by default), held on drawings and boiling like any line. They go under the person cutout, because the floor is behind his feet.
 - **The slam preset.** A keyed strike (A5's mechanics, with reference `slam.phases` and `slam.keys`) that ends with the tendril tips on the floor. Its last strike key is the second moment, `by: 'effect'`.
 - **Electric bursts.** At an effect slam, `count` seeded jagged arcs (midpoint displacement) shoot out from the impact point and crawl along the drawn cracks, drawn in a neon brush in front of the person. Each arc gets a new shape every drawing, on 2s, for 6 drawings, then fades. The same seed gives the same bursts.
+- **Shockwave ring.** At the fist slam, a ring grows out across the floor from the impact point: an ellipse flattened to the floor (height 0.3 × width *(start)*). Its band is cut from seeded noise at a threshold, so it has sharp toon edges with gaps and lumps instead of a clean circle, and a second, finer noise roughens those edges. It glows like the neon brush, in a palette color, changes shape only on drawings, and goes under the person cutout like the cracks.
+
+**Timing curves.** Every slam effect runs on its own clock: its age since the moment, divided by its length in drawings, gives progress 0 → 1, and an easing curve reshapes that progress before it drives the effect. That covers how far the cracks have drawn on, how wide the ring is and how bright it glows, and how bright the bursts are. The default is ease-out (fast start, slow finish) *(start)*. Qai can pick another per effect: linear, ease-in, ease-out, or hold-then-snap. Progress is read once per drawing, so the effects still step on 2s.
+
+**Rendering the noise.** The ring's noise runs per pixel, too slow for the 2D canvas at 1080p, so it's drawn in one small WebGL canvas and composited in the same layer order (§8.6). The noise is hash-based, from the seed and the drawing index only, so a render repeats exactly on the same machine. Across GPUs it may differ by a few pixel values, which L1's 0.5% tolerance absorbs.
 
 Qai sets the fist slam by tapping the frame at the impact. Finding moments automatically (Wonder or SAM) stays parked.
 
@@ -595,9 +604,10 @@ Each criterion has one test file, `tests/<milestone>/<ID>.test.ts`, which also w
 | ID | Criterion | Threshold |
 |---|---|---|
 | S1 | Ground strokes stay put | Root and points within 0.5 px of their drawn frame position on every frame |
-| S2 | Cracks start on the slam | Hidden before the fist slam's drawing; fully drawn on exactly 4 drawings later *(start)*; the drawn length only grows |
+| S2 | Cracks start on the slam | Hidden before the fist slam's drawing; fully drawn on exactly 4 drawings later *(start)*; the drawn length only grows, and on each drawing equals the ease curve's value × full length (within 1%) |
 | S3 | Bursts on the effect slam | The first burst drawing is the drawing that holds the slam preset's last strike key; bursts last 6 drawings *(start)*; same seed → byte-identical pixels |
-| S4 | Layers | Ground strokes render under the person cutout; bursts render over it |
+| S4 | Layers | Ground strokes and the ring render under the person cutout; bursts render over it |
+| S5 | Shockwave ring | Starts on the fist slam's drawing and lasts 8 drawings *(start)*; its width only grows and follows the ease curve (within 1%); its shape changes only on drawing changes; same seed on the same machine → byte-identical pixels |
 
 ### T: the turn
 
