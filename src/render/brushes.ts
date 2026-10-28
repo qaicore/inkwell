@@ -17,7 +17,7 @@
 import type { BrushId, BrushSettings, Effect, Vec2 } from '../types/effect.ts';
 import { fillOutline, strokeOutline, type Ends, type PathTarget } from './brush.ts';
 
-export const BRUSH_IDS: readonly BrushId[] = ['ink', 'textured', 'fine-ink', 'fine-textured', 'neon-straight', 'neon-round'];
+export { BRUSH_IDS } from '../types/effect.ts';
 
 // SPEC §8.7 starting values; Qai tunes them.
 export const FINE_TIP_SIZE = 0.35; // × the ink brush's size
