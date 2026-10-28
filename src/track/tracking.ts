@@ -265,7 +265,7 @@ function fillGaps(raw: (Pose | null)[]): Pose[] | null {
 
 // Fills the gaps in a series: straight lines between known values, the
 // first and last known values held out to the ends. Assumes one is known.
-function fillLinear(values: (number | null)[]): number[] {
+export function fillLinear(values: (number | null)[]): number[] {
   const known = values.flatMap((v, i) => (v === null ? [] : [i]));
   const out: number[] = [];
   let k = 0; // known[k] is the last known index at or before i
@@ -291,20 +291,23 @@ const PAD = 30; // frames mirrored onto each end, so the filter doesn't drag the
 // The whole clip is known up front, so filter forwards and backwards and
 // average the two: the lag of one cancels the lead of the other.
 function smooth(poses: Pose[], fps: number): Pose[] {
-  const dt = 1 / fps;
-  const n = poses.length;
-  const pad = Math.min(PAD, n - 1);
-  const both = (values: number[], s: { minCutoff: number; beta: number }) => {
-    const padded = mirrorEnds(values, pad);
-    const forward = oneEuro(padded, dt, s.minCutoff, s.beta);
-    const backward = oneEuro([...padded].reverse(), dt, s.minCutoff, s.beta).reverse();
-    return values.map((_, i) => (forward[pad + i] + backward[pad + i]) / 2);
-  };
+  const both = (values: number[], s: { minCutoff: number; beta: number }) => smoothBothWays(values, fps, s);
   const x = both(poses.map((p) => p.x), SMOOTHING.position);
   const y = both(poses.map((p) => p.y), SMOOTHING.position);
   const angle = both(poses.map((p) => p.angle), SMOOTHING.angle);
   const scale = both(poses.map((p) => Math.log(p.scale)), SMOOTHING.scale);
   return poses.map((_, i) => ({ x: x[i], y: y[i], angle: angle[i], scale: Math.exp(scale[i]) }));
+}
+
+// One series smoothed forwards and backwards with the One Euro filter, the
+// two averaged. Used for poses and for the torso bend (bend.ts).
+export function smoothBothWays(values: number[], fps: number, s: { minCutoff: number; beta: number }): number[] {
+  const dt = 1 / fps;
+  const pad = Math.min(PAD, values.length - 1);
+  const padded = mirrorEnds(values, pad);
+  const forward = oneEuro(padded, dt, s.minCutoff, s.beta);
+  const backward = oneEuro([...padded].reverse(), dt, s.minCutoff, s.beta).reverse();
+  return values.map((_, i) => (forward[pad + i] + backward[pad + i]) / 2);
 }
 
 // Extends a series past both ends by reflecting it through its end values,
@@ -361,6 +364,6 @@ function wrap(angle: number) {
 }
 
 // An angle brought into -PI/2..PI/2, for directions that have no head or tail.
-function wrapHalf(angle: number) {
+export function wrapHalf(angle: number) {
   return angle - Math.PI * Math.round(angle / Math.PI);
 }

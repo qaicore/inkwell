@@ -11,6 +11,7 @@ import type { Effect, Vec2 } from '../types/effect.ts';
 import { DEFAULT_PHYSICS, createChain, stepChain, type Chain, type PhysicsParams } from '../physics/strand.ts';
 import { lerpTransform, offsetToTorso, toPixels, toTorso, type TorsoTransform } from '../track/torso.ts';
 import { boilOffsets, type BoilParams } from './boil.ts';
+import { warpView, type BodyAngle } from './body.ts';
 import { drawingIndex } from './timing.ts';
 
 export interface HeldStroke {
@@ -37,6 +38,10 @@ export interface AnimateOptions {
   boil: BoilParams;
   physics?: PhysicsParams;
   fps?: number;
+  // The body's facing and forward bend at a (fractional) frame, or null for
+  // upright and facing the camera. When given, each target is turned with it
+  // (body.ts) before the physics, and the layer follows.
+  body?: (frame: number) => BodyAngle | null;
 }
 
 export function animate(opts: AnimateOptions): AnimatedFrame[] {
@@ -47,11 +52,16 @@ export function animate(opts: AnimateOptions): AnimatedFrame[] {
   const dps = opts.effect.timing.drawingsPerSecond;
 
   // M1 has the front view only; the turn (§8.5) blends views here later.
+  // Until then, `body` turns the front view (the §8.5 single-view fallback).
   const strokes = opts.effect.strokes.map((stroke) => {
     const view = stroke.views.front;
-    const target = (t: TorsoTransform) => view.points.map((p) => toPixels(t, p));
-    const chain: Chain = createChain(target(opts.anchor(stroke.id, 0)), stroke.kind, stroke.stiffness);
-    return { stroke, view, target, chain };
+    const shape = (frame: number) => {
+      const at = opts.body?.(frame);
+      return at ? warpView(view.points, (stroke.bodyAngle * Math.PI) / 180, at) : { points: view.points, layer: view.layer };
+    };
+    const target = (t: TorsoTransform, frame: number) => shape(frame).points.map((p) => toPixels(t, p));
+    const chain: Chain = createChain(target(opts.anchor(stroke.id, 0), 0), stroke.kind, stroke.stiffness);
+    return { stroke, view, shape, target, chain };
   });
 
   const out: AnimatedFrame[] = [];
@@ -64,14 +74,14 @@ export function animate(opts: AnimateOptions): AnimatedFrame[] {
         const to = opts.anchor(s.stroke.id, f);
         for (let i = 1; i <= steps; i++) {
           const t = lerpTransform(from, to, i / steps);
-          stepChain(s.chain, s.target(t), t.unit, params);
+          stepChain(s.chain, s.target(t, f - 1 + i / steps), t.unit, params);
         }
       }
     }
     const k = drawingIndex(f, dps, fps);
     if (k !== lastK) {
       lastK = k;
-      held = strokes.map(({ stroke, view, chain }) => {
+      held = strokes.map(({ stroke, view, shape, chain }) => {
         const t = opts.anchor(stroke.id, f);
         const boil = boilOffsets(k, stroke.id, chain.points.length, opts.boil, stroke.wobble, opts.width);
         return {
@@ -82,7 +92,7 @@ export function animate(opts: AnimateOptions): AnimatedFrame[] {
             return [x + bx, y + by];
           }),
           pressure: [...view.pressure],
-          layer: view.layer,
+          layer: opts.body ? shape(f).layer : view.layer,
         };
       });
     }

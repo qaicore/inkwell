@@ -43,6 +43,14 @@ export interface Stroke {
 
 export type Ease = 'linear' | 'in' | 'out' | 'hold-snap';
 
+// When the electric strokes grow out of his back (SPEC §8.9): Qai taps the
+// frame, or confirms the one suggested from the stand-in's wrists.
+export interface EmergeMoment {
+  kind: 'emerge';
+  at: number; // seconds into the clip
+  strokes?: number[]; // stroke ids; missing = every electric stroke
+}
+
 export interface Moment {
   kind: 'slam';
   at: number; // seconds into the clip
@@ -61,7 +69,7 @@ export interface Effect {
   timing: { drawingsPerSecond: 12 | 8 };
   strokes: Stroke[];
   presets?: { name: string; at: number }[]; // seconds into the clip
-  moments?: Moment[];
+  moments?: (Moment | EmergeMoment)[];
   aura?: { color: 0 | 1 | 2 }; // the flame aura around the person (§8.6); missing = none
   listing?: { name: string; tags: string[]; by: string }; // the gallery entry (X3)
   overrides: Record<string, unknown>; // one-tap overrides, keyed by field path
@@ -95,6 +103,8 @@ export function parseEffect(text: string): { effect: Effect } | { problems: stri
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 const isVec = (v: unknown): v is Vec2 => Array.isArray(v) && v.length === 2 && v.every(isNum);
+const isSlam = (m: Record<string, unknown>) => m.kind === 'slam' && isNum(m.at) && isVec(m.xy) && (m.by === 'body' || m.by === 'effect');
+const isEmerge = (m: Record<string, unknown>) => m.kind === 'emerge' && isNum(m.at) && (m.strokes === undefined || (Array.isArray(m.strokes) && m.strokes.every(isNum)));
 const isColor = (v: unknown) => v === 0 || v === 1 || v === 2;
 
 function brushProblems(b: unknown, where: string): string[] {
@@ -163,7 +173,7 @@ function effectProblems(e: unknown): string[] {
     if (new Set(ids).size !== ids.length) p.push('two strokes share an id');
   }
   if (e.presets !== undefined && !(Array.isArray(e.presets) && e.presets.every((x) => isObj(x) && typeof x.name === 'string' && isNum(x.at)))) p.push('presets is not a list of { name, at }');
-  if (e.moments !== undefined && !(Array.isArray(e.moments) && e.moments.every((m) => isObj(m) && m.kind === 'slam' && isNum(m.at) && isVec(m.xy) && (m.by === 'body' || m.by === 'effect')))) p.push('moments is not a list of slams');
+  if (e.moments !== undefined && !(Array.isArray(e.moments) && e.moments.every((m) => isObj(m) && (isSlam(m) || isEmerge(m))))) p.push('moments is not a list of slams and emerges');
   if (e.listing !== undefined && !(isObj(e.listing) && typeof e.listing.name === 'string' && Array.isArray(e.listing.tags) && typeof e.listing.by === 'string')) p.push('listing is not { name, tags, by }');
   if (e.aura !== undefined && !(isObj(e.aura) && isColor(e.aura.color))) p.push('aura is not { color: 0, 1 or 2 }');
   if (!isObj(e.overrides)) p.push('overrides is not an object');

@@ -84,6 +84,7 @@ export interface BrushStroke {
   pressure: number[];
   color: string; // '#rrggbb'
   accent?: string; // blade: the reflected light's color; missing = `color`
+  emerge?: number; // electric: drawings since its emerge moment; missing = always out
   brush: BrushId;
   settings: BrushSettings; // from brushSettings, at 1080 wide
   scale: number; // target width / 1080

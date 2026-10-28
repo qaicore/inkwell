@@ -4,6 +4,7 @@
 import { createCanvas, type SKRSContext2D } from '@napi-rs/canvas';
 import type { Effect } from '../types/effect.ts';
 import type { PlacedStroke } from '../motion/animate.ts';
+import { emergeAges } from '../motion/moments.ts';
 import { brushSettings, drawBrushStroke, type BrushTarget, type MakeScratch } from './brushes.ts';
 
 type Layer = PlacedStroke['layer'];
@@ -26,6 +27,7 @@ export function renderPng(width: number, height: number, strokes: PlacedStroke[]
 // layer to draw something between them, like the person.
 export function drawStrokes(ctx: SKRSContext2D, strokes: PlacedStroke[], effect: Effect, scale = 1, layers: readonly Layer[] = ['behind', 'front'], k = 0) {
   const byId = new Map(effect.strokes.map((s) => [s.id, s]));
+  const emerge = emergeAges(effect, k);
   for (const layer of layers) {
     for (const stroke of strokes) {
       if (stroke.layer !== layer) continue;
@@ -37,6 +39,7 @@ export function drawStrokes(ctx: SKRSContext2D, strokes: PlacedStroke[], effect:
         pressure: stroke.pressure,
         color: source ? effect.palette[source.color] : '#000000',
         accent: source?.accent !== undefined ? effect.palette[source.accent] : undefined,
+        emerge: brush === 'electric' ? emerge.get(stroke.id) : undefined,
         brush,
         settings: brushSettings(effect, brush),
         scale,

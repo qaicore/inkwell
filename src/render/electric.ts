@@ -12,6 +12,14 @@
 // Every offset is seeded by stroke id and drawing index k, so the bolt takes a
 // new shape each drawing, on 2s, and re-renders identically. The root doesn't
 // move, so it stays attached, and the physics underneath is unchanged.
+//
+// Emergence (an 'emerge' moment): the stroke grows out of its root like a
+// live cord. Over EMERGE.grow drawings it extends to full length, eased out,
+// with a hot pulse riding its head: the last stretch of it drawn pale and
+// wide, a bigger glow, a bright bead at the tip. On the next EMERGE.pop
+// drawings it pops: the whole bolt flashes (a wider, paler core and a
+// stronger bloom) and a burst of sparks flies off the tip and along it,
+// spreading and thinning on the second drawing. Then it's the normal bolt.
 import type { BrushSettings, Vec2 } from '../types/effect.ts';
 import { fillOutline, strokeOutline } from './brush.ts';
 import { hash01, mixBlack, mixWhite } from './geometry.ts';
@@ -23,6 +31,9 @@ export const ELECTRIC_GLOW = { radiusPx: 26, intensity: 0.55 };
 const FLICKER = 0.4; // the bloom drops to 0.6× at most on a drawing
 const SHARD_OFF = [16, 42]; // px from the bolt, at 1080 wide
 const SHARD_LEN = [6, 18];
+export const EMERGE = { grow: 4, pop: 2 }; // drawings
+const PULSE = 0.3; // share of the grown length the pulse covers
+const SPARKS = 14;
 
 const signed = (a: number, b: number, c: number) => hash01(a, b, c) * 2 - 1;
 
@@ -33,21 +44,101 @@ export interface ElectricStroke {
   color: string;
   settings: BrushSettings;
   scale: number;
+  emerge?: number; // drawings since its emerge moment (negative: not out yet); missing = always out
 }
 
 export function drawElectric(ctx: BrushTarget, make: MakeScratch, s: ElectricStroke) {
+  const age = s.emerge;
+  if (age !== undefined && age < 0) return;
+  const growing = age !== undefined && age < EMERGE.grow;
+  const pop = age !== undefined && !growing && age < EMERGE.grow + EMERGE.pop ? age - EMERGE.grow : -1; // 0, 1 while popping
+  const grown = growing ? 1 - (1 - (age + 1) / EMERGE.grow) ** 2 : 1;
   const bolt = s.settings.bolt ?? ELECTRIC_BOLT;
   const width = s.settings.size * s.scale;
-  const b = bend(s.points, s.id, s.k, bolt, s.settings.size, s.scale);
+  const b = bend(growing ? cut(s.points, grown) : s.points, s.id, s.k, bolt, s.settings.size, s.scale);
   if (!b) return;
-  if (s.settings.glow) drawGlow(ctx, make, { id: s.id, k: s.k, points: b.path, color: s.color, scale: s.scale, glow: s.settings.glow }, FLICKER);
+  const flash = pop === 0 ? 1 : pop === 1 ? 0.45 : 0;
+  if (s.settings.glow) {
+    const glow = { radiusPx: s.settings.glow.radiusPx * (1 + 0.7 * flash), intensity: Math.min(1, s.settings.glow.intensity * (1 + 1.2 * flash)) };
+    drawGlow(ctx, make, { id: s.id, k: s.k, points: b.path, color: s.color, scale: s.scale, glow }, flash > 0 ? 0 : FLICKER);
+  }
   const band = (path: Vec2[], pressure: number[], size: number, color: string) =>
     fillOutline(ctx, strokeOutline(path, pressure, { size, thinning: 0.95, smoothing: 0.5, streamline: 0 }, 1, 'taper'), color);
   band(b.path, b.width, width * 1.18, mixBlack(s.color, 0.55));
   band(b.path, b.width, width, s.color);
-  band(shifted(b, 0.12, width), b.width.map((w, i) => Math.min(w, b.core[i] * 1.3)), width * 0.62, mixWhite(s.color, 0.55));
-  band(shifted(b, 0.2, width), b.core, width * 0.36, mixWhite(s.color, 0.94));
-  drawShards(ctx, b.path, s, bolt.shards);
+  band(shifted(b, 0.12, width), b.width.map((w, i) => Math.min(w, b.core[i] * (1.3 + flash))), width * (0.62 + 0.2 * flash), mixWhite(s.color, 0.55 + 0.3 * flash));
+  band(shifted(b, 0.2, width), b.core.map((c) => Math.min(1, c * (1 + flash))), width * (0.36 + 0.24 * flash), mixWhite(s.color, 0.94));
+  if (growing) drawPulse(ctx, make, b, s, width);
+  else drawShards(ctx, b.path, s, bolt.shards);
+  if (pop >= 0) drawSparks(ctx, b.path, s, pop);
+}
+
+// The first `share` of a polyline by length.
+function cut(pts: Vec2[], share: number): Vec2[] {
+  const line = new Arc(pts);
+  const end = line.total * share;
+  const out: Vec2[] = [pts[0]];
+  for (let i = 1; i < pts.length && line.cum[i] < end; i++) out.push(pts[i]);
+  out.push(line.at(end).p);
+  return out;
+}
+
+// The current riding the head of a growing cord: its last PULSE of length
+// drawn hot and wide, with a stronger glow, and a bright bead at the tip.
+function drawPulse(ctx: BrushTarget, make: MakeScratch, b: Bent, s: ElectricStroke, width: number) {
+  const n = b.path.length;
+  const path = b.path.slice(Math.max(0, Math.floor(n * (1 - PULSE))));
+  if (path.length < 2) return;
+  const ramp = path.map((_, i) => 0.3 + 0.7 * (i / (path.length - 1))); // fat at the head
+  if (s.settings.glow) {
+    const glow = { radiusPx: s.settings.glow.radiusPx * 1.4, intensity: Math.min(1, s.settings.glow.intensity * 1.8) };
+    drawGlow(ctx, make, { id: s.id, k: s.k, points: path, color: s.color, scale: s.scale, glow }, 0);
+  }
+  const hot = (size: number, color: string) =>
+    fillOutline(ctx, strokeOutline(path, ramp, { size, thinning: 0.8, smoothing: 0.5, streamline: 0 }, 1, 'taper'), color);
+  hot(width * 0.9, mixWhite(s.color, 0.7));
+  hot(width * 0.5, mixWhite(s.color, 0.95));
+  const [tx, ty] = b.path[n - 1];
+  const r = width * 0.55;
+  const bead: Vec2[] = [];
+  for (let q = 0; q < 8; q++) bead.push([tx + Math.cos((q * Math.PI) / 4) * r, ty + Math.sin((q * Math.PI) / 4) * r]);
+  fillOutline(ctx, bead, mixWhite(s.color, 0.95));
+}
+
+// The pop: SPARKS slivers flying off, most from the tip, some from along the
+// bolt, flung out along the bolt's direction and to the sides. The same
+// sparks on both drawings; on the second they're farther out, shorter and
+// thinner.
+function drawSparks(ctx: BrushTarget, path: Vec2[], s: ElectricStroke, pop: number) {
+  const line = new Arc(path);
+  const end = line.at(line.total);
+  const ahead: Vec2 = [end.ny, -end.nx]; // the bolt's direction at the tip
+  for (let j = 0; j < SPARKS; j++) {
+    const r = (q: number) => hash01(s.id, j, q);
+    const atTip = r(107) < 0.65;
+    const from = atTip ? end : line.at(line.total * (0.3 + 0.6 * r(109)));
+    const side = r(113) < 0.5 ? -1 : 1;
+    const spread = (r(127) * 2 - 1) * 1.6;
+    const dir: Vec2 = atTip
+      ? [ahead[0] * Math.cos(spread) - ahead[1] * Math.sin(spread), ahead[0] * Math.sin(spread) + ahead[1] * Math.cos(spread)]
+      : [from.nx * side, from.ny * side];
+    const out = (10 + 30 * r(131)) * (pop + 1) * s.scale;
+    const thin = pop === 0 ? 1 : 0.6;
+    const len = (14 + 22 * r(137)) * thin * s.scale;
+    const wid = (2.5 + 2.5 * r(139)) * thin * s.scale;
+    const c: Vec2 = [from.p[0] + dir[0] * out, from.p[1] + dir[1] * out];
+    const across: Vec2 = [-dir[1] * wid, dir[0] * wid];
+    ctx.fillStyle = r(149) < 0.5 ? mixWhite(s.color, 0.9) : mixWhite(s.color, 0.5);
+    ctx.beginPath();
+    ctx.moveTo(c[0] + dir[0] * len, c[1] + dir[1] * len);
+    for (const [x, y] of [
+      [c[0] + across[0], c[1] + across[1]],
+      [c[0] - dir[0] * len * 0.4, c[1] - dir[1] * len * 0.4],
+      [c[0] - across[0], c[1] - across[1]],
+    ]) ctx.quadraticCurveTo(x, y, x, y);
+    ctx.closePath();
+    ctx.fill();
+  }
 }
 
 interface Bent {
