@@ -94,7 +94,7 @@ M0 and M1 need no key at all: every criterion that needs SAM or Wonder output st
 | M0 | Tue Oct 27 | The M0 checklist below, including the probe script (not run) | R1–R5 | No |
 | M1 | Wed Oct 28 | Clip conversion; anchors (One Euro filter, torso space), developed on the stand-in tracker (§12); physics engine (2-hour cap); stepped renderer with boil; contact sheets; `/label` page | P1–P5, A1, A2, A6 | No |
 | M2 | Thu Oct 29 | The probe run; cached SAM fixtures for the required clips; Wonder plan call with schema check and one retry; override UI; nearest-mask baseline; Gate 1 (one full run, clip to playback; ugly is fine); the six brushes and the brush picker (§8.8) | PROBE, K1–K3, W1, W2, W3, G1, B1–B3 | PROBE, K1–K3, W1, G1 (W2 and W3 can use recorded responses; B1–B3 are API-free) |
-| M3 | Fri Oct 30 | Turn: facing from the face track; views mode (draw side and back over a faint front); view blending; layering and occlusion; single-view fallback | T2–T5, A3, A4, A7 | T4 and the re-run K criteria; T2, T3, T5 and A3, A4, A7 are API-free |
+| M3 | Fri Oct 30 | Turn: facing from Qai's turn keys (§8.5); views mode (draw side and back over a faint front); view blending; layering and occlusion; single-view fallback | T2–T5, A3, A4, A7 | T4 and the re-run K criteria; T2, T3, T5 and A3, A4, A7 are API-free |
 | M4 | Sat Oct 31 | Wonder facing labels and fusion; MP4 export; deploy with cached samples; Gate 2 | T1, W1 (final), X1, X2, G2 | T1, W1, G2 (X1 and X2's server test are API-free) |
 | M5 | Sun Nov 1 | In priority order: finish M3 if it slipped; then the slam (§8.9): ground strokes for the cracks, the slam preset (A5) and the electric bursts; then, only if Gate 2 passed on Saturday and the slam passes, the gallery with search and wear this effect (X3), with a 5-hour cap. Feature freeze at 11 PM | A5, S1–S4, L1; X3 if built | X3 |
 | M6 | Mon Nov 2 | Every suite on the full clip set; README scoreboards | all | yes |
@@ -138,7 +138,7 @@ Pause other projects (Furr, the Suspect rebuild) until Nov 5. The live final is 
 
 ### Cut order
 
-If work falls behind, cut in this order: publishing (X4), the gallery and wear this effect (X3), the electric bursts (keep the cracks), Wonder's turn labels (SAM's face track carries the turn), rigid presets, the textured and fine-tip brushes (keep ink and neon), wobble polish, export polish. Never cut the tests or the demo video. No switching projects after the probe; from then on, only cuts.
+If work falls behind, cut in this order: publishing (X4), the gallery and wear this effect (X3), the electric bursts (keep the cracks), Wonder's turn labels (the turn keys carry the turn), rigid presets, the textured and fine-tip brushes (keep ink and neon), wobble polish, export polish. Never cut the tests or the demo video. No switching projects after the probe; from then on, only cuts.
 
 ## 4. The milestone loop
 
@@ -394,6 +394,8 @@ Fling on turns isn't a separate force. The root sweeps around the torso (§8.5),
 2. **Wonder's labels,** at 5 fps, each with a confidence.
 3. **Manual keys** on the timeline. These override both.
 
+**Turn keys come first (after the Oct 27 probe, §9).** The face track holds his head through a fast spin, so it can't say when his back turns. Qai taps the frame where his back faces the camera, and the app adds keys a quarter turn either side where the turn starts and ends; he drags any key that's off. Between keys, θ is interpolated in the direction of travel, then the views, blending and layer swap below run as specced. Wonder's labels (at 5 fps) replace the taps only if they pass T1. The face track is still run and reported in T1, but it doesn't drive θ.
+
 **Fusion.**
 1. Unwrap θ to a continuous angle.
 2. Across the back half (no face), interpolate in the direction of travel. The direction comes from Wonder's labels, or from the sign of `o` as the face left.
@@ -495,7 +497,7 @@ Read the docs before writing a call.
 - **Cost.** $0.20 per 1,000 frames, minimum 50 frames per request. Results vary slightly between runs, so cache them.
 - **Runs per clip:**
   - concept `person` (occlusion, torso, body height)
-  - concept `face` (turn sensor)
+  - concept `face` (measured as a turn sensor in T1; it doesn't drive the turn, §8.5)
   - one run per stroke anchor from the plan: a concept, or a point propagated in both directions
 
 **Muse Wonder.** Model id from https://dev.meta.ai/models/muse-wonder. It uses structured output with a fixed JSON schema and makes two calls:
@@ -509,7 +511,7 @@ Read the docs before writing a call.
   - a one-line reason
 - **Facing, one per clip.** Input: every 6th frame (5 fps), each with its frame number burned in. Output: a facing class and a confidence for each frame.
 
-Each Wonder job must beat a dumb rule on the tests, or the video doesn't claim it. While Wonder is working, the app shows "reading your drawing"; both calls are cached.
+Every Wonder call asks for reasoning effort `low`, and the proxy pins it (§9 Oct 27 result). Each Wonder job must beat a dumb rule on the tests, or the video doesn't claim it. While Wonder is working, the app shows "reading your drawing"; both calls are cached.
 
 **Proxy.** In the app, every call goes through the Pages Function. It holds the keys, requires a passcode for uploads, and enforces a daily spend cap. Scripts in `scripts/live/` may call the API directly, with the key from `.env`.
 
@@ -531,6 +533,14 @@ The probe is the last point to switch projects; after it, only cuts. Qai reads i
 | The face track stays when his back turns | The behind/in-front swap becomes a manual key on the timeline |
 | Only the person mask holds | Anchor to it; whole-body effects; hero shot at three-quarter view |
 | Nothing holds, even in daylight | Stop and tell Qai. This is the one case for switching projects; reshoot in daylight the next day before deciding. The fallback project is the family-paperwork agent: it matters more to the world at 100x, but its 9-day slice demos as a document chatbot in the most crowded lane, which is why it wasn't picked |
+
+**Oct 27 result** (`fixtures/probe/report.md`, $0.44 in all). The clip was the hero itself, a fast spin and a fist slam indoors, not the 10 s slow turn.
+- **Person:** held on every frame he's in shot (209 of 254, through the spin blur and the crouch). Median jump 0.94% of body height, p95 4.4%.
+- **Face:** stayed on his head while his back was turned; it dropped on 1 frame of the spin.
+- **Back point:** placed on his back at frame 60 (`--back-frame 60 --back-xy 900,400`); SAM grew it into the whole person, so it can't tell back from front either.
+- **Wonder:** 8 labels for $0.05 at reasoning effort `low`. Left to choose its own level, it spent all 4,000 output tokens reasoning and returned nothing, twice.
+
+Row 2 applies, and Qai chose it: the turn is manual keys (§8.5), and Wonder's labels are tried in M4 as the automatic upgrade.
 
 ## 10. Acceptance criteria
 
@@ -593,7 +603,7 @@ Each criterion has one test file, `tests/<milestone>/<ID>.test.ts`, which also w
 
 | ID | Criterion | Threshold |
 |---|---|---|
-| T1 | Facing-class accuracy on the hand-labeled frames of the required turning clips. Report face-only, Wonder-only and fused side by side, scored on the same frames | ≥ 80% for the source in use. Fused must be ≥ face-only; otherwise use face-only, and the video doesn't claim Wonder reads the turn |
+| T1 | Facing-class accuracy on the hand-labeled frames of the required turning clips. Report face-only, Wonder-only and fused side by side, scored on the same frames | ≥ 80% for the source in use. The source in use is Qai's turn keys (§8.5) unless Wonder-only or fused reaches ≥ 80%; only then does the app read the turn by itself and the video claim Wonder reads it |
 | T2 | At θ = 0, 90 and 180 (and 270 if drawn), the blended target vs the drawn view | max point error < 0.5 px |
 | T3 | Blend continuity: target point movement per 1° of θ | < 2% of strand length |
 | T4 | Layering on labeled frames | In `front` frames, "behind" stroke pixels over person-mask pixels ≤ 0.5% of stroke pixels. In `back` frames, strokes that the back view marks `front` render over the body |
@@ -724,7 +734,7 @@ Impact carries the most weight, and the final round is judges watching the top 5
 | Score | Weight | How Inkwell earns it |
 |---|---|---|
 | Impact | 30% | A doodle animator spends 24–30 hours on one video by hand ([Adobe](https://makeitcenter.adobe.com/blog/doodle-tiktok.html)). Time hand-animating 1 second (12 drawings), then do it in Inkwell. Show 3+ people in their own clips with written consent, ideally wearing the same drawing. Pitch the draw-your-own layer: [Edits](https://about.fb.com/news/2025/04/introducing-edits-streamlined-video-creation-app/) applies preset effects like Scribble to a person, and Meta's apps have had no custom-effects tool since [Spark AR shut down](https://www.tubefilter.com/2024/08/27/meta-shutting-down-spark-ar-augmented-reality-platform/) in Jan 2025. Call them tendrils for judges, kagune on X |
-| Use of Meta AI tooling | 25% | Wonder plans each stroke and labels which way he faces. SAM 3.1 runs those prompts, plus `person` for occlusion and `face` as a turn sensor. The video shows each Wonder job beating a dumb rule, side by side |
+| Use of Meta AI tooling | 25% | Wonder plans each stroke and labels which way he faces (claimed only if it passes T1). SAM 3.1 runs those prompts, plus `person` for occlusion and for holding him through the spin. The video shows each Wonder job beating a dumb rule, side by side |
 | Technical depth | 20% | His own physics (one engine, rope to rigid), smoothing, layering and the turn, proven by the scoreboards; a README that shows which parts are his |
 | Demo | 25% | The hero turn in the first 5 seconds, shot in daylight; one unedited take with a visible clock; the turn with and without the turn signal; a deployed link with cached sample clips so judges can draw without uploading |
 
@@ -767,7 +777,7 @@ Shaky tracking is the biggest risk, because every wobble in the mask shows up in
 |---|---|
 | The API credits are late | Build API-free work first and apply the swap rule (§3); ask in the Discord |
 | SAM's masks shift slightly between frames and runs, so the strands jitter | One Euro smoothing; hold the last good position when SAM's confidence drops; shoot in daylight at 1/250 s or faster |
-| The back point or the face track fails in the probe | Change the hero move, not the project: a manual key for the behind/in-front swap, or anchor to the person mask and shoot the hero at three-quarter view (§9) |
+| The back point or the face track fails in the probe | Happened Oct 27: both missed the turn on the hero spin, so the swap is turn keys (§8.5). Keep the hero move |
 | Clips arrive as WebM or with a shifting frame rate | Convert every clip in the browser to H.264 at a constant 30 fps before upload |
 | Wonder doesn't beat the dumb rule | Use the rule where it wins and say so in the README; the tooling story leans on SAM's three jobs and whatever Wonder still wins |
 | Edits' Scribble already takes his own drawing | The pitch narrows to the physics, the turn and wear this effect |
