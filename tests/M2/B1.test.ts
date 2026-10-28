@@ -1,5 +1,5 @@
 /// <reference types="node" />
-// B1 (SPEC §10, brushes): determinism. Each of the six brushes, same effect and drawing index k: byte-identical
+// B1 (SPEC §10, brushes): determinism. Each of the nine brushes, same effect and drawing index k: byte-identical
 // pixels across two renders; identical between drawing changes (A1).
 //
 // Brush ids are read from docs/SPEC.md §7 (`type BrushId = ...`) at runtime, not from the implementation.
@@ -11,8 +11,9 @@
 //     between them; every frame's PNG must be byte-identical across the runs.
 //   - Within a run: frames holding the same drawing (same k = floor(f·dps/30)) give byte-identical PNGs.
 // Preconditions (so identical output can't come from drawing nothing or ignoring the brush): every PNG is a real
-// render of the right size; consecutive drawings render differently for every brush (boil on, wobble 1); the six
-// brushes give six different images.
+// render of the right size; consecutive drawings render differently for every brush (boil on, wobble 1); every brush
+// SPEC lists gives a different image from every other one (nine brushes, nine distinct images); and SPEC §7's BrushId
+// lists as many ids as §10 B1 names ("each of the nine brushes"), read at runtime.
 // Stricter reading, flagged for Qai: §7 says strokes without `brush` render as 'ink' exactly as before, so an effect
 // with no brush fields must render byte-identically to the same effect with brush 'ink' on every stroke.
 // The boil numbers are arbitrary test input, not Qai's reference.
@@ -44,11 +45,23 @@ function specBrushIds(): string[] {
 }
 const BRUSHES = specBrushIds();
 
+/** How many brushes SPEC §10 B1 names ("each of the nine brushes"), so a misread BrushId line can't shrink the set. */
+function specB1Count(): number {
+  const spec = readText(join(ROOT, 'docs', 'SPEC.md'));
+  const m = spec.match(/^\|\s*B1\s*\|[^|\n]*each of the (\w+) brushes/im);
+  if (!m) throw new Error('docs/SPEC.md §10 B1 row has no "each of the <n> brushes"');
+  const words = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
+  const n = /^\d+$/.test(m[1]!) ? Number(m[1]) : words.indexOf(m[1]!.toLowerCase());
+  if (n < 0) throw new Error(`docs/SPEC.md §10 B1 says "each of the ${m[1]} brushes": not a number`);
+  return n;
+}
+
 const ev = new Evidence(ID, [
   'modules load',
+  'precondition: SPEC §7 lists every brush §10 B1 names',
   'precondition: real renders',
   'precondition: consecutive drawings differ, per brush',
-  'precondition: the six brushes look different',
+  'precondition: every brush looks different',
   ...BRUSHES.map((b) => `${b}: byte-identical across two renders`),
   ...BRUSHES.map((b) => `${b}: identical between drawing changes`),
   'no brush field renders exactly as ink',
@@ -117,6 +130,9 @@ describe('B1 brush determinism', () => {
       await need('src/motion/animate.ts', { animate: 'function' }, () => import('../../src/motion/animate.ts'));
       await need('src/render/headless.ts', { renderPng: 'function' }, () => import('../../src/render/headless.ts'));
     });
+    const named = specB1Count();
+    ev.record('precondition: SPEC §7 lists every brush §10 B1 names', { brushIds: BRUSHES }, `${named} brushes (§10 B1)`, BRUSHES.length === named);
+    expect(BRUSHES.length, 'B1 precondition: brush ids in SPEC §7 vs the count in §10 B1').toBe(named);
     const a = await runOnce(1);
     const b = await runOnce(2);
     const dps = 12;
@@ -143,7 +159,7 @@ describe('B1 brush determinism', () => {
 
     const first = BRUSHES.map((br) => a.get(br)![0]!.toString('base64'));
     const distinct = new Set(first).size;
-    ev.record('precondition: the six brushes look different', `${distinct} distinct images of ${BRUSHES.length}`, `${BRUSHES.length} distinct`, distinct === BRUSHES.length);
+    ev.record('precondition: every brush looks different', `${distinct} distinct images of ${BRUSHES.length}`, `${BRUSHES.length} distinct`, distinct === BRUSHES.length);
 
     const failures: string[] = [];
     for (const brush of BRUSHES) {
