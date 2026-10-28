@@ -32,7 +32,8 @@ Qai draws once, on one frame of a phone clip, and the drawing lives in the foota
 - stay locked to his body through the whole clip
 - move on 2s like hand-drawn anime: each drawing holds, the line boils slightly, and motion overshoots and settles along arcs
 - show the view he drew at each angle when he turns, passing behind and in front of his body correctly
-- strike with keyed poses, if the Sunday slot goes to the lash preset
+- strike with keyed poses: the slam preset (A5)
+- fire on moments: a slam cracks the floor and sends electric bursts out (§8.9)
 
 "Exact" has two parts:
 - the output matches Qai's reference data in `reference/` on every criterion in §10
@@ -42,11 +43,15 @@ Qai draws once, on one frame of a phone clip, and the drawing lives in the foota
 
 **Division of labor.** Muse Wonder plans each stroke and reads which way he faces. SAM 3.1 tracks the anchors Wonder picks, plus his body (`person`) and face (`face`). Everything that moves is code written for Inkwell. Meta's own SAM docs recommend this split: a Muse model to understand the scene, SAM to segment it.
 
-**Hero effect.** Horns, a halo and a tail come first. The kagune is the hero only if it's clean by Sunday. Call them tendrils for judges and kagune on X.
+**Hero effect.** Horns, a halo and a tail come first. The hero is an electric four-tendril kagune in the neon brush, floppy (stiffness about 0.1), if it's clean by Sunday. Call them tendrils for judges and kagune on X.
+
+**Hero test** (the demo's first shot, §13). Qai spins a full turn with the electric kagune whipping around him, then slams a fist on the ground and the floor cracks out from that point. Then the kagune slams down and electric bursts fire out across the frame. The camera is on the tripod the whole time.
+
+**Marketplace.** Effects are free to use. Anyone can open the gallery, search the premade effects by name or tag, and wear one on their own clip (X3). Qai's premade effects come first. Letting anyone publish their own (X4) comes after Nov 4 unless it fits (§3).
 
 **Inputs and outputs.**
 - **Clip:** MP4 or MOV, under 15 s, one person. The app first converts it in the browser to H.264 at a constant 30 fps, using Mediabunny. After that, frame index `f = round(τ·30)` is the clock.
-- **Drawing:** pointer events with pressure (Pencil in iPad Safari; mouse or pen in desktop Chrome). One brush (perfect-freehand) and three colors.
+- **Drawing:** pointer events with pressure (Pencil in iPad Safari; mouse or pen in desktop Chrome). Three colors and six brushes (§8.8): the current ink brush (perfect-freehand), textured, fine-tip ink, fine-tip textured, and neon in a straight and a round tip for electric effects.
 - **Output:** a vertical MP4 (H.264, original audio) exported in desktop Chrome, plus a live link with cached sample clips.
 
 ## 2. Rules
@@ -88,10 +93,10 @@ M0 and M1 need no key at all: every criterion that needs SAM or Wonder output st
 |---|---|---|---|---|
 | M0 | Tue Oct 27 | The M0 checklist below, including the probe script (not run) | R1–R5 | No |
 | M1 | Wed Oct 28 | Clip conversion; anchors (One Euro filter, torso space), developed on the stand-in tracker (§12); physics engine (2-hour cap); stepped renderer with boil; contact sheets; `/label` page | P1–P5, A1, A2, A6 | No |
-| M2 | Thu Oct 29 | The probe run; cached SAM fixtures for the required clips; Wonder plan call with schema check and one retry; override UI; nearest-mask baseline; Gate 1 (one full run, clip to playback; ugly is fine) | PROBE, K1–K3, W1, W2, W3, G1 | PROBE, K1–K3, W1, G1 (W2 and W3 can use recorded responses) |
+| M2 | Thu Oct 29 | The probe run; cached SAM fixtures for the required clips; Wonder plan call with schema check and one retry; override UI; nearest-mask baseline; Gate 1 (one full run, clip to playback; ugly is fine); the six brushes and the brush picker (§8.8) | PROBE, K1–K3, W1, W2, W3, G1, B1–B3 | PROBE, K1–K3, W1, G1 (W2 and W3 can use recorded responses; B1–B3 are API-free) |
 | M3 | Fri Oct 30 | Turn: facing from the face track; views mode (draw side and back over a faint front); view blending; layering and occlusion; single-view fallback | T2–T5, A3, A4, A7 | T4 and the re-run K criteria; T2, T3, T5 and A3, A4, A7 are API-free |
 | M4 | Sat Oct 31 | Wonder facing labels and fusion; MP4 export; deploy with cached samples; Gate 2 | T1, W1 (final), X1, X2, G2 | T1, W1, G2 (X1 and X2's server test are API-free) |
-| M5 | Sun Nov 1 | One slot, in priority order: finish M3 if it slipped, then Qai's Friday-night pick of wear this effect (X3) or the lash preset (A5). X3 only if Gate 2 passed on Saturday, with a 5-hour cap. Feature freeze at 11 PM | X3 or A5, L1 | X3 |
+| M5 | Sun Nov 1 | In priority order: finish M3 if it slipped; then the slam (§8.9): ground strokes for the cracks, the slam preset (A5) and the electric bursts; then, only if Gate 2 passed on Saturday and the slam passes, the gallery with search and wear this effect (X3), with a 5-hour cap. Feature freeze at 11 PM | A5, S1–S4, L1; X3 if built | X3 |
 | M6 | Mon Nov 2 | Every suite on the full clip set; README scoreboards | all | yes |
 
 **M0 checklist:**
@@ -119,12 +124,12 @@ Times are ET. Qai's accounting exam is Thu Oct 29, so Wednesday night and Thursd
 
 | Day | Qai's free time | Claude builds | Qai makes or does | Done when |
 |---|---|---|---|---|
-| Tue Oct 27 | Campus gap (iPad); 7 PM–2 AM | M0 | Noon live session. Read the submission form and note its fields. Five minutes in Edits checking whether Scribble takes his own drawing. Design the kagune in Procreate. `reference/timing.json` from one traced lash; lock the brush and the 3 colors. One hour of accounting. Night: film `fixtures/probe/clip.mp4`: a 10 s slow full turn on the tripod, brightest light, H.264, HDR off, 1080p30, shutter 1/250 s or faster | M0 verified (R1–R5) |
+| Tue Oct 27 | Campus gap (iPad); 7 PM–2 AM | M0 | Noon live session. Read the submission form and note its fields. Five minutes in Edits checking whether Scribble takes his own drawing. Design the kagune in Procreate. `reference/timing.json` from one traced lash; lock the ink brush and the 3 colors. One hour of accounting. Night: film `fixtures/probe/clip.mp4`: a 10 s slow full turn on the tripod, brightest light, H.264, HDR off, 1080p30, shutter 1/250 s or faster | M0 verified (R1–R5) |
 | Wed Oct 28 | 11 AM–4 PM; 11 PM–2 AM | M1 | Wednesday's live session. Rough side-step and walk takes, labeled on the `/label` page once M1 builds it. Night: accounting review | M1 verified; a tail and horns follow him on the side-step clip (on the stand-in until SAM) |
-| Thu Oct 29 | Campus gap (iPad); evening | M2 | Gap: final accounting review. Evening: 30 test strokes in the app plus `fixtures/strokes/labels.json`. Label the probe clip (needed Fri). Rough indoor slow-turn and spin takes, labeled (needed Sat). Say go for the probe and the fixtures once the key works | M2 built; claimed with Gate 1 once the key works |
-| Fri Oct 30 | 8:30 PM–2 AM | M3 | The side and back views of the hero effect in views mode, saved as `reference/views/hero.json`. Pick the Sunday slot: X3 or A5 | Strands sit behind him and swap sides on the turn |
+| Thu Oct 29 | Campus gap (iPad); evening | M2 | Gap: final accounting review. Evening: 30 test strokes in the app plus `fixtures/strokes/labels.json`. Approve one golden per brush (B3). Label the probe clip (needed Fri). Rough indoor slow-turn and spin takes, labeled (needed Sat). Say go for the probe and the fixtures once the key works | M2 built; claimed with Gate 1 once the key works |
+| Fri Oct 30 | 8:30 PM–2 AM | M3 | The side and back views of the hero effect in views mode, saved as `reference/views/hero.json`. In Procreate: the kagune's slam keys (`slam.phases` and `slam.keys` in `reference/timing.json`) and the floor cracks. Decide whether the electric look holds up on the neon brush | Strands sit behind him and swap sides on the turn |
 | Sat Oct 31 | 10 AM–2:30 PM | M4 | Halloween teaser post if it renders (horns and a tail on him). Between Saturday and Monday: `fixtures/manual/X1.json`, `X2.json` and `G2.json` once he's checked export and the live link by hand | Gate 2 (G2): the full pipeline works on the live link |
-| Sun Nov 1 | All day | M5; feature freeze at 11 PM | Before 3 PM (clocks fall back; sunset is about 4:50): hero footage and the 6 test clips in daylight, plus one friend's turn with written consent in `fixtures/clips.json`. Time hand-animating 1 second (12 drawings), then do it in Inkwell | Hero footage shot; wear this effect only if Gate 2 passed (5-hour cap); features frozen |
+| Sun Nov 1 | All day | M5; feature freeze at 11 PM | Before 3 PM (clocks fall back; sunset is about 4:50): hero footage (the spin and slam, tripod locked, a full turn in about 1.5–2 s, shutter 1/500 s) and the 6 test clips in daylight, plus one friend's turn with written consent in `fixtures/clips.json`. Time hand-animating 1 second (12 drawings), then do it in Inkwell | Hero footage shot; the slam renders on it; the gallery and wear this effect only if Gate 2 passed (5-hour cap); features frozen |
 | Mon Nov 2 | 10 AM–3:30 PM | M6 | Render testers' clips (3+ people, written consent). Record the unedited live take with a clock on screen. Lock the script; collect quotes | Live take, script, README and quotes done |
 | Tue Nov 3 | Campus gap (iPad); 7 PM–2 AM | Final fixes only | Gap: edit the demo video (5-hour cap). Night: cut the X clip, make the repo public, fill in the submission form | Everything submittable by 2 AM |
 | Wed Nov 4 | Until 4 PM | — | Submit by noon, 3 PM at the latest; post the X clip right after | Submitted before his shift |
@@ -133,7 +138,7 @@ Pause other projects (Furr, the Suspect rebuild) until Nov 5. The live final is 
 
 ### Cut order
 
-If work falls behind, cut in this order: wear this effect (X3), Wonder's turn labels (SAM's face track carries the turn), rigid presets, wobble polish, export polish. Never cut the tests or the demo video. No switching projects after the probe; from then on, only cuts.
+If work falls behind, cut in this order: publishing (X4), the gallery and wear this effect (X3), the electric bursts (keep the cracks), Wonder's turn labels (SAM's face track carries the turn), rigid presets, the textured and fine-tip brushes (keep ink and neon), wobble polish, export polish. Never cut the tests or the demo video. No switching projects after the probe; from then on, only cuts.
 
 ## 4. The milestone loop
 
@@ -244,26 +249,47 @@ interface StrokeView {
   root: Vec2;                                 // where the stroke attaches in this view
   layer: 'behind' | 'front';                  // relative to the body in this view
 }
+type BrushId = 'ink' | 'textured' | 'fine-ink' | 'fine-textured' | 'neon-straight' | 'neon-round';
+interface BrushSettings {
+  size: number; thinning: number; smoothing: number; streamline: number;   // perfect-freehand
+  grain?: number;                             // textured brushes: 0..1, how much of the fill the grain removes
+  glow?: { radiusPx: number; intensity: number };  // neon brushes, at 1080 wide
+}
 interface Stroke {
   id: number;                                 // drawing order; the same id in every view
   color: 0 | 1 | 2;
+  brush?: BrushId;                            // missing = 'ink'
   kind: 'strand' | 'rigid';                   // rigid = follows its target exactly (horns, halo)
-  anchor: { type: 'concept'; prompt: string } | { type: 'point'; time: number; xy: [number, number] };
+  anchor: { type: 'concept'; prompt: string } | { type: 'point'; time: number; xy: [number, number] }
+        | { type: 'ground'; xy: [number, number] };   // fixed frame pixels (tripod): cracks on the floor
+  appear?: { at: number; drawOn: number };    // seconds: hidden before `at`, then drawn on from the root over `drawOn`
   bodyAngle: number;                          // degrees around the torso: 0 chest, 90 his right side, 180 center of back, 270 his left side
   stiffness: number;                          // strands only: 0 = rope ... 1 = stiff
   wobble: number;                             // boil scale 0..1
   views: { front: StrokeView; side?: StrokeView; back?: StrokeView; left?: StrokeView };
 }
+interface Moment {
+  kind: 'slam';
+  at: number;                                 // seconds into the clip
+  xy: [number, number];                       // impact point, frame pixels
+  by: 'body' | 'effect';                      // his fist (Qai taps the frame), or the end of the slam preset
+  bursts?: { color: 0 | 1 | 2; brush: BrushId; count: number; seed: number };  // electric arcs out from xy
+}
 interface Effect {
   version: 1;
-  brush: { size: number; thinning: number; smoothing: number; streamline: number };
+  brush: BrushSettings;                       // the ink brush
+  brushes?: Partial<Record<Exclude<BrushId, 'ink'>, BrushSettings>>;  // missing = the §8.8 defaults
   palette: [string, string, string];
   timing: { drawingsPerSecond: 12 | 8 };
   strokes: Stroke[];
   presets?: { name: string; at: number }[];   // seconds into the clip
+  moments?: Moment[];
+  listing?: { name: string; tags: string[]; by: string };  // the gallery entry (X3)
   overrides: Record<string, unknown>;         // one-tap overrides, keyed by field path
 }
 ```
+
+Effects saved before the brushes have no `brush` on their strokes and no `brushes`, so they render exactly as before (ink everywhere). Ground strokes and moments belong to one clip: wear this effect (X3) carries the body-anchored strokes and the slam preset to a new clip, and the wearer taps their own slam point.
 
 **Facing angle θ:**
 - 0° faces the camera. θ grows as he turns to his left, seen from above.
@@ -425,6 +451,38 @@ Fling on turns isn't a separate force. The root sweeps around the torso (§8.5),
 | Wonder facing sample rate | 5 fps (every 6th frame) |
 | ellipse depth ratio | 0.6 |
 | foreshortening floor | 0.25 |
+| fine-tip size | 0.35 × the ink brush's size |
+| grain (textured brushes) | 0.35 |
+| neon glow | radius 12 px, intensity 0.8, at 1080 wide |
+| crack draw-on | 4 drawings |
+| electric bursts | 8 arcs, 6 drawings long, reach 0.6 torso heights |
+
+### 8.8 Brushes
+
+All six brushes are perfect-freehand outlines of the same simulated centerline, so the physics, boil and stepping don't change. They differ only in their settings and how the outline is filled:
+
+| Brush | Outline | Fill |
+|---|---|---|
+| `ink` | the current brush (`DEFAULT_BRUSH`) | solid |
+| `textured` | same as ink | solid, minus a grain mask |
+| `fine-ink` | thinner (§8.7) with more thinning, so the line gets fine at fast strokes | solid |
+| `fine-textured` | same as fine-ink | grain |
+| `neon-straight` | even width, flat ends, no taper | a pale core plus a glow in the stroke color |
+| `neon-round` | round ends, tapered | same as neon-straight |
+
+- **Grain** is made from a seed (the stroke id), never from an image file: imported brushes stay parked (§15). It's fixed to the stroke, so it rides along with the line instead of swimming. It changes only when the boil changes, on drawings.
+- **Glow** is drawn with additive blending ('lighter') under the stroke's core. For an electric look, its intensity flickers between drawings, seeded by stroke id and drawing index `k`, so it changes on 2s like everything else and re-renders identically.
+- "Straight and round" is read here as the end shape (flat vs round caps). Qai confirms that reading before M2.
+
+### 8.9 Moments: the slam
+
+The hero test (§1) is a spin, a fist slam, then a kagune slam. The spin is the turn (§8.5). The slam adds three things:
+
+- **Ground strokes (the cracks).** Qai draws the cracks on the floor in one frame. They're anchored to fixed frame pixels, not to his body, which works because the camera is on a tripod. They stay hidden until the fist slam, then draw on from the impact point outward (`appear`, 4 drawings by default), held on drawings and boiling like any line. They go under the person cutout, because the floor is behind his feet.
+- **The slam preset.** A keyed strike (A5's mechanics, with reference `slam.phases` and `slam.keys`) that ends with the tendril tips on the floor. Its last strike key is the second moment, `by: 'effect'`.
+- **Electric bursts.** At an effect slam, `count` seeded jagged arcs (midpoint displacement) shoot out from the impact point and crawl along the drawn cracks, drawn in a neon brush in front of the person. Each arc gets a new shape every drawing, on 2s, for 6 drawings, then fades. The same seed gives the same bursts.
+
+Qai sets the fist slam by tapping the frame at the impact. Finding moments automatically (Wonder or SAM) stays parked.
 
 ## 9. Meta models, proxy and probe
 
@@ -510,9 +568,26 @@ Each criterion has one test file, `tests/<milestone>/<ID>.test.ts`, which also w
 | A2 | Boil, measured on the boil offsets themselves | Consecutive offsets differ; they repeat every `boil.cycle` drawings (from `reference/timing.json`); max offset ≤ `boil.maxPx` |
 | A3 | Follow-through. Synthetic move: the anchor travels 1 torso height in 0.25 s, then stops; strand stiffness 0.3 *(start)*. Overshoot = max tip travel past its final rest point ÷ strand length | Overshoot = reference `followThrough.overshoot` ± 0.1; settled within reference `settleDrawings` ± 1 drawing |
 | A4 | Arcs. Whip = the A3 move, reversed after 0.25 s | The tip path's max distance from its start-to-end chord ≥ 0.15 × strand length *(start)* |
-| A5 | Lash preset (if built) | Drawings per phase equal reference `lash.phases` exactly; the tip at each key is within 2% of strand length of `lash.keys` |
+| A5 | Slam preset | Drawings per phase equal reference `slam.phases` exactly; the tip at each key is within 2% of strand length of `slam.keys` |
 | A6 | Line fidelity: (a) outline from the stored resampled points vs outline from Qai's raw input points, same brush; (b) each stroke at rest at θ = 0 (gravity 0, wobble 0, stiffness 1 or rigid) vs outline (a) | (a) mean distance < 1 px at 1080 wide; if it fails, raise the stored point count, not the threshold. (b) < 0.5 px |
 | A7 | No pops: tip travel between consecutive drawings | ≤ 0.35 × strand length *(start)*, except during a preset strike or a fallback mirror swap |
+
+### B: brushes (§8.8)
+
+| ID | Criterion | Threshold |
+|---|---|---|
+| B1 | Determinism: each of the six brushes, same effect and drawing index `k` | Byte-identical pixels across two renders; identical between drawing changes (A1) |
+| B2 | Each brush does its job: grain fixed to the stroke; neon glow stays near its line; fine tip thinner than ink | Grain pixels move with the stroke (within 0.5 px under a pure translation); no glow pixel farther than 2 × `glow.radiusPx` from the centerline; fine-ink's widest point ≤ 0.5 × ink's on the same stroke *(start)* |
+| B3 | Qai's look | One approved golden per brush in `tests/golden/brushes/` (L1 holds them after that) |
+
+### S: the slam (§8.9)
+
+| ID | Criterion | Threshold |
+|---|---|---|
+| S1 | Ground strokes stay put | Root and points within 0.5 px of their drawn frame position on every frame |
+| S2 | Cracks start on the slam | Hidden before the fist slam's drawing; fully drawn on exactly 4 drawings later *(start)*; the drawn length only grows |
+| S3 | Bursts on the effect slam | The first burst drawing is the drawing that holds the slam preset's last strike key; bursts last 6 drawings *(start)*; same seed → byte-identical pixels |
+| S4 | Layers | Ground strokes render under the person cutout; bursts render over it |
 
 ### T: the turn
 
@@ -538,7 +613,8 @@ Each criterion has one test file, `tests/<milestone>/<ID>.test.ts`, which also w
 |---|---|---|
 | X1 | A 10 s clip exports in desktop Chrome to H.264 MP4 with the original audio | < 60 s (measured by a browser test). Manual part: Qai confirms it plays in QuickTime and uploads to Instagram |
 | X2 | Live link | A server test shows the daily spend cap blocks calls past the limit, and uploads need the passcode. Manual part: Qai confirms the 3 cached samples work on the live link |
-| X3 | Wear this effect (if built): a saved effect on a new person's clip, no redraw | K1 and T1 hold on that clip |
+| X3 | Wear this effect (if built): pick a premade effect from the gallery, found by searching its name or a tag, and apply it to a new person's clip with no redraw | K1 and T1 hold on that clip; search finds every premade effect by its name and by each of its tags |
+| X4 | Publish (after Nov 4 unless it fits): anyone saves their effect to the gallery with a name and tags, free to wear | The published effect round-trips to identical JSON; applying it still goes through the spend cap; a report button hides it until Qai reviews it |
 
 ### Gates, locked look, probe
 
@@ -580,6 +656,7 @@ git commit -m "Add side-step truth [qai-approved]"
 - `dps`: 12 if the shot is on 2s, 8 if it's on 3s.
 - `lash.phases`: the number of drawings in each phase (for example wind-up, strike, overshoot, settle).
 - `lash.keys`: the tip position at each key, in torso units relative to the root. Estimate these until M3's views mode can export them.
+- `slam.phases` and `slam.keys` (Fri, for A5): the same for the kagune slamming down, ending with the tips on the floor. His own keys, not traced.
 - `followThrough.overshoot`: how far past its stopping point the tip swings, as a fraction of strand length.
 - `followThrough.settleDrawings`: how many drawings until it's still.
 - `boil.maxPx`: how strong the line boil is, at 1080 wide.
@@ -666,11 +743,11 @@ Skipped: Best Agentic Use-Case (Inkwell isn't an agent) and Best Open Weight Bui
 
 ### Demo video, 3 minutes, one beat per score
 
-1. 0:00 to 0:05 (Demo): the hero turn, the effect whipping around him as he turns.
+1. 0:00 to 0:05 (Demo): the hero test: he spins with the electric kagune whipping around him, slams the floor and it cracks, then the kagune slams down and electricity bursts out.
 2. 0:05 to 0:30 (Impact): who it's for: a doodle animator's 24–30 hours per video, his timed second by hand vs Inkwell, and Edits' preset effects vs drawing your own. Name SAM 3.1 and Muse Wonder here, for Stage 1.
 3. 0:30 to 1:30 (Meta tooling, technical depth): one unedited take with a clock on screen: draw on the iPad, Wonder's plan appears, SAM's masks stream in, the physics takes over, export.
 4. 1:30 to 2:00 (Technical depth): the turn with and without the turn signal, side by side; without it, the strands stay on the wrong side when his back turns.
-5. 2:00 to 2:30 (Impact): one drawing worn by 3+ people, or testers' clips if wear this effect didn't make it.
+5. 2:00 to 2:30 (Impact): search the gallery, tap a premade effect, and it's on 3+ people; testers' clips if wear this effect didn't make it.
 6. 2:30 to 3:00 (Technical depth, Impact): the scoreboards, including Wonder vs the dumb rule, then the closing line: "Draw it once. Anyone can wear it."
 
 Cut it 16:9 for judges and vertical for X, with licensed or royalty-free audio only.
@@ -694,6 +771,8 @@ Shaky tracking is the biggest risk, because every wobble in the mask shows up in
 | Clips arrive as WebM or with a shifting frame rate | Convert every clip in the browser to H.264 at a constant 30 fps before upload |
 | Wonder doesn't beat the dumb rule | Use the rule where it wins and say so in the README; the tooling story leans on SAM's three jobs and whatever Wonder still wins |
 | Edits' Scribble already takes his own drawing | The pitch narrows to the physics, the turn and wear this effect |
+| The spin is too fast for the face track or blurs | Spin slower (a full turn in 1.5–2 s), shutter 1/500 s, brightest light; the slam doesn't depend on the turn, so it still lands |
+| People upload anime characters or worse once publishing opens | X4 stays after Nov 4 unless it fits; when it opens, a report button hides an effect until Qai reviews it |
 | Judges read it as a toy | Lead Impact with the 24–30 hour number, the timed second, and 3+ outside people in their own clips |
 | Wonder is slow to answer | One plan call per drawing and one facing call per clip, both cached, with "reading your drawing" on screen |
 | MP4 export fails in iPad Safari | Export from desktop Chrome; for the demo, screen-record the canvas |
@@ -708,14 +787,14 @@ Shaky tracking is the biggest risk, because every wobble in the mask shows up in
 - **Export:** iPad export.
 - **Models:** SAM 3D Body, Glimmer, Muse Image drafting of missing views (a v2 idea for people who draw only once).
 - **Agents:** an agentic self-critique pass.
-- **Also parked:** air slash, spin speed lines and hammer-slam impact frames (the "moments" layer), imported brushes, Stand-style fights, voice-to-doodle.
+- **Also parked:** the rest of the "moments" layer (air slash, spin speed lines, impact frames; the slam is in, §8.9), moments found automatically, imported brushes, accounts and paid artists in the gallery, Stand-style fights, voice-to-doodle.
 
 **Where this goes (the 10–100x version).** Spark AR's successor, drawn with a pencil: an artist draws an effect once and anyone can wear it.
 - **What it does:** effects that know the body in 3D (turns, occlusion, touching the floor), act like their material (cloth, fire, strands), and fire on moments (a punch sets off an impact frame, a beat drop a flare). First on people's own clips in Edits, later live in the Instagram camera and on Meta's glasses.
 - **Who it serves:** Reels creators who can't draw but can tap "use", doodle animators and anime editors, music-video and ad makers, and the effect artists Spark AR left behind, paid per use the way Snap and TikTok pay the makers of their most-used effects.
 - **Models:** SAM 3.1 tracks many body parts at once; SAM 3D Body adds pose and depth; Wonder rigs each effect, times it to the motion and the music, and critiques its own render; Muse Image makes style-matched variants; Glimmer runs on-device for the live camera.
 
-**The Nov 4 slice is wear this effect (X3):** save an effect relative to the body (anchor, position against the torso, physics, layer), then apply it to a new person's clip in one tap. A 10-second remix costs about $0.12 in SAM calls (person and face) plus one Wonder call to read the wearer's turns. It's the right slice for two reasons: judges score the slice, so it should be the best trailer for the big version; and wearers won't mark their own turns, which makes automatic turn reading necessary rather than decorative. The video ends on one line, not a mockup: "Draw it once. Anyone can wear it."
+**The Nov 4 slice is wear this effect (X3):** save an effect relative to the body (anchor, position against the torso, physics, layer), then find it in the free gallery and apply it to a new person's clip in one tap. A 10-second remix costs about $0.12 in SAM calls (person and face) plus one Wonder call to read the wearer's turns. It's the right slice for two reasons: judges score the slice, so it should be the best trailer for the big version; and wearers won't mark their own turns, which makes automatic turn reading necessary rather than decorative. The video ends on one line, not a mockup: "Draw it once. Anyone can wear it."
 
 ## 16. Prior work and sources
 
