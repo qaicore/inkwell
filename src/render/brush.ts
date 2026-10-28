@@ -52,8 +52,11 @@ export function resampleStroke(raw: Point[], count = 32): { points: Vec2[]; pres
 // therefore first redrawn as a smooth curve through its points (centripetal
 // Catmull-Rom) at a fixed spacing, and that is what perfect-freehand sees:
 // the outline depends on the curve, not on how many points describe it.
-// `scale` multiplies the brush size (frame width / 1080).
-export function strokeOutline(points: Vec2[], pressure: number[], brush: Brush, scale = 1): Vec2[] {
+// `scale` multiplies the brush size (frame width / 1080). `ends` is the end
+// shape: 'taper' is the drawn brush (round caps that taper in and out),
+// 'flat' is cut square with no taper (the straight neon tip, SPEC §8.8).
+export type Ends = 'taper' | 'flat';
+export function strokeOutline(points: Vec2[], pressure: number[], brush: Brush, scale = 1, ends: Ends = 'taper'): Vec2[] {
   const dense = densify(points, pressure, SPACING * scale);
   const size = brush.size * scale;
   let length = 0;
@@ -66,8 +69,8 @@ export function strokeOutline(points: Vec2[], pressure: number[], brush: Brush, 
     easing: EASING,
     simulatePressure: false,
     // Short strokes get shorter tapers, so they don't vanish.
-    start: { cap: true, taper: Math.min(size * START_TAPER, length * 0.25) },
-    end: { cap: true, taper: Math.min(size * END_TAPER, length * 0.6) },
+    start: ends === 'flat' ? { cap: false, taper: 0 } : { cap: true, taper: Math.min(size * START_TAPER, length * 0.25) },
+    end: ends === 'flat' ? { cap: false, taper: 0 } : { cap: true, taper: Math.min(size * END_TAPER, length * 0.6) },
     last: true,
   };
   return getStroke(dense, options).map((p): Vec2 => [p[0], p[1]]);

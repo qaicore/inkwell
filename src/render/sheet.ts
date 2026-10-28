@@ -57,9 +57,9 @@ export function contactSheet(o: SheetOptions): Buffer {
     ctx.clip();
     const zoom = o.cell / o.crop.size;
     ctx.setTransform(zoom, 0, 0, zoom, left - o.crop.x * zoom, top - o.crop.y * zoom);
-    drawStrokes(ctx, fr.placed, o.effect, o.scale, ['behind']);
+    drawStrokes(ctx, fr.placed, o.effect, o.scale, ['behind'], fr.k);
     figure(ctx, o.body(fr.f));
-    drawStrokes(ctx, fr.placed, o.effect, o.scale, ['front']);
+    drawStrokes(ctx, fr.placed, o.effect, o.scale, ['front'], fr.k);
     ctx.restore();
     ctx.strokeStyle = '#dcdce2';
     ctx.lineWidth = 1;
