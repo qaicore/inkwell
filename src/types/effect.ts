@@ -10,7 +10,7 @@ export interface StrokeView {
   layer: 'behind' | 'front'; // relative to the body in this view
 }
 
-export type BrushId = 'ink' | 'textured' | 'fine-ink' | 'fine-textured' | 'neon-straight' | 'neon-round';
+export type BrushId = 'ink' | 'textured' | 'fine-ink' | 'fine-textured' | 'neon-straight' | 'neon-round' | 'electric' | 'blade' | 'trail';
 
 export interface BrushSettings {
   size: number; // perfect-freehand, px at 1080 wide
@@ -18,7 +18,8 @@ export interface BrushSettings {
   smoothing: number;
   streamline: number;
   grain?: number; // textured brushes: 0..1, how much of the fill the grain removes
-  glow?: { radiusPx: number; intensity: number }; // neon brushes, at 1080 wide
+  glow?: { radiusPx: number; intensity: number }; // neon, electric, blade and trail brushes, at 1080 wide
+  bolt?: { bendPx: number; ampPx: number; elbows: number; shards: number }; // electric: bend spacing, sideways reach, share of sharp elbows, shards per drawing at most, at 1080 wide
 }
 
 export type Anchor =
@@ -30,6 +31,7 @@ export interface Stroke {
   id: number; // drawing order; the same id in every view
   color: 0 | 1 | 2;
   brush?: BrushId; // missing = 'ink'
+  accent?: 0 | 1 | 2; // blade: the color of the reflected light on its shadow edge; missing = its own color
   kind: 'strand' | 'rigid'; // rigid = follows its target exactly (horns, halo)
   anchor: Anchor;
   appear?: { at: number; drawOn: number }; // seconds: hidden before `at`, then drawn on from the root over `drawOn`
@@ -60,6 +62,7 @@ export interface Effect {
   strokes: Stroke[];
   presets?: { name: string; at: number }[]; // seconds into the clip
   moments?: Moment[];
+  aura?: { color: 0 | 1 | 2 }; // the flame aura around the person (§8.6); missing = none
   listing?: { name: string; tags: string[]; by: string }; // the gallery entry (X3)
   overrides: Record<string, unknown>; // one-tap overrides, keyed by field path
 }
@@ -72,7 +75,7 @@ export type Facing = 'front' | 'right' | 'back' | 'left';
 // The effect JSON is the file that moves between devices (SPEC §6), so it's
 // read as untrusted: parseEffect checks the shape before anything uses it.
 
-export const BRUSH_IDS: readonly BrushId[] = ['ink', 'textured', 'fine-ink', 'fine-textured', 'neon-straight', 'neon-round'];
+export const BRUSH_IDS: readonly BrushId[] = ['ink', 'textured', 'fine-ink', 'fine-textured', 'neon-straight', 'neon-round', 'electric', 'blade', 'trail'];
 
 export function serializeEffect(effect: Effect): string {
   return `${JSON.stringify(effect, null, 2)}\n`;
@@ -99,6 +102,7 @@ function brushProblems(b: unknown, where: string): string[] {
   const p = ['size', 'thinning', 'smoothing', 'streamline'].filter((k) => !isNum(b[k])).map((k) => `${where}.${k} is not a number`);
   if (b.grain !== undefined && !(isNum(b.grain) && b.grain >= 0 && b.grain <= 1)) p.push(`${where}.grain is not in 0..1`);
   if (b.glow !== undefined && !(isObj(b.glow) && isNum(b.glow.radiusPx) && isNum(b.glow.intensity))) p.push(`${where}.glow is not { radiusPx, intensity }`);
+  if (b.bolt !== undefined && !(isObj(b.bolt) && ['bendPx', 'ampPx', 'elbows', 'shards'].every((k) => isNum((b.bolt as Record<string, unknown>)[k])))) p.push(`${where}.bolt is not { bendPx, ampPx, elbows, shards }`);
   return p;
 }
 
@@ -127,6 +131,7 @@ function strokeProblems(s: unknown, i: number): string[] {
   if (!Number.isInteger(s.id)) p.push(`${where}.id is not an integer`);
   if (!isColor(s.color)) p.push(`${where}.color is not 0, 1 or 2`);
   if (s.brush !== undefined && !BRUSH_IDS.includes(s.brush as BrushId)) p.push(`${where}.brush is not a brush`);
+  if (s.accent !== undefined && !isColor(s.accent)) p.push(`${where}.accent is not 0, 1 or 2`);
   if (s.kind !== 'strand' && s.kind !== 'rigid') p.push(`${where}.kind is not strand or rigid`);
   p.push(...anchorProblems(s.anchor, `${where}.anchor`));
   if (s.appear !== undefined && !(isObj(s.appear) && isNum(s.appear.at) && isNum(s.appear.drawOn))) p.push(`${where}.appear is not { at, drawOn }`);
@@ -160,6 +165,7 @@ function effectProblems(e: unknown): string[] {
   if (e.presets !== undefined && !(Array.isArray(e.presets) && e.presets.every((x) => isObj(x) && typeof x.name === 'string' && isNum(x.at)))) p.push('presets is not a list of { name, at }');
   if (e.moments !== undefined && !(Array.isArray(e.moments) && e.moments.every((m) => isObj(m) && m.kind === 'slam' && isNum(m.at) && isVec(m.xy) && (m.by === 'body' || m.by === 'effect')))) p.push('moments is not a list of slams');
   if (e.listing !== undefined && !(isObj(e.listing) && typeof e.listing.name === 'string' && Array.isArray(e.listing.tags) && typeof e.listing.by === 'string')) p.push('listing is not { name, tags, by }');
+  if (e.aura !== undefined && !(isObj(e.aura) && isColor(e.aura.color))) p.push('aura is not { color: 0, 1 or 2 }');
   if (!isObj(e.overrides)) p.push('overrides is not an object');
   return p;
 }

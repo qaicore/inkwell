@@ -116,7 +116,7 @@ export function animateStroke(stroke: Stroke, m: ClipMotion): DrawnStroke[] {
 
 // Scratch canvases for the textured and neon brushes in the browser. Reads
 // back pixels, so the context says so (Safari and Chrome keep it on the CPU).
-const browserScratch: MakeScratch = (width, height) => {
+export const browserScratch: MakeScratch = (width, height) => {
   const canvas = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(width, height) : Object.assign(document.createElement('canvas'), { width, height });
   const ctx = canvas.getContext('2d', { willReadFrequently: true }) as unknown as BrushTarget;
   return { canvas, ctx };

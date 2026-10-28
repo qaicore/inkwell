@@ -107,7 +107,7 @@ export function fillOutline(ctx: PathTarget, outline: Vec2[], color: string) {
 // Points every `spacing` px along a centripetal Catmull-Rom curve through
 // `points`, each with its pressure interpolated. Centripetal (alpha 0.5)
 // never loops or overshoots between unevenly spaced points.
-function densify(points: Vec2[], pressure: number[], spacing: number): Point[] {
+export function densify(points: Vec2[], pressure: number[], spacing: number): Point[] {
   const n = points.length;
   if (n === 1) return [[points[0][0], points[0][1], pressure[0]]];
   const out: Point[] = [];

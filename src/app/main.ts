@@ -3,11 +3,11 @@ import { DEFAULT_BRUSH, type Point } from '../render/brush';
 import { FPS, frameTime, frameTimes, loadClip, type Clip } from '../video/clip';
 import { exportClip } from '../export/export';
 import { drawMaskTint, renderFrame, type Scene } from '../render/compose';
-import { EXAMPLE_TIMING, validateTiming, type Timing } from '../motion/timing';
+import { drawingIndex, EXAMPLE_TIMING, validateTiming, type Timing } from '../motion/timing';
 import type { FollowMode } from '../track/standin';
 import { torsoHeights } from '../track/torso';
 import { followShapes, maskHasPerson, maskNear, smoothTrack, trackStroke, type Pose, type Tracking } from '../track/tracking';
-import { animateStroke, drawLive, effectOf, type ClipMotion, type DrawnStroke, type Stroke } from './engine';
+import { animateStroke, drawLive, effectOf, PALETTE, type ClipMotion, type DrawnStroke, type Stroke } from './engine';
 import { personAndFace, samTracking, type SamSource } from './pipeline';
 import { applyOverride, applyPlan, isOverridden, OVERRIDE_FIELDS, type OverrideField } from './overrides';
 import { renderPlanPanel } from './plan-panel';
@@ -36,6 +36,7 @@ const frameLabel = $<HTMLOutputElement>('frame-label');
 const sizeSlider = $<HTMLInputElement>('size');
 const sizeValue = $<HTMLOutputElement>('size-value');
 const wobbleToggle = $<HTMLInputElement>('wobble');
+const auraToggle = $<HTMLInputElement>('flame-aura');
 const stiffnessSlider = $<HTMLInputElement>('stiffness');
 const stiffnessValue = $<HTMLOutputElement>('stiffness-value');
 const rigidToggle = $<HTMLInputElement>('rigid');
@@ -71,6 +72,7 @@ let downloadUrl = '';
 let makeTracking: ((mode: FollowMode) => Tracking) | null = null;
 let tracking: Tracking | null = null;
 let torsoUnits: (number | null)[] | null = null; // torso height per frame, from tracking's masks
+let auraColor: 0 | 1 | 2 | null = null; // the flame aura's ink, or null when it's off
 const strokePoses = new Map<number, Pose[] | null>();
 
 // SAM 3.1 answers already paid for, by the clip's hashes (src/sam/client.ts),
@@ -252,9 +254,15 @@ function paint() {
 function scene(): Scene {
   const frames = animated();
   const using = tracking;
+  const units = torsoUnits;
+  const dps = timing.dps;
   return {
     strokes: (i) => frames[i] ?? [],
     personMask: (i) => (using ? maskNear(using.masks, i) : null),
+    aura: (i) => {
+      const torsoPx = units?.[i];
+      return auraColor !== null && torsoPx ? { color: PALETTE[auraColor], k: drawingIndex(i, dps), torsoPx } : null;
+    },
   };
 }
 
@@ -417,7 +425,10 @@ function numberedFrame(request: PlanRequest): string {
 }
 
 // The effect for the current strokes with the taps on them.
-const currentEffect = (): Effect => effectOf(strokes, clipMotion(clip!), undefined, overrides);
+const currentEffect = (): Effect => {
+  const effect = effectOf(strokes, clipMotion(clip!), undefined, overrides);
+  return auraColor === null ? effect : { ...effect, aura: { color: auraColor } };
+};
 
 // Writes the plan, with the taps on top, into the strokes, then redraws the
 // panel. Fields the plan doesn't set (the brush) keep what the stroke has.
@@ -801,6 +812,13 @@ scrub.addEventListener('input', () => {
 });
 sizeSlider.addEventListener('input', () => {
   sizeValue.value = sizeSlider.value;
+});
+// The flame aura takes the ink selected when it's turned on.
+auraToggle.addEventListener('change', () => {
+  const ink = document.querySelector<HTMLInputElement>('input[name="color"]:checked')!.value;
+  const i = PALETTE.indexOf(ink);
+  auraColor = auraToggle.checked && i >= 0 ? (i as 0 | 1 | 2) : null;
+  paint();
 });
 wobbleToggle.addEventListener('change', () => {
   invalidate();

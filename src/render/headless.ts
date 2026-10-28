@@ -36,6 +36,7 @@ export function drawStrokes(ctx: SKRSContext2D, strokes: PlacedStroke[], effect:
         points: stroke.points,
         pressure: stroke.pressure,
         color: source ? effect.palette[source.color] : '#000000',
+        accent: source?.accent !== undefined ? effect.palette[source.accent] : undefined,
         brush,
         settings: brushSettings(effect, brush),
         scale,

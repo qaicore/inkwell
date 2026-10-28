@@ -1,16 +1,20 @@
-import { drawStroke, type DrawnStroke } from '../app/engine';
+import { browserScratch, drawStroke, type DrawnStroke } from '../app/engine';
+import type { BrushTarget } from './glow';
+import { drawFlameAura } from './aura';
 import type { Mask } from '../track/tracking';
 
 // What to draw over the video on each frame.
 export type Scene = {
   strokes(frame: number): DrawnStroke[]; // already animated and placed
   personMask(frame: number): Mask | null; // null when there's no tracking
+  aura?(frame: number): { color: string; k: number; torsoPx: number } | null; // the flame aura (SPEC §8.6), torso height in clip px
 };
 
 // Draws one finished frame at clip size. The preview and the export both
 // draw through here, so they always match. Strokes set to "behind" go under
 // the person: they're drawn on the frame first, then the person is cut out
-// of the frame and laid back on top of them.
+// of the frame and laid back on top of them. The flame aura goes first of
+// all, right on the video, so the cutout covers its inside.
 export function renderFrame(
   ctx: CanvasRenderingContext2D,
   image: CanvasImageSource,
@@ -20,10 +24,15 @@ export function renderFrame(
   scene: Scene,
 ) {
   ctx.drawImage(image, 0, 0, width, height);
+  const aura = scene.aura?.(frame) ?? null;
   const strokes = scene.strokes(frame);
   const behind = strokes.filter((stroke) => stroke.layer === 'behind');
+  const mask = behind.length > 0 || aura ? scene.personMask(frame) : null;
+  if (aura && mask) {
+    const scale = width / mask.width;
+    drawFlameAura(ctx as unknown as BrushTarget, browserScratch, { mask: mask.alpha, width: mask.width, height: mask.height, color: aura.color, k: aura.k, torsoPx: aura.torsoPx / scale, scale });
+  }
   for (const stroke of behind) drawStroke(ctx, stroke);
-  const mask = behind.length > 0 ? scene.personMask(frame) : null;
   if (mask) ctx.drawImage(cutOut(image, mask, width, height), 0, 0, width, height);
   for (const stroke of strokes) {
     if (stroke.layer !== 'behind') drawStroke(ctx, stroke);
