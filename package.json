@@ -12,7 +12,9 @@
     "check:fast": "tsc -p tsconfig.json && vitest run tests/unit",
     "verify": "node scripts/verify.mjs",
     "golden:accept": "node scripts/golden-accept.mjs",
-    "probe": "node scripts/live/probe.mjs"
+    "probe": "node scripts/live/probe.mjs",
+    "fixtures:refresh": "node scripts/live/fixtures.mjs",
+    "plan:record": "node scripts/live/plan.mjs"
   },
   "dependencies": {
     "mediabunny": "^1.62.1",

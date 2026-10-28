@@ -8,9 +8,6 @@ import type { PlanRequest, PlanTransport } from './plan.ts';
 
 export const PLAN_OUTPUT_TOKENS = 4000;
 
-// Distinct, easy-to-name colors for the numbered strokes.
-export const STROKE_COLORS = ['#ff2d55', '#00c2ff', '#ffd60a', '#30d158', '#bf5af2', '#ff9f0a', '#ffffff', '#5e5ce6'];
-
 export function planBody(request: PlanRequest, frameImage: string): Record<string, unknown> {
   return {
     model: WONDER_MODEL,

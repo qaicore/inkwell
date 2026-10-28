@@ -15,7 +15,8 @@ import { cachedAnswer, sha256Hex } from '../sam/client';
 import { masksFromCache, samCacheFile, type SamMask } from '../sam/cache';
 import { samShape } from '../track/anchor';
 import { planStrokes, type PlanInput, type PlanRequest, type PlanResult, type PlanTransport } from '../plan/plan';
-import { proxyTransport, STROKE_COLORS } from '../plan/request';
+import { proxyTransport } from '../plan/request';
+import { drawPlanMarks, PLAN_IMAGE_LONG_SIDE, strokeColor } from '../plan/numbered';
 import { serializeEffect, type BrushId, type Effect } from '../types/effect';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -42,6 +43,7 @@ const brushSelect = $<HTMLSelectElement>('brush');
 const planButton = $<HTMLButtonElement>('plan');
 const planPanel = $<HTMLElement>('plan-panel');
 const saveEffectButton = $<HTMLButtonElement>('save-effect');
+const saveDrawingsButton = $<HTMLButtonElement>('save-drawings');
 const rawButton = $<HTMLButtonElement>('raw-strokes');
 const undoButton = $<HTMLButtonElement>('undo');
 const clearButton = $<HTMLButtonElement>('clear');
@@ -74,6 +76,7 @@ const strokePoses = new Map<number, Pose[] | null>();
 // SAM 3.1 answers already paid for, by the clip's hashes (src/sam/client.ts),
 // and the runs read so far: person, face, and each planned anchor's own.
 let sam: SamSource = () => null;
+let sourceSha = ''; // the opened file's SHA-256, which names the clip in drawings.json
 const samRuns = new Map<string, (SamMask | null)[] | null>(); // null: asked, not cached
 
 // The last plan and the taps on it (src/app/overrides.ts).
@@ -140,6 +143,7 @@ async function openClip(file: Blob, name: string) {
     forgetPlan();
     samRuns.clear();
     sam = () => null;
+    sourceSha = '';
     useTracking();
     URL.revokeObjectURL(downloadUrl); // the last export was of the old clip
     downloadUrl = '';
@@ -335,6 +339,7 @@ async function connectSamCache(opened: Clip, source: Blob) {
   try {
     const hashes = [await sha256Hex(opened.file), await sha256Hex(source)];
     if (clip !== opened) return;
+    sourceSha = hashes[1];
     sam = (file) => cachedAnswer(hashes, file);
     const fromCache = { id: opened.name, sha256: hashes[0], frames: opened.frameCount, width: opened.width, height: opened.height, fps: FPS };
     const { person, face } = await personAndFace(fromCache, sam);
@@ -370,7 +375,7 @@ async function planDrawing() {
       strokes: drawn.map((s) => ({ id: s.id, points: s.points })),
       masks: { person: samRuns.get('sam-person.json')?.[frame] ?? null, face: samRuns.get('sam-face.json')?.[frame] ?? null },
     };
-    planColors = new Map(drawn.map((s, i) => [s.id, STROKE_COLORS[i % STROKE_COLORS.length]]));
+    planColors = new Map(drawn.map((s, i) => [s.id, strokeColor(i)]));
     plan = await planStrokes(input, await cachedThenLive(input));
     usePlan();
     setStatus(plan.source === 'wonder' ? `Planned ${plan.strokes.length} stroke${plan.strokes.length === 1 ? '' : 's'}.` : 'Used the nearest-mask plan; see the note.');
@@ -398,35 +403,16 @@ async function cachedThenLive(input: PlanInput): Promise<PlanTransport> {
   };
 }
 
-// The frame Wonder sees: each stroke in its own color, numbered at its root,
-// 1024 px on the long side.
+// The frame Wonder sees: each stroke in its own color, numbered at its root
+// (src/plan/numbered.ts), 1024 px on the long side.
 function numberedFrame(request: PlanRequest): string {
-  const fit = 1024 / Math.max(clip!.width, clip!.height);
+  const fit = PLAN_IMAGE_LONG_SIDE / Math.max(clip!.width, clip!.height);
   const canvas = document.createElement('canvas');
   canvas.width = Math.round(clip!.width * fit);
   canvas.height = Math.round(clip!.height * fit);
   const c = canvas.getContext('2d')!;
   c.drawImage(frameBuffer, 0, 0, canvas.width, canvas.height);
-  c.lineCap = 'round';
-  c.lineJoin = 'round';
-  for (const s of request.input.strokes) {
-    const color = planColors.get(s.id) ?? '#ffffff';
-    c.strokeStyle = color;
-    c.lineWidth = 6;
-    c.beginPath();
-    s.points.forEach(([x, y], i) => (i === 0 ? c.moveTo(x * fit, y * fit) : c.lineTo(x * fit, y * fit)));
-    c.stroke();
-    const [x, y] = s.points[0];
-    c.fillStyle = color;
-    c.beginPath();
-    c.arc(x * fit, y * fit, 16, 0, 2 * Math.PI);
-    c.fill();
-    c.fillStyle = '#000000';
-    c.font = 'bold 20px sans-serif';
-    c.textAlign = 'center';
-    c.textBaseline = 'middle';
-    c.fillText(String(s.id), x * fit, y * fit + 1);
-  }
+  drawPlanMarks(c, request.input.strokes, fit, (id) => planColors.get(id) ?? '#ffffff');
   return canvas.toDataURL('image/jpeg', 0.85);
 }
 
@@ -659,6 +645,31 @@ function saveRawStrokes() {
   setStatus(`Saved ${strokes.length} stroke${strokes.length === 1 ? '' : 's'} as raw-strokes.json. Put it in reference/ for A6.`);
 }
 
+// The strokes by the frame they were drawn on, in clip pixels, for
+// scripts/live/plan.mjs to record Wonder's plan of each drawing (W1, G1).
+// sourceSha ties it to the clip file, so it can't be replayed on another.
+function saveDrawings() {
+  if (!clip || strokes.length === 0) return;
+  const round = (v: number, places: number) => Number(v.toFixed(places));
+  const frames = [...new Set(strokes.map((s) => s.frame))].sort((a, b) => a - b);
+  const drawings = {
+    sourceSha256: sourceSha || null,
+    width: clip.width,
+    height: clip.height,
+    drawings: frames.map((frame) => ({
+      frame,
+      strokes: strokes.filter((s) => s.frame === frame).map((s) => ({ id: s.id, points: s.points.map(([x, y, p]) => [round(x, 1), round(y, 1), round(p, 3)]) })),
+    })),
+  };
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(new Blob([`${JSON.stringify(drawings, null, 1)}
+`], { type: 'application/json' }));
+  link.download = 'drawings.json';
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href));
+  setStatus(`Saved ${strokes.length} stroke${strokes.length === 1 ? '' : 's'} on ${frames.length} frame${frames.length === 1 ? '' : 's'} as drawings.json, for npm run plan:record.`);
+}
+
 // ---- Exporting -----------------------------------------------------------------
 
 async function exportVideo() {
@@ -723,6 +734,7 @@ function updateButtons() {
   rawButton.disabled = !ready || strokes.length === 0;
   planButton.disabled = !ready || strokes.length === 0;
   saveEffectButton.disabled = !ready || strokes.length === 0;
+  saveDrawingsButton.disabled = !ready || strokes.length === 0;
   trackButton.disabled = !ready;
 }
 
@@ -804,6 +816,7 @@ rawButton.addEventListener('click', saveRawStrokes);
 undoButton.addEventListener('click', undo);
 planButton.addEventListener('click', planDrawing);
 saveEffectButton.addEventListener('click', saveEffect);
+saveDrawingsButton.addEventListener('click', saveDrawings);
 clearButton.addEventListener('click', () => {
   strokes = [];
   forgetPlan();
