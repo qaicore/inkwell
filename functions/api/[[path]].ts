@@ -10,7 +10,7 @@ const UPSTREAM = 'https://api.meta.ai/v1';
 
 interface PagesContext {
   request: Request;
-  env: Omit<ProxyEnv, 'SPEND'> & { SPEND_DB?: D1Like };
+  env: Omit<ProxyEnv, 'SPEND'> & { SPEND_DB?: D1Like; ASSETS?: { fetch(request: Request): Promise<Response> } };
   params: { path?: string | string[] };
 }
 
@@ -18,4 +18,6 @@ export const onRequest = ({ request, env, params }: PagesContext): Promise<Respo
   handleProxy(request, [params.path ?? []].flat().join('/'), { ...env, SPEND: env.SPEND_DB && d1SpendStore(env.SPEND_DB) }, {
     upstream: UPSTREAM,
     fetch: (request) => fetch(request),
+    // Cached answers ship as static files under /cache/<clip sha256>/ (M4: the live link's samples).
+    cache: async (sha, file) => (env.ASSETS ? env.ASSETS.fetch(new Request(new URL(`/cache/${sha}/${file}`, request.url))) : null),
   });

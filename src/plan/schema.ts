@@ -1,12 +1,13 @@
 // The stroke plan's fixed schema (SPEC §9). PLAN_SCHEMA goes to Muse Wonder
 // as its structured output format; validatePlan checks what comes back
-// against the same rules, plus the ones a JSON schema can't say (each stroke
-// asked about exactly once). Wonder's output is untrusted text: nothing here
-// throws on it.
+// against the same rules, plus the ones the schema leaves out: ranges and
+// lengths (strict structured output doesn't take them; the probe's facing
+// schema worked without them) and each stroke asked about exactly once.
+// Wonder's output is untrusted text: nothing here throws on it.
 import type { StrokePlan } from './plan.ts';
 
 const NUMBER = { type: 'number' } as const;
-const XY = { type: 'array', items: NUMBER, minItems: 2, maxItems: 2 } as const;
+const XY = { type: 'array', items: NUMBER, description: '[x, y] in frame pixels' } as const;
 
 export const PLAN_SCHEMA = {
   type: 'object',
@@ -29,13 +30,13 @@ export const PLAN_SCHEMA = {
                 type: 'object',
                 additionalProperties: false,
                 required: ['type', 'prompt'],
-                properties: { type: { type: 'string', enum: ['concept'] }, prompt: { type: 'string', minLength: 1, description: 'a body part SAM can find, like "person", "head", "hand"' } },
+                properties: { type: { type: 'string', enum: ['concept'] }, prompt: { type: 'string', description: 'a body part SAM can find, like "person", "head", "hand"' } },
               },
               {
                 type: 'object',
                 additionalProperties: false,
                 required: ['type', 'time', 'xy'],
-                properties: { type: { type: 'string', enum: ['point'] }, time: { type: 'number', minimum: 0 }, xy: XY },
+                properties: { type: { type: 'string', enum: ['point'] }, time: { type: 'number', description: 'seconds into the clip' }, xy: XY },
               },
               {
                 type: 'object',
@@ -45,11 +46,11 @@ export const PLAN_SCHEMA = {
               },
             ],
           },
-          bodyAngle: { type: 'number', minimum: 0, exclusiveMaximum: 360, description: 'degrees around the torso: 0 chest, 90 his right side, 180 center of back, 270 his left side' },
-          stiffness: { type: 'number', minimum: 0, maximum: 1, description: '0 hangs like a rope, 1 keeps the drawn shape' },
+          bodyAngle: { type: 'number', description: '0 to under 360 degrees around the torso: 0 chest, 90 his right side, 180 center of back, 270 his left side' },
+          stiffness: { type: 'number', description: '0 to 1: 0 hangs like a rope, 1 keeps the drawn shape' },
           layer: { type: 'string', enum: ['behind', 'front'], description: 'behind or in front of the body, facing the camera' },
-          wobble: { type: 'number', minimum: 0, maximum: 1, description: 'how much the line boils' },
-          reason: { type: 'string', minLength: 1, description: 'one line on why' },
+          wobble: { type: 'number', description: '0 to 1: how much the line boils' },
+          reason: { type: 'string', description: 'one line on why' },
         },
       },
     },

@@ -179,3 +179,36 @@ describe('proxy: what it lets through', () => {
     expect(text).not.toContain('test-key-123');
   });
 });
+
+describe('proxy: the cache', () => {
+  const SHA = 'a'.repeat(64);
+  const get = (path: string, cache?: (sha: string, file: string) => Promise<Response | null>, env: ProxyEnv = {}) => {
+    const sent: Request[] = [];
+    const response = handleProxy(new Request(`https://app.test/api/${path}`), path, env, {
+      upstream: UPSTREAM,
+      fetch: async (request) => (sent.push(request), new Response('upstream')),
+      cache,
+    });
+    return { response, sent };
+  };
+
+  it('serves a cached answer by clip hash without a key, the cap or the upstream', async () => {
+    const asked: string[] = [];
+    const { response, sent } = get(`cache/${SHA}/sam-person.json`, async (sha, file) => (asked.push(`${sha}/${file}`), new Response('{"rawOutput":""}')));
+    const r = await response;
+    expect(r.status).toBe(200);
+    expect(await r.text()).toBe('{"rawOutput":""}');
+    expect(asked).toEqual([`${SHA}/sam-person.json`]);
+    expect(sent).toEqual([]);
+  });
+
+  it('answers 404 for anything not cached or not a cache file', async () => {
+    expect((await get(`cache/${SHA}/sam-person.json`, async () => null).response).status).toBe(404);
+    expect((await get(`cache/${SHA}/sam-person.json`).response).status).toBe(404);
+    let asked = 0;
+    const count = async () => (asked++, new Response('{}'));
+    for (const path of [`cache/${SHA}/clip.mp4`, `cache/${SHA}/..%2F.dev.vars`, `cache/${SHA}/truth.json`]) expect((await get(path, count).response).status).toBe(404);
+    expect(asked).toBe(0);
+    expect((await get('cache/short/sam-person.json', count).response).status).toBe(503); // not a cache path: the proxy route, unconfigured here
+  });
+});

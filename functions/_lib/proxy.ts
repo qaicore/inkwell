@@ -32,7 +32,14 @@ export interface ProxyDeps {
   upstream: string; // API base URL, ending in /v1
   fetch: (request: Request) => Promise<Response>;
   now?: () => Date;
+  // Cached SAM and Wonder answers, by clip hash: the stored response, or null.
+  cache?: (sha256: string, file: string) => Promise<Response | null>;
 }
+
+// GET cache/<clip sha256>/<file>: answers already paid for, served as they
+// were saved. No key, no passcode and no spend: it reads, it never calls.
+export const CACHE_FILE = /^(sam|wonder)-[a-z0-9-]+\.json$/;
+const CACHE_PATH = /^cache\/([0-9a-f]{64})\/([^/]+)$/;
 
 export const PASSCODE_HEADER = 'x-inkwell-passcode';
 export const WONDER_MAX_OUTPUT_TOKENS = 4000;
@@ -92,6 +99,14 @@ function textLength(payload: Json, images: Set<Json>): number {
 
 // `path` is what follows /api/ in the request URL, e.g. "files" or "responses".
 export async function handleProxy(request: Request, path: string, env: ProxyEnv, deps: ProxyDeps): Promise<Response> {
+  const cached = CACHE_PATH.exec(path);
+  if (cached) {
+    if (request.method !== 'GET') return json(405, 'The cache is read with GET.');
+    if (!CACHE_FILE.test(cached[2])) return json(404, 'Only sam-*.json and wonder-*.json are cached.');
+    const found = deps.cache ? await deps.cache(cached[1], cached[2]) : null;
+    if (!found || !found.ok) return json(404, 'Not cached.');
+    return new Response(found.body, { status: 200, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
+  }
   const cap = Number(env.DAILY_SPEND_CAP_USD);
   if (!env.META_API_KEY || !env.SPEND || !env.DAILY_SPEND_CAP_USD || !Number.isFinite(cap) || cap < 0) {
     return json(503, 'The proxy is not configured: it needs META_API_KEY, DAILY_SPEND_CAP_USD and the SPEND_DB D1 binding.');

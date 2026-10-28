@@ -2,6 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import basicSsl from '@vitejs/plugin-basic-ssl';
 import { defineConfig, type Plugin } from 'vite';
+import { cacheServer } from './tools/cache-server.ts';
 import { fixturesServer } from './tools/fixtures-server.ts';
 import { readBody, standInServer } from './tools/standin-server.ts';
 
@@ -43,7 +44,7 @@ export default defineConfig(({ mode }) => {
   const phone = mode === 'phone';
   return {
     // fixturesServer also serves the dev-only /label page (label/index.html).
-    plugins: [saveRenders(), standInServer(), fixturesServer(), ...(phone ? [basicSsl()] : [])],
+    plugins: [saveRenders(), standInServer(), fixturesServer(), cacheServer(), ...(phone ? [basicSsl()] : [])],
     cacheDir: phone ? 'node_modules/.vite-phone' : undefined,
     server: {
       port: phone ? 5175 : 5174,
