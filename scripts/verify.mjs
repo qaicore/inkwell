@@ -5,6 +5,8 @@
 // 3. Runs tests/M0 .. tests/<ACTIVE> with vitest's JSON reporter into verify/out/tests.json. Each test
 //    writes its own verify/out/<ID>.json. Earlier milestones' tests re-run at every milestone.
 // 4. From M1 on, draws the contact sheets into verify/out/<ACTIVE>/ (scripts/sheets.ts) for motion-critic.
+// 5. From M2 on, draws one sample per brush into verify/out/brushes/ (scripts/brush-sheets.ts), the B3
+//    goldens-to-be.
 // Reads only local files: no network, no keys.
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
@@ -84,6 +86,13 @@ if (active && upTo >= 1) {
   const sheets = spawnSync(process.execPath, [join(root, 'scripts', 'sheets.ts'), active], { cwd: root, stdio: 'inherit' });
   sheetsStatus = sheets.status ?? 1;
   if (sheetsStatus !== 0) process.stderr.write('verify: scripts/sheets.ts failed, so there are no contact sheets\n');
+}
+if (active && upTo >= 2) {
+  const brushes = spawnSync(process.execPath, [join(root, 'scripts', 'brush-sheets.ts')], { cwd: root, stdio: 'inherit' });
+  if (brushes.status !== 0) {
+    sheetsStatus = brushes.status ?? 1;
+    process.stderr.write('verify: scripts/brush-sheets.ts failed, so there are no brush samples\n');
+  }
 }
 
 process.exit(tsc.status === 0 && testsStatus === 0 && sheetsStatus === 0 ? 0 : 1);

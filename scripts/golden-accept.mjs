@@ -1,13 +1,14 @@
 // npm run golden:accept -- <id>: after Qai says "approved", copies that
 // milestone's rendered sheets (every PNG in verify/out/<id>/) into
-// tests/golden/<id>/, where L1 re-renders them. Qai commits them himself
+// tests/golden/<id>/, where L1 re-renders them. The id can also be
+// "brushes": the per-brush samples (B3) from verify/out/brushes/. Qai commits them himself
 // with [qai-approved]; this script never commits.
 import { copyFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 const id = process.argv[2] ?? '';
-if (!/^M\d+$/.test(id)) {
-  process.stderr.write('Usage: npm run golden:accept -- M1\n');
+if (!/^M\d+$/.test(id) && id !== 'brushes') {
+  process.stderr.write('Usage: npm run golden:accept -- M1 (or -- brushes)\n');
   process.exit(1);
 }
 const from = join(process.cwd(), 'verify', 'out', id);
