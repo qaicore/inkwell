@@ -15,6 +15,13 @@ export const WONDER_USD_PER_INPUT_TOKEN = 4 / 1e6;
 export const WONDER_USD_PER_CACHED_TOKEN = 0.2 / 1e6;
 export const WONDER_USD_PER_OUTPUT_TOKEN = 20 / 1e6;
 
+// Wonder reasons before it answers, and the reasoning counts against
+// max_output_tokens. Left to pick its own level, the Oct 27 probe spent all
+// 4,000 tokens thinking and returned no JSON, twice. Labels and plans need
+// little thought, so every call asks for 'low' (dev.meta.ai/docs/reasoning:
+// minimal, low, medium, high, xhigh, max; 'none' is a 400).
+export const WONDER_REASONING_EFFORT = 'low';
+
 // The image docs say a ~1280 px image is about 1,300–1,500 tokens. Images
 // are sent no larger than that, so the top of that range bounds each one.
 export const IMAGE_TOKENS_MAX = 1500;

@@ -76,6 +76,19 @@ describe('proxy: spend cap', () => {
     expect(JSON.parse(await sent[0].text()).max_output_tokens).toBe(WONDER_MAX_OUTPUT_TOKENS);
   });
 
+  it("pins Wonder's reasoning effort low, so it can't think through its whole token cap", async () => {
+    const { sent, call } = setup({ DAILY_SPEND_CAP_USD: '5' });
+    const content = [{ type: 'input_text', text: 'which way?' }];
+    const asked = JSON.stringify({ model: 'muse-wonder-1.0', reasoning: { effort: 'max' }, input: [{ role: 'user', content }] });
+    const omitted = JSON.stringify({ model: 'muse-wonder-1.0', input: [{ role: 'user', content }] });
+    expect((await call('responses', { body: asked })).status).toBe(200);
+    expect((await call('responses', { body: omitted })).status).toBe(200);
+    for (const request of sent) expect(JSON.parse(await request.text()).reasoning).toEqual({ effort: 'low' });
+    const samWithReasoning = JSON.stringify({ ...JSON.parse(sam), reasoning: { effort: 'low' } });
+    expect((await call('responses', { body: samWithReasoning })).status).toBe(400);
+    expect(sent).toHaveLength(2);
+  });
+
   it('fails closed when the cap or the store is missing', async () => {
     expect((await setup({ DAILY_SPEND_CAP_USD: undefined }).call('responses', { body: sam })).status).toBe(503);
     expect((await setup({ SPEND: undefined }).call('responses', { body: sam })).status).toBe(503);

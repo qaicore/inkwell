@@ -13,7 +13,7 @@
 // forwarded, and a request carrying any other key is refused, since keys like
 // `instructions`, `tools` or `previous_response_id` add billed input the
 // proxy can't see.
-import { MAX_CLIP_FRAMES, SAM_MODEL, WONDER_MODEL, samCost, wonderMaxCost } from './pricing.ts';
+import { MAX_CLIP_FRAMES, SAM_MODEL, WONDER_MODEL, WONDER_REASONING_EFFORT, samCost, wonderMaxCost } from './pricing.ts';
 
 // Today's spend total. reserve() adds `usd` to `day`'s total only if the total
 // stays within `cap`, as one atomic step, and says whether it did.
@@ -36,7 +36,7 @@ export interface ProxyDeps {
 
 export const PASSCODE_HEADER = 'x-inkwell-passcode';
 export const WONDER_MAX_OUTPUT_TOKENS = 4000;
-export const FORWARDED_KEYS = ['model', 'input', 'text', 'max_output_tokens', 'stream', 'metadata'];
+export const FORWARDED_KEYS = ['model', 'input', 'text', 'max_output_tokens', 'reasoning', 'stream', 'metadata'];
 // The Wonder content parts it can price: text by its length, an image at the ceiling.
 const WONDER_PARTS = ['input_text', 'input_image'];
 
@@ -117,6 +117,7 @@ export async function handleProxy(request: Request, path: string, env: ProxyEnv,
     const unknown = Object.keys(payload).filter((key) => !FORWARDED_KEYS.includes(key));
     if (unknown.length > 0) return json(400, `The proxy can't price ${unknown.join(', ')}, so it doesn't forward them.`);
     if (payload.model === SAM_MODEL) {
+      if (payload.reasoning !== undefined) return json(400, `${SAM_MODEL} doesn't take reasoning.`);
       cost = samCost(MAX_CLIP_FRAMES);
     } else if (payload.model === WONDER_MODEL) {
       const images = wonderImages(payload.input);
@@ -124,6 +125,7 @@ export async function handleProxy(request: Request, path: string, env: ProxyEnv,
       const asked = Number(payload.max_output_tokens);
       const maxOutput = asked > 0 ? Math.min(asked, WONDER_MAX_OUTPUT_TOKENS) : WONDER_MAX_OUTPUT_TOKENS;
       payload.max_output_tokens = maxOutput;
+      payload.reasoning = { effort: WONDER_REASONING_EFFORT }; // whatever the page asked for
       cost = wonderMaxCost(images.size, textLength(payload, images), maxOutput);
     } else {
       return json(400, `Only ${SAM_MODEL} and ${WONDER_MODEL} are proxied.`);

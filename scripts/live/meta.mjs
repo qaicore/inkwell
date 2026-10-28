@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import OpenAI from 'openai';
 import { parseVideoStream } from '@meta-sam/parser';
-import { SAM_MODEL, WONDER_MODEL } from '../../functions/_lib/pricing.ts';
+import { SAM_MODEL, WONDER_MODEL, WONDER_REASONING_EFFORT } from '../../functions/_lib/pricing.ts';
 import { readEnvFile } from '../lib/env.ts';
 
 export { Budget } from '../lib/budget.ts';
@@ -81,6 +81,7 @@ export async function wonderJson(client, { content, name, schema, maxOutputToken
     input: [{ type: 'message', role: 'user', content }],
     text: { format: { type: 'json_schema', name, schema, strict: true } },
     max_output_tokens: maxOutputTokens,
+    reasoning: { effort: WONDER_REASONING_EFFORT },
   });
   const text =
     response.output_text ??

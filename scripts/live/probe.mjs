@@ -220,6 +220,11 @@ async function main() {
         attempts.push({ status: reply.status, usage: reply.usage, text: reply.text, problems: check.ok ? [] : check.problems, spend: { name: label, usd, detail } });
         if (check.ok) labels = check.labels;
         else log(`  The reply failed the check: ${check.problems.slice(0, 3).join('; ')}`);
+        // Out of tokens: the same request would run out again, so don't pay twice.
+        if (!labels && reply.status === 'incomplete') {
+          log(`  It ran out of output tokens (${reply.usage?.output_tokens_details?.reasoning_tokens ?? '?'} spent reasoning), so no retry.`);
+          break;
+        }
       }
       wonder = { clipSha256: sha, model: WONDER_MODEL, frames: wonderFrames, imageSize: [w, h], prompt: promptText, attempts, labels };
       writeCache('wonder-facing', wonder);
