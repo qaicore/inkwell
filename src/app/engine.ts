@@ -4,7 +4,7 @@
 // clip is then animated at once (src/motion/animate.ts): the physics runs
 // underneath, and the drawings are held on 2s or 3s with the boil on top.
 // The preview and the export both draw from the result, so they match.
-import type { BrushId, Effect, Stroke as EffectStroke } from '../types/effect.ts';
+import type { Anchor, BrushId, Effect, Stroke as EffectStroke } from '../types/effect.ts';
 import { animate } from '../motion/animate.ts';
 import type { Timing } from '../motion/timing.ts';
 import { DEFAULT_BRUSH, resampleStroke, type Point } from '../render/brush.ts';
@@ -25,7 +25,15 @@ export type Stroke = {
   kind: 'strand' | 'rigid';
   stiffness: number; // strands: 0 = rope ... 1 = stiff
   points: Point[];
+  // From the plan (src/plan) or a tap on it; until then the root is a point
+  // on the person, at the chest, boiling fully.
+  anchor?: Anchor;
+  bodyAngle?: number;
+  wobble?: number; // 0..1, scales the boil
 };
+
+// The app's three inks, in effect palette order.
+export const PALETTE: Effect['palette'] = ['#e8203a', '#f4f1ea', '#16141a'];
 
 // A stroke as it appears on one frame, in clip pixels.
 export type DrawnStroke = {
@@ -60,14 +68,7 @@ const DEFAULT_TORSO_SHARE = 0.25;
 export function animateStrokes(strokes: Stroke[], m: ClipMotion): DrawnStroke[][] {
   if (strokes.length === 0) return Array.from({ length: m.frameCount }, () => []);
   const anchors = new Map(strokes.map((stroke) => [stroke.id, anchorFor(stroke, m)]));
-  const effect: Effect = {
-    version: 1,
-    brush: DEFAULT_BRUSH,
-    palette: ['#e8203a', '#f4f1ea', '#16141a'],
-    timing: { drawingsPerSecond: m.timing.dps },
-    strokes: strokes.map((stroke) => toEffectStroke(stroke, anchors.get(stroke.id)!(stroke.frame), m.wobble)),
-    overrides: {},
-  };
+  const effect = effectOf(strokes, m, anchors);
   const byId = new Map(strokes.map((stroke) => [stroke.id, stroke]));
   const frames = animate({
     effect,
@@ -92,6 +93,19 @@ export function animateStrokes(strokes: Stroke[], m: ClipMotion): DrawnStroke[][
       };
     }),
   );
+}
+
+// The effect JSON for the app's strokes (SPEC §7): each stored in torso
+// space around its root, as it sat on the frame it was drawn on.
+export function effectOf(strokes: Stroke[], m: ClipMotion, anchors = new Map(strokes.map((stroke) => [stroke.id, anchorFor(stroke, m)])), overrides: Effect['overrides'] = {}): Effect {
+  return {
+    version: 1,
+    brush: DEFAULT_BRUSH,
+    palette: PALETTE,
+    timing: { drawingsPerSecond: m.timing.dps },
+    strokes: strokes.map((stroke) => toEffectStroke(stroke, anchors.get(stroke.id)!(stroke.frame), m.wobble)),
+    overrides,
+  };
 }
 
 // One stroke on every frame. Strokes never touch each other, so this is the
@@ -154,13 +168,13 @@ function toEffectStroke(stroke: Stroke, at: TorsoTransform, wobble: boolean): Ef
   const { points, pressure } = resampleStroke(stroke.points);
   return {
     id: stroke.id,
-    color: 0, // the app keeps its own colors; the engine doesn't use these
+    color: Math.max(0, PALETTE.indexOf(stroke.color)) as 0 | 1 | 2,
     brush: stroke.brush,
     kind: stroke.kind,
-    anchor: { type: 'point', time: stroke.frame / 30, xy: [stroke.points[0][0], stroke.points[0][1]] },
-    bodyAngle: 0,
+    anchor: stroke.anchor ?? { type: 'point', time: stroke.frame / 30, xy: [stroke.points[0][0], stroke.points[0][1]] },
+    bodyAngle: stroke.bodyAngle ?? 0,
     stiffness: stroke.stiffness,
-    wobble: wobble ? 1 : 0,
+    wobble: wobble ? (stroke.wobble ?? 1) : 0,
     views: { front: { points: points.map((p) => toTorso(at, p)), pressure, root: [0, 0], layer: stroke.layer } },
   };
 }

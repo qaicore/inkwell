@@ -6,9 +6,17 @@ import { drawMaskTint, renderFrame, type Scene } from '../render/compose';
 import { EXAMPLE_TIMING, validateTiming, type Timing } from '../motion/timing';
 import type { FollowMode } from '../track/standin';
 import { torsoHeights } from '../track/torso';
-import { maskHasPerson, maskNear, trackStroke, type Pose, type Tracking } from '../track/tracking';
-import { animateStroke, drawLive, type DrawnStroke, type Stroke } from './engine';
-import type { BrushId } from '../types/effect';
+import { followShapes, maskHasPerson, maskNear, smoothTrack, trackStroke, type Pose, type Tracking } from '../track/tracking';
+import { animateStroke, drawLive, effectOf, type ClipMotion, type DrawnStroke, type Stroke } from './engine';
+import { personAndFace, samTracking, type SamSource } from './pipeline';
+import { applyOverride, applyPlan, isOverridden, OVERRIDE_FIELDS, type OverrideField } from './overrides';
+import { renderPlanPanel } from './plan-panel';
+import { cachedAnswer, sha256Hex } from '../sam/client';
+import { masksFromCache, samCacheFile, type SamMask } from '../sam/cache';
+import { samShape } from '../track/anchor';
+import { planStrokes, type PlanInput, type PlanRequest, type PlanResult, type PlanTransport } from '../plan/plan';
+import { proxyTransport, STROKE_COLORS } from '../plan/request';
+import { serializeEffect, type BrushId, type Effect } from '../types/effect';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const stage = $<HTMLElement>('stage');
@@ -31,6 +39,9 @@ const stiffnessSlider = $<HTMLInputElement>('stiffness');
 const stiffnessValue = $<HTMLOutputElement>('stiffness-value');
 const rigidToggle = $<HTMLInputElement>('rigid');
 const brushSelect = $<HTMLSelectElement>('brush');
+const planButton = $<HTMLButtonElement>('plan');
+const planPanel = $<HTMLElement>('plan-panel');
+const saveEffectButton = $<HTMLButtonElement>('save-effect');
 const rawButton = $<HTMLButtonElement>('raw-strokes');
 const undoButton = $<HTMLButtonElement>('undo');
 const clearButton = $<HTMLButtonElement>('clear');
@@ -59,6 +70,16 @@ let makeTracking: ((mode: FollowMode) => Tracking) | null = null;
 let tracking: Tracking | null = null;
 let torsoUnits: (number | null)[] | null = null; // torso height per frame, from tracking's masks
 const strokePoses = new Map<number, Pose[] | null>();
+
+// SAM 3.1 answers already paid for, by the clip's hashes (src/sam/client.ts),
+// and the runs read so far: person, face, and each planned anchor's own.
+let sam: SamSource = () => null;
+const samRuns = new Map<string, (SamMask | null)[] | null>(); // null: asked, not cached
+
+// The last plan and the taps on it (src/app/overrides.ts).
+let plan: PlanResult | null = null;
+let planColors = new Map<number, string>();
+let overrides: Record<string, unknown> = {};
 
 // Every frame's strokes, animated for the whole clip at once (src/app/engine.ts).
 // Each stroke's drawings over the whole clip, by stroke id, worked out when
@@ -116,6 +137,9 @@ async function openClip(file: Blob, name: string) {
     frameBuffer.height = clip.height;
     strokes = [];
     makeTracking = null;
+    forgetPlan();
+    samRuns.clear();
+    sam = () => null;
     useTracking();
     URL.revokeObjectURL(downloadUrl); // the last export was of the old clip
     downloadUrl = '';
@@ -129,6 +153,7 @@ async function openClip(file: Blob, name: string) {
     layout();
     await seek(0);
     setStatus(`Converted in ${seconds(startedAt)} s. Draw on any frame.`);
+    void connectSamCache(next, file);
   } catch (err) {
     console.error(err);
     setStatus(`Couldn't open that clip: ${errorText(err)}`);
@@ -229,18 +254,22 @@ function scene(): Scene {
   };
 }
 
+function clipMotion(c: Clip): ClipMotion {
+  return {
+    frameCount: c.frameCount,
+    width: c.width,
+    height: c.height,
+    poses: posesFor,
+    units: torsoUnits,
+    timing,
+    wobble: wobbleToggle.checked,
+  };
+}
+
 function animated(): DrawnStroke[][] {
   if (!clip) return [];
   if (!animation) {
-    const motion = {
-      frameCount: clip.frameCount,
-      width: clip.width,
-      height: clip.height,
-      poses: posesFor,
-      units: torsoUnits,
-      timing,
-      wobble: wobbleToggle.checked,
-    };
+    const motion = clipMotion(clip);
     const each = strokes.map((stroke) => {
       let drawn = perStroke.get(stroke.id);
       if (!drawn) perStroke.set(stroke.id, (drawn = animateStroke(stroke, motion)));
@@ -252,14 +281,227 @@ function animated(): DrawnStroke[][] {
 }
 
 function posesFor(stroke: Stroke) {
-  if (!tracking) return null;
   let poses = strokePoses.get(stroke.id);
   if (poses === undefined) {
     const [x, y] = stroke.points[0];
-    poses = trackStroke(tracking, [x, y], stroke.frame, FPS);
+    const own = anchorMasks(stroke);
+    if (own) poses = smoothTrack(followShapes(own.map((m) => (m ? samShape(m) : null)), [x, y], stroke.frame), [x, y], stroke.frame, FPS);
+    else if (tracking) poses = trackStroke(tracking, [x, y], stroke.frame, FPS);
+    else return null;
     strokePoses.set(stroke.id, poses);
   }
   return poses;
+}
+
+// The SAM run a stroke's planned anchor names, when it's cached and isn't
+// the person (the person is `tracking`). Fetched in the background
+// (loadAnchorRuns); until it arrives, the stroke follows the person.
+function anchorMasks(stroke: Stroke): (SamMask | null)[] | null {
+  const file = stroke.anchor ? samCacheFile(stroke.anchor, stroke.id) : null;
+  if (!file || file === 'sam-person.json') return null;
+  return samRuns.get(file) ?? null;
+}
+
+function loadAnchorRuns() {
+  const opened = clip;
+  if (!opened) return;
+  for (const stroke of strokes) {
+    const file = stroke.anchor ? samCacheFile(stroke.anchor, stroke.id) : null;
+    if (!file || samRuns.has(file)) continue;
+    samRuns.set(file, null);
+    void Promise.resolve(sam(file))
+      .then((json) => (json ? masksFromCache(json, opened.frameCount) : null))
+      .then((masks) => {
+        if (!masks || clip !== opened) return;
+        samRuns.set(file, masks);
+        for (const s of strokes) {
+          if (!s.anchor || samCacheFile(s.anchor, s.id) !== file) continue;
+          strokePoses.delete(s.id);
+          perStroke.delete(s.id);
+        }
+        animation = null;
+        paint();
+      })
+      .catch((err: unknown) => console.warn(`Couldn't read ${file} from the cache`, err));
+  }
+}
+
+// ---- SAM from the cache ------------------------------------------------------------
+
+// Looks the clip up in the cache by its hashes. If SAM has been run on it
+// (and paid for once), its masks replace the stand-in: the person cutout and
+// what strokes follow.
+async function connectSamCache(opened: Clip, source: Blob) {
+  try {
+    const hashes = [await sha256Hex(opened.file), await sha256Hex(source)];
+    if (clip !== opened) return;
+    sam = (file) => cachedAnswer(hashes, file);
+    const fromCache = { id: opened.name, sha256: hashes[0], frames: opened.frameCount, width: opened.width, height: opened.height, fps: FPS };
+    const { person, face } = await personAndFace(fromCache, sam);
+    if (clip !== opened) return;
+    samRuns.set('sam-person.json', person);
+    samRuns.set('sam-face.json', face);
+    makeTracking = () => samTracking(person, opened.width, opened.height);
+    useTracking();
+    setStatus(`SAM 3.1 masks for this clip, from the cache: the person on ${person.filter(Boolean).length} of ${opened.frameCount} frames.`);
+  } catch {
+    // Not cached (or no cache to ask): the stand-in, in dev, or no tracking.
+  }
+}
+
+// ---- The plan --------------------------------------------------------------------
+
+// Plans the strokes drawn on this frame (one Wonder call per drawing, §9):
+// a cached answer if there is one, otherwise Wonder through the proxy. A bad
+// or missing answer falls back to the nearest-mask rule, with its note shown.
+async function planDrawing() {
+  if (!clip || busy) return;
+  const drawn = strokes.filter((s) => s.frame === frame);
+  if (drawn.length === 0) {
+    setStatus('Draw on this frame first: the plan reads the strokes on the frame they were drawn on.');
+    return;
+  }
+  pause();
+  setBusy(true);
+  setStatus('Reading your drawing…');
+  try {
+    const input: PlanInput = {
+      frame,
+      strokes: drawn.map((s) => ({ id: s.id, points: s.points })),
+      masks: { person: samRuns.get('sam-person.json')?.[frame] ?? null, face: samRuns.get('sam-face.json')?.[frame] ?? null },
+    };
+    planColors = new Map(drawn.map((s, i) => [s.id, STROKE_COLORS[i % STROKE_COLORS.length]]));
+    plan = await planStrokes(input, await cachedThenLive(input));
+    usePlan();
+    setStatus(plan.source === 'wonder' ? `Planned ${plan.strokes.length} stroke${plan.strokes.length === 1 ? '' : 's'}.` : 'Used the nearest-mask plan; see the note.');
+  } catch (err) {
+    console.error(err);
+    setStatus(`Planning failed: ${errorText(err)}`);
+  } finally {
+    setBusy(false);
+  }
+}
+
+// A cached plan call for exactly these strokes on this frame, replayed;
+// otherwise the live call.
+async function cachedThenLive(input: PlanInput): Promise<PlanTransport> {
+  type Cached = { calls?: { frame: number; strokes: PlanInput['strokes']; attempts: { text: string }[] }[] };
+  const cache = (await sam('wonder-plan.json')) as Cached | null;
+  const same = (a: PlanInput['strokes'], b: PlanInput['strokes']) => JSON.stringify(a) === JSON.stringify(b);
+  const call = cache?.calls?.find((c) => c.frame === input.frame && same(c.strokes, input.strokes));
+  if (!call) return proxyTransport(numberedFrame);
+  let n = 0;
+  return async () => {
+    const attempt = call.attempts[n++];
+    if (!attempt) throw new Error('the cached call has no more attempts');
+    return attempt.text;
+  };
+}
+
+// The frame Wonder sees: each stroke in its own color, numbered at its root,
+// 1024 px on the long side.
+function numberedFrame(request: PlanRequest): string {
+  const fit = 1024 / Math.max(clip!.width, clip!.height);
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(clip!.width * fit);
+  canvas.height = Math.round(clip!.height * fit);
+  const c = canvas.getContext('2d')!;
+  c.drawImage(frameBuffer, 0, 0, canvas.width, canvas.height);
+  c.lineCap = 'round';
+  c.lineJoin = 'round';
+  for (const s of request.input.strokes) {
+    const color = planColors.get(s.id) ?? '#ffffff';
+    c.strokeStyle = color;
+    c.lineWidth = 6;
+    c.beginPath();
+    s.points.forEach(([x, y], i) => (i === 0 ? c.moveTo(x * fit, y * fit) : c.lineTo(x * fit, y * fit)));
+    c.stroke();
+    const [x, y] = s.points[0];
+    c.fillStyle = color;
+    c.beginPath();
+    c.arc(x * fit, y * fit, 16, 0, 2 * Math.PI);
+    c.fill();
+    c.fillStyle = '#000000';
+    c.font = 'bold 20px sans-serif';
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    c.fillText(String(s.id), x * fit, y * fit + 1);
+  }
+  return canvas.toDataURL('image/jpeg', 0.85);
+}
+
+// The effect for the current strokes with the taps on them.
+const currentEffect = (): Effect => effectOf(strokes, clipMotion(clip!), undefined, overrides);
+
+// Writes the plan, with the taps on top, into the strokes, then redraws the
+// panel. Fields the plan doesn't set (the brush) keep what the stroke has.
+function usePlan() {
+  if (!clip || !plan) return;
+  const effect = applyPlan(currentEffect(), plan.strokes);
+  for (const s of effect.strokes) {
+    const stroke = strokes.find((x) => x.id === s.id);
+    if (!stroke) continue;
+    const anchorChanged = JSON.stringify(stroke.anchor) !== JSON.stringify(s.anchor);
+    stroke.kind = s.kind;
+    stroke.stiffness = s.stiffness;
+    stroke.layer = s.views.front.layer;
+    stroke.brush = s.brush ?? stroke.brush;
+    stroke.anchor = s.anchor;
+    stroke.bodyAngle = s.bodyAngle;
+    stroke.wobble = s.wobble;
+    perStroke.delete(s.id);
+    if (anchorChanged) strokePoses.delete(s.id);
+  }
+  animation = null;
+  loadAnchorRuns();
+  showPanel(effect);
+  updateButtons();
+  paint();
+}
+
+function showPanel(effect: Effect) {
+  if (!plan) return;
+  const rows = plan.strokes.flatMap((p) => {
+    const s = effect.strokes.find((x) => x.id === p.id);
+    if (!s) return [];
+    const values: Record<OverrideField, unknown> = { kind: s.kind, anchor: s.anchor, bodyAngle: s.bodyAngle, stiffness: s.stiffness, layer: s.views.front.layer, wobble: s.wobble, brush: s.brush ?? 'ink' };
+    const overridden = new Set(OVERRIDE_FIELDS.filter((f) => isOverridden(effect, p.id, f)));
+    return [{ id: p.id, color: planColors.get(p.id) ?? '#ffffff', reason: p.reason, values, overridden }];
+  });
+  const events = {
+    set: (id: number, field: OverrideField, value: unknown) => {
+      overrides = applyOverride(currentEffect(), id, field, value).overrides;
+      usePlan();
+    },
+    reset: (id: number, field: OverrideField) => {
+      const rest = { ...overrides };
+      delete rest[`strokes.${id}.${field}`];
+      overrides = rest;
+      usePlan();
+    },
+  };
+  const rootOf = (id: number) => {
+    const s = strokes.find((x) => x.id === id)!;
+    return { time: s.frame / FPS, xy: [s.points[0][0], s.points[0][1]] as [number, number] };
+  };
+  renderPlanPanel(planPanel, rows, plan.note, plan.source, events, rootOf);
+}
+
+function forgetPlan() {
+  plan = null;
+  overrides = {};
+  planPanel.hidden = true;
+  planPanel.replaceChildren();
+}
+
+// The effect JSON (SPEC §7), the taps included: the project file.
+function saveEffect() {
+  if (!clip || strokes.length === 0) return;
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(new Blob([serializeEffect(currentEffect())], { type: 'application/json' }));
+  link.download = 'effect.json';
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href));
 }
 
 // The person mask tinted blue, and a ring on each stroke's root.
@@ -479,6 +721,8 @@ function updateButtons() {
   undoButton.disabled = !ready || strokes.length === 0;
   clearButton.disabled = !ready || strokes.length === 0;
   rawButton.disabled = !ready || strokes.length === 0;
+  planButton.disabled = !ready || strokes.length === 0;
+  saveEffectButton.disabled = !ready || strokes.length === 0;
   trackButton.disabled = !ready;
 }
 
@@ -558,8 +802,11 @@ rigidToggle.addEventListener('change', () => {
 });
 rawButton.addEventListener('click', saveRawStrokes);
 undoButton.addEventListener('click', undo);
+planButton.addEventListener('click', planDrawing);
+saveEffectButton.addEventListener('click', saveEffect);
 clearButton.addEventListener('click', () => {
   strokes = [];
+  forgetPlan();
   invalidate();
   updateButtons();
   paint();

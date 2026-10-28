@@ -148,7 +148,87 @@
         outline-offset: 2px;
       }
       /* Phones: tighter rows, so the video gets the room. */
+      /* The plan: out of the grid, over the stage. A sheet from the bottom on a
+         phone (below), a column on the right otherwise. */
+      #plan-panel {
+        position: fixed;
+        z-index: 2;
+        right: 0;
+        top: 56px;
+        bottom: 56px;
+        width: min(320px, 100vw);
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        padding: 10px 12px;
+        background: var(--panel);
+        border-left: 1px solid var(--line);
+        -webkit-user-select: text;
+        user-select: text;
+      }
+      #plan-panel[hidden] {
+        display: none;
+      }
+      .plan-head {
+        margin: 0 0 8px;
+        font-weight: 600;
+      }
+      .plan-note {
+        margin: 0 0 8px;
+        padding: 6px 8px;
+        border: 1px solid var(--accent);
+        border-radius: 6px;
+      }
+      .plan-row {
+        padding: 8px 0;
+        border-top: 1px solid var(--line);
+      }
+      .plan-row h3 {
+        margin: 0 0 6px;
+        font-size: 13px;
+      }
+      .plan-row h3::before {
+        content: '';
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        margin-right: 6px;
+        border-radius: 50%;
+        background: var(--stroke);
+      }
+      .plan-field {
+        display: grid;
+        grid-template-columns: 64px 1fr 28px;
+        align-items: center;
+        gap: 6px;
+        min-height: 36px; /* a finger's worth */
+      }
+      .plan-field span {
+        color: var(--muted);
+      }
+      .plan-dot {
+        grid-column: 3;
+        padding: 0;
+        min-width: 28px;
+        min-height: 28px;
+        color: var(--accent);
+        background: none;
+        border: 0;
+        font-size: 20px;
+      }
+      .plan-reason {
+        margin: 6px 0 0;
+        color: var(--muted);
+      }
       @media (max-width: 600px) {
+        #plan-panel {
+          top: auto;
+          left: 0;
+          width: auto;
+          max-height: 45dvh;
+          border-left: 0;
+          border-top: 1px solid var(--line);
+          padding-bottom: max(10px, env(safe-area-inset-bottom));
+        }
         body {
           font-size: 12px;
         }
@@ -210,6 +290,7 @@
       <a id="download" class="button" hidden>Download</a>
     </header>
 
+    <aside id="plan-panel" hidden aria-label="Plan"></aside>
     <main id="stage">
       <canvas id="view" hidden></canvas>
       <div id="drop">
@@ -255,6 +336,8 @@
       <label class="group"><input id="wobble" type="checkbox" checked />Wobble</label>
       <button id="undo" disabled>Undo</button>
       <button id="clear" disabled>Clear</button>
+      <button id="plan" disabled title="Wonder reads the strokes on this frame: what each attaches to and how it moves">Plan</button>
+      <button id="save-effect" disabled title="The effect JSON, with your changes to the plan">Save effect</button>
       <button id="raw-strokes" disabled title="Your strokes exactly as drawn, for reference/raw-strokes.json">Save strokes</button>
     </footer>
 
