@@ -43,7 +43,7 @@ Qai draws once, on one frame of a phone clip, and the drawing lives in the foota
 
 **Division of labor.** Muse Wonder plans each stroke and reads which way he faces. SAM 3.1 tracks the anchors Wonder picks, plus his body (`person`) and face (`face`). Everything that moves is code written for Inkwell. Meta's own SAM docs recommend this split: a Muse model to understand the scene, SAM to segment it.
 
-**Hero effect.** Horns, a halo and a tail come first. The hero is an electric four-tendril kagune in the neon brush, floppy (stiffness about 0.1), if it's clean by Sunday. Call them tendrils for judges and kagune on X.
+**Hero effect.** Horns, a halo and a tail come first. The hero is an electric four-tendril kagune in the electric brush, floppy (stiffness about 0.1), if it's clean by Sunday. A second look for it: crystal blades in the blade brush, with trails and the flame aura; Qai picks one by Friday. Call them tendrils for judges and kagune on X.
 
 **Hero test** (the demo's first shot, §13). Qai spins a full turn with the electric kagune whipping around him, then slams a fist on the ground and the floor cracks out from that point. Then the kagune slams down and electric bursts fire out across the frame. The camera is on the tripod the whole time.
 
@@ -52,7 +52,7 @@ Qai draws once, on one frame of a phone clip, and the drawing lives in the foota
 **Inputs and outputs.**
 - **Clip:** MP4 or MOV, under 15 s, one person. The app first converts it in the browser to H.264 at a constant 30 fps, using Mediabunny. After that, frame index `f = round(τ·30)` is the clock.
 - **Devices, in priority order:** iPhone Safari first, iPad Safari second, desktop Chrome as the fallback. The people this is for edit on their phones in Instagram's Edits app, so the whole flow runs on an iPhone: open Inkwell in Safari, load a clip, draw or pick an effect, export the MP4 to Photos, and finish the edit in Edits. Edits has no way for outside effects to plug in (no custom-effects tool since Spark AR shut down), so the hand-off is the exported video.
-- **Drawing:** pointer events. On iPhone it's a finger: no pressure, so perfect-freehand simulates it from speed, with more smoothing for fast finger strokes; the canvas takes `touch-action: none` and ignores a second touch while drawing. Pencil pressure on iPad; mouse or pen in desktop Chrome. Three colors and six brushes (§8.8): the current ink brush (perfect-freehand), textured, fine-tip ink, fine-tip textured, and neon in a straight and a round tip for electric effects.
+- **Drawing:** pointer events. On iPhone it's a finger: no pressure, so perfect-freehand simulates it from speed, with more smoothing for fast finger strokes; the canvas takes `touch-action: none` and ignores a second touch while drawing. Pencil pressure on iPad; mouse or pen in desktop Chrome. Three colors and nine brushes (§8.8): the current ink brush (perfect-freehand), textured, fine-tip ink, fine-tip textured, neon in a straight and a round tip, electric, blade and trail. Plus one effect nobody draws: the flame aura around the person (§8.6).
 - **Output:** a vertical MP4 (H.264, original audio), exported on the iPhone at 720p (1080p if it holds up on Qai's phone), on iPad at 1080p, or in desktop Chrome at 1080p, then saved to Photos. Plus a live link with cached sample clips.
 - **Phone budget.** Everything is sized for an iPhone first: a fixed internal resolution of 1080 px on the long side in video coordinates (not screen pixels), the glow at quarter resolution, reused buffers, one video texture, recovery from a lost WebGL context by rebuilding from the stroke data, and no stroke redraw on frames where nothing changed. The preview holds 24 fps or better on Qai's iPhone *(start)*.
 
@@ -95,7 +95,7 @@ M0 and M1 need no key at all: every criterion that needs SAM or Wonder output st
 |---|---|---|---|---|
 | M0 | Tue Oct 27 | The M0 checklist below, including the probe script (not run) | R1–R5 | No |
 | M1 | Wed Oct 28 | Clip conversion; anchors (One Euro filter, torso space), developed on the stand-in tracker (§12); physics engine (2-hour cap); stepped renderer with boil; contact sheets; `/label` page | P1–P5, A1, A2, A6 | No |
-| M2 | Thu Oct 29 | The probe run; cached SAM fixtures for the required clips; Wonder plan call with schema check and one retry; override UI; nearest-mask baseline; Gate 1 (one full run, clip to playback; ugly is fine); the six brushes and the brush picker (§8.8) | PROBE, K1–K3, W1, W2, W3, G1, B1–B3 | PROBE, K1–K3, W1, G1 (W2 and W3 can use recorded responses; B1–B3 are API-free) |
+| M2 | Thu Oct 29 | The probe run; cached SAM fixtures for the required clips; Wonder plan call with schema check and one retry; override UI; nearest-mask baseline; Gate 1 (one full run, clip to playback; ugly is fine); the nine brushes and the brush picker (§8.8); the flame aura (§8.6) | PROBE, K1–K3, W1, W2, W3, G1, B1–B4 | PROBE, K1–K3, W1, G1 (W2 and W3 can use recorded responses; B1–B4 are API-free) |
 | M3 | Fri Oct 30 | Turn: facing from Qai's turn keys (§8.5); views mode (draw side and back over a faint front); view blending; layering and occlusion; single-view fallback | T2–T5, A3, A4, A7 | T4 and the re-run K criteria; T2, T3, T5 and A3, A4, A7 are API-free |
 | M4 | Sat Oct 31 | Wonder facing labels and fusion; MP4 export, iPhone first (720p) then desktop (1080p); deploy with cached samples; Gate 2 | T1, W1 (final), X1, X2, X5, G2 | T1, W1, G2 (X1 and X2's server test are API-free) |
 | M5 | Sun Nov 1 | In priority order: finish M3 if it slipped; then the slam (§8.9): ground strokes for the cracks, the slam preset (A5) and the electric bursts; then, only if Gate 2 passed on Saturday and the slam passes, the gallery with search and wear this effect (X3), with a 5-hour cap. Feature freeze at 11 PM | A5, S1–S5, L1; X3 if built | X3 |
@@ -129,7 +129,7 @@ Times are ET. Qai's accounting exam is Thu Oct 29, so Wednesday night and Thursd
 | Tue Oct 27 | Campus gap (iPad); 7 PM–2 AM | M0 | Noon live session. Read the submission form and note its fields. Five minutes in Edits checking whether Scribble takes his own drawing. Design the kagune in Procreate. `reference/timing.json` from one traced lash; lock the ink brush and the 3 colors. One hour of accounting. Night: film `fixtures/probe/clip.mp4`: a 10 s slow full turn on the tripod, brightest light, H.264, HDR off, 1080p30, shutter 1/250 s or faster | M0 verified (R1–R5) |
 | Wed Oct 28 | 11 AM–4 PM; 11 PM–2 AM | M1 | Wednesday's live session. Rough side-step and walk takes, labeled on the `/label` page once M1 builds it. Night: accounting review | M1 verified; a tail and horns follow him on the side-step clip (on the stand-in until SAM) |
 | Thu Oct 29 | Campus gap (iPad); evening | M2 | Gap: final accounting review. Evening: 30 test strokes in the app plus `fixtures/strokes/labels.json`. Approve one golden per brush (B3). Label the probe clip (needed Fri). Rough indoor slow-turn and spin takes, labeled (needed Sat). Say go for the probe and the fixtures once the key works | M2 built; claimed with Gate 1 once the key works |
-| Fri Oct 30 | 8:30 PM–2 AM | M3 | The side and back views of the hero effect in views mode, saved as `reference/views/hero.json`. In Procreate: the kagune's slam keys (`slam.phases` and `slam.keys` in `reference/timing.json`) and the floor cracks. Decide whether the electric look holds up on the neon brush | Strands sit behind him and swap sides on the turn |
+| Fri Oct 30 | 8:30 PM–2 AM | M3 | The side and back views of the hero effect in views mode, saved as `reference/views/hero.json`. In Procreate: the kagune's slam keys (`slam.phases` and `slam.keys` in `reference/timing.json`) and the floor cracks. Decide whether the electric brush holds up on the kagune | Strands sit behind him and swap sides on the turn |
 | Sat Oct 31 | 10 AM–2:30 PM | M4 | Halloween teaser post if it renders (horns and a tail on him). Between Saturday and Monday: `fixtures/manual/X1.json`, `X2.json`, `X5.json` and `G2.json` once he's checked export on his iPhone, the whole flow on his iPhone, and the live link by hand | Gate 2 (G2): the full pipeline works on the live link |
 | Sun Nov 1 | All day | M5; feature freeze at 11 PM | Before 3 PM (clocks fall back; sunset is about 4:50): hero footage (the spin and slam, tripod locked, a full turn in about 1.5–2 s, shutter 1/500 s) and the 6 test clips in daylight, plus one friend's turn with written consent in `fixtures/clips.json`. Time hand-animating 1 second (12 drawings), then do it in Inkwell | Hero footage shot; the slam renders on it; the gallery and wear this effect only if Gate 2 passed (5-hour cap); features frozen |
 | Mon Nov 2 | 10 AM–3:30 PM | M6 | Render testers' clips (3+ people, written consent). Record the unedited live take with a clock on screen. Lock the script; collect quotes | Live take, script, README and quotes done |
@@ -140,7 +140,7 @@ Pause other projects (Furr, the Suspect rebuild) until Nov 5. The live final is 
 
 ### Cut order
 
-If work falls behind, cut in this order: publishing (X4), the gallery and wear this effect (X3), the shockwave ring, the electric bursts (keep the cracks), Wonder's turn labels (the turn keys carry the turn), rigid presets, the textured and fine-tip brushes (keep ink and neon), wobble polish, export polish. Never cut the tests or the demo video. No switching projects after the probe; from then on, only cuts.
+If work falls behind, cut in this order: publishing (X4), the gallery and wear this effect (X3), the shockwave ring, the electric bursts (keep the cracks), the flame aura, Wonder's turn labels (the turn keys carry the turn), rigid presets, the textured and fine-tip brushes (keep ink and neon), the blade and trail brushes, wobble polish, export polish. Never cut the tests or the demo video. No switching projects after the probe; from then on, only cuts.
 
 ## 4. The milestone loop
 
@@ -251,16 +251,18 @@ interface StrokeView {
   root: Vec2;                                 // where the stroke attaches in this view
   layer: 'behind' | 'front';                  // relative to the body in this view
 }
-type BrushId = 'ink' | 'textured' | 'fine-ink' | 'fine-textured' | 'neon-straight' | 'neon-round';
+type BrushId = 'ink' | 'textured' | 'fine-ink' | 'fine-textured' | 'neon-straight' | 'neon-round' | 'electric' | 'blade' | 'trail';
 interface BrushSettings {
   size: number; thinning: number; smoothing: number; streamline: number;   // perfect-freehand
   grain?: number;                             // textured brushes: 0..1, how much of the fill the grain removes
-  glow?: { radiusPx: number; intensity: number };  // neon brushes, at 1080 wide
+  glow?: { radiusPx: number; intensity: number };  // neon, electric, blade and trail brushes, at 1080 wide
+  bolt?: { bendPx: number; ampPx: number; elbows: number; shards: number };  // electric: bend spacing, sideways reach, share of sharp elbows, shards per drawing at most, at 1080 wide
 }
 interface Stroke {
   id: number;                                 // drawing order; the same id in every view
   color: 0 | 1 | 2;
   brush?: BrushId;                            // missing = 'ink'
+  accent?: 0 | 1 | 2;                         // blade: the color of the reflected light on its shadow edge; missing = its own color
   kind: 'strand' | 'rigid';                   // rigid = follows its target exactly (horns, halo)
   anchor: { type: 'concept'; prompt: string } | { type: 'point'; time: number; xy: [number, number] }
         | { type: 'ground'; xy: [number, number] };   // fixed frame pixels (tripod): cracks on the floor
@@ -288,6 +290,7 @@ interface Effect {
   strokes: Stroke[];
   presets?: { name: string; at: number }[];   // seconds into the clip
   moments?: Moment[];
+  aura?: { color: 0 | 1 | 2 };                // the flame aura around the person (§8.6); missing = none
   listing?: { name: string; tags: string[]; by: string };  // the gallery entry (X3)
   overrides: Record<string, unknown>;         // one-tap overrides, keyed by field path
 }
@@ -423,9 +426,12 @@ Fling on turns isn't a separate force. The root sweeps around the torso (§8.5),
 
 **Compositing order,** per output frame:
 1. The video frame.
-2. Strokes whose current layer is `behind`.
-3. The person cutout from the SAM mask, feathered 1 px.
-4. Strokes whose current layer is `front`.
+2. The flame aura, if the effect has one.
+3. Strokes whose current layer is `behind`.
+4. The person cutout from the SAM mask, feathered 1 px.
+5. Strokes whose current layer is `front`.
+
+**Flame aura.** Grown from the person mask, so nobody draws it and it follows him for free. Take the mask's distance field at half resolution and cut it where seeded noise, stretched upward, says the flame ends, so the edge licks up and reaches further toward the head. Inside, it is colored in layers, never a flat fill: a deep band hugging the body, shorter inner tongues with their own lighter edges, rising streaks, a paler outer flame and a thin bright rim; embers drift off the top. The noise is seeded by drawing index `k`, so it changes on 2s and re-renders identically. It sits under the cutout, so it shows only around him.
 
 **Outlines** come from perfect-freehand, rebuilt every drawing from the held centerline and pressure, using the brush settings saved in the effect.
 
@@ -460,6 +466,10 @@ Fling on turns isn't a separate force. The root sweeps around the torso (§8.5),
 | fine-tip size | 0.35 × the ink brush's size |
 | grain (textured brushes) | 0.35 |
 | neon glow | radius 12 px, intensity 0.8, at 1080 wide |
+| blade | light from the upper left; three soft cel tones; cast shadow 4–13 px down and to the right, 3 layers at 10–14% opacity; glow radius 14 px, intensity 0.3 |
+| trail | glow radius 16 px, intensity 0.4; 2 forks at the tip, 1.4–2.6 × its width long; up to 40 sparkles per drawing |
+| flame aura | reach 0.1 torso heights at the feet to 0.5 at the head; 26 embers per drawing |
+| electric | 19 px at its widest; bends every 38 px, up to 18 px sideways, 55% of them sharp elbows; up to 5 shards per drawing; bloom radius 26 px, intensity 0.55, flickering between 0.6× and 1× per drawing |
 | crack draw-on | 4 drawings |
 | electric bursts | 8 arcs, 6 drawings long, reach 0.6 torso heights |
 | shockwave ring | 8 drawings long, reach 1.5 torso heights, band 0.15 torso heights, noise threshold 0.55, height 0.3 × width |
@@ -467,7 +477,7 @@ Fling on turns isn't a separate force. The root sweeps around the torso (§8.5),
 
 ### 8.8 Brushes
 
-All six brushes are perfect-freehand outlines of the same simulated centerline, so the physics, boil and stepping don't change. They differ only in their settings and how the outline is filled:
+All nine brushes are perfect-freehand outlines of the same simulated centerline, so the physics, boil and stepping don't change. They differ only in their settings and how the outline is filled:
 
 | Brush | Outline | Fill |
 |---|---|---|
@@ -477,9 +487,14 @@ All six brushes are perfect-freehand outlines of the same simulated centerline, 
 | `fine-textured` | same as fine-ink | grain |
 | `neon-straight` | even width, flat ends, no taper | a pale core plus a glow in the stroke color |
 | `neon-round` | round ends, tapered | same as neon-straight |
+| `electric` | a bent copy of the centerline that changes every drawing; width swells and pinches to pointed ends | flat cel bands, no gradients: a dark rim, the stroke color, a pale band and a white core pushed to one side; a wide bloom behind; angular shards beside it |
+| `blade` | flat root, straight sides to a razor tip | shaded as a solid: two faces meeting at a ridge, lit from the upper left in three soft cel tones; long crystal streaks and veins along it; a broad faint sheen and a small broken glint, both tinted toward its color, never white; reflected light in `accent` on the shadow edge; a darker edge line; a soft cast shadow; a faint glow behind |
+| `trail` | tapered at both ends | see-through, crisp on the outer edge and soft on the inner one, fading out at both ends; colored all the way through (deeper at the edge, the stroke color in the body, a thin paler streak), never a white core, so it reads on light footage; two sharp forks at the tip; sparkle dust shed along it; the neon glow behind |
 
 - **Grain** is made from a seed (the stroke id), never from an image file: imported brushes stay parked (§15). It's fixed to the stroke, so it rides along with the line instead of swimming. It changes only when the boil changes, on drawings.
 - **Glow** is drawn with additive blending ('lighter') under the stroke's core. For an electric look, its intensity flickers between drawings, seeded by stroke id and drawing index `k`, so it changes on 2s like everything else and re-renders identically.
+- **Electric** is a cel-shaded bolt. The simulated centerline gets nodes every `bolt.bendPx` along it, each pushed sideways by up to `bolt.ampPx`; most joins are smooth curves and a share (`bolt.elbows`) are sharp corners. The width swells and pinches, and the inner bands pinch on their own, so the white core breaks up. The bloom is the neon glow at a wider radius (quarter resolution; no canvas blur filter, which iPhone Safari lacks). Up to `bolt.shards` small angular chips float beside it. Every offset is seeded by stroke id and drawing index `k`, so the bolt takes a new shape on each drawing, on 2s, and re-renders identically. The root doesn't move, so it stays attached, and the physics underneath is unchanged.
+- **Blade and trail are shaded per pixel**, which is too slow to run on every output frame on a phone. Each stroke is painted once per drawing into a cached bitmap, and the frames in between just stamp it; that's free because a drawing holds for 2 frames and re-renders identically. Their streaks, glints, forks and sparkles are seeded by stroke id and drawing index `k`. Blade's light comes from a fixed direction on screen, not from the footage.
 - "Straight and round" is read here as the end shape (flat vs round caps). Qai confirms that reading before M2.
 
 ### 8.9 Moments: the slam
@@ -488,7 +503,7 @@ The hero test (§1) is a spin, a fist slam, then a kagune slam. The spin is the 
 
 - **Ground strokes (the cracks).** Qai draws the cracks on the floor in one frame. They're anchored to fixed frame pixels, not to his body, which works because the camera is on a tripod. They stay hidden until the fist slam, then draw on from the impact point outward (`appear`, 4 drawings by default), held on drawings and boiling like any line. They go under the person cutout, because the floor is behind his feet.
 - **The slam preset.** A keyed strike (A5's mechanics, with reference `slam.phases` and `slam.keys`) that ends with the tendril tips on the floor. Its last strike key is the second moment, `by: 'effect'`.
-- **Electric bursts.** At an effect slam, `count` seeded jagged arcs (midpoint displacement) shoot out from the impact point and crawl along the drawn cracks, drawn in a neon brush in front of the person. Each arc gets a new shape every drawing, on 2s, for 6 drawings, then fades. The same seed gives the same bursts.
+- **Electric bursts.** At an effect slam, `count` seeded jagged arcs (midpoint displacement) shoot out from the impact point and crawl along the drawn cracks, drawn in the electric brush in front of the person. Each arc gets a new shape every drawing, on 2s, for 6 drawings, then fades. The same seed gives the same bursts.
 - **Shockwave ring.** At the fist slam, a ring grows out across the floor from the impact point: an ellipse flattened to the floor (height 0.3 × width *(start)*). Its band is cut from seeded noise at a threshold, so it has sharp toon edges with gaps and lumps instead of a clean circle, and a second, finer noise roughens those edges. It glows like the neon brush, in a palette color, changes shape only on drawings, and goes under the person cutout like the cracks.
 
 **Timing curves.** Every slam effect runs on its own clock: its age since the moment, divided by its length in drawings, gives progress 0 → 1, and an easing curve reshapes that progress before it drives the effect. That covers how far the cracks have drawn on, how wide the ring is and how bright it glows, and how bright the bursts are. The default is ease-out (fast start, slow finish) *(start)*. Qai can pick another per effect: linear, ease-in, ease-out, or hold-then-snap. Progress is read once per drawing, so the effects still step on 2s.
@@ -597,9 +612,10 @@ Each criterion has one test file, `tests/<milestone>/<ID>.test.ts`, which also w
 
 | ID | Criterion | Threshold |
 |---|---|---|
-| B1 | Determinism: each of the six brushes, same effect and drawing index `k` | Byte-identical pixels across two renders; identical between drawing changes (A1) |
-| B2 | Each brush does its job: grain fixed to the stroke; neon glow stays near its line; fine tip thinner than ink | Grain pixels move with the stroke (within 0.5 px under a pure translation); no glow pixel farther than 2 × `glow.radiusPx` from the centerline; fine-ink's widest point ≤ 0.5 × ink's on the same stroke *(start)* |
+| B1 | Determinism: each of the nine brushes, same effect and drawing index `k` | Byte-identical pixels across two renders; identical between drawing changes (A1) |
+| B2 | Each brush does its job: grain fixed to the stroke; neon and electric glow stay near their line; electric changes shape on drawings and keeps its root; fine tip thinner than ink | Grain pixels move with the stroke (within 0.5 px under a pure translation); no glow pixel farther than 2 × `glow.radiusPx` from the centerline (for electric, 2 × `glow.radiusPx` + `bolt.ampPx` + the farthest shard); electric's pixels differ between consecutive drawings and its root sits within 1 px of the drawn root; blade's cast shadow no farther than 16 px from its outline; trail's sparkles within 1.6 × its width of the centerline, and its core never white (no pixel with all channels ≥ 250); fine-ink's widest point ≤ 0.5 × ink's on the same stroke *(start)* |
 | B3 | Qai's look | One approved golden per brush in `tests/golden/brushes/` (L1 holds them after that) |
+| B4 | The flame aura follows the person and stays near him | On a synthetic mask: byte-identical across two renders of the same `k`; different between consecutive drawings; no aura pixel farther than 0.6 torso heights from the mask; moving the mask moves the aura with it (within 1 px at half resolution) *(start)* |
 
 ### S: the slam (§8.9)
 
