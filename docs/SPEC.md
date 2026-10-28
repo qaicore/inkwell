@@ -51,8 +51,10 @@ Qai draws once, on one frame of a phone clip, and the drawing lives in the foota
 
 **Inputs and outputs.**
 - **Clip:** MP4 or MOV, under 15 s, one person. The app first converts it in the browser to H.264 at a constant 30 fps, using Mediabunny. After that, frame index `f = round(τ·30)` is the clock.
-- **Drawing:** pointer events with pressure (Pencil in iPad Safari; mouse or pen in desktop Chrome). Three colors and six brushes (§8.8): the current ink brush (perfect-freehand), textured, fine-tip ink, fine-tip textured, and neon in a straight and a round tip for electric effects.
-- **Output:** a vertical MP4 (H.264, original audio) exported in desktop Chrome, plus a live link with cached sample clips.
+- **Devices, in priority order:** iPhone Safari first, iPad Safari second, desktop Chrome as the fallback. The people this is for edit on their phones in Instagram's Edits app, so the whole flow runs on an iPhone: open Inkwell in Safari, load a clip, draw or pick an effect, export the MP4 to Photos, and finish the edit in Edits. Edits has no way for outside effects to plug in (no custom-effects tool since Spark AR shut down), so the hand-off is the exported video.
+- **Drawing:** pointer events. On iPhone it's a finger: no pressure, so perfect-freehand simulates it from speed, with more smoothing for fast finger strokes; the canvas takes `touch-action: none` and ignores a second touch while drawing. Pencil pressure on iPad; mouse or pen in desktop Chrome. Three colors and six brushes (§8.8): the current ink brush (perfect-freehand), textured, fine-tip ink, fine-tip textured, and neon in a straight and a round tip for electric effects.
+- **Output:** a vertical MP4 (H.264, original audio), exported on the iPhone at 720p (1080p if it holds up on Qai's phone), on iPad at 1080p, or in desktop Chrome at 1080p, then saved to Photos. Plus a live link with cached sample clips.
+- **Phone budget.** Everything is sized for an iPhone first: a fixed internal resolution of 1080 px on the long side in video coordinates (not screen pixels), the glow at quarter resolution, reused buffers, one video texture, recovery from a lost WebGL context by rebuilding from the stroke data, and no stroke redraw on frames where nothing changed. The preview holds 24 fps or better on Qai's iPhone *(start)*.
 
 ## 2. Rules
 
@@ -95,7 +97,7 @@ M0 and M1 need no key at all: every criterion that needs SAM or Wonder output st
 | M1 | Wed Oct 28 | Clip conversion; anchors (One Euro filter, torso space), developed on the stand-in tracker (§12); physics engine (2-hour cap); stepped renderer with boil; contact sheets; `/label` page | P1–P5, A1, A2, A6 | No |
 | M2 | Thu Oct 29 | The probe run; cached SAM fixtures for the required clips; Wonder plan call with schema check and one retry; override UI; nearest-mask baseline; Gate 1 (one full run, clip to playback; ugly is fine); the six brushes and the brush picker (§8.8) | PROBE, K1–K3, W1, W2, W3, G1, B1–B3 | PROBE, K1–K3, W1, G1 (W2 and W3 can use recorded responses; B1–B3 are API-free) |
 | M3 | Fri Oct 30 | Turn: facing from Qai's turn keys (§8.5); views mode (draw side and back over a faint front); view blending; layering and occlusion; single-view fallback | T2–T5, A3, A4, A7 | T4 and the re-run K criteria; T2, T3, T5 and A3, A4, A7 are API-free |
-| M4 | Sat Oct 31 | Wonder facing labels and fusion; MP4 export; deploy with cached samples; Gate 2 | T1, W1 (final), X1, X2, G2 | T1, W1, G2 (X1 and X2's server test are API-free) |
+| M4 | Sat Oct 31 | Wonder facing labels and fusion; MP4 export, iPhone first (720p) then desktop (1080p); deploy with cached samples; Gate 2 | T1, W1 (final), X1, X2, X5, G2 | T1, W1, G2 (X1 and X2's server test are API-free) |
 | M5 | Sun Nov 1 | In priority order: finish M3 if it slipped; then the slam (§8.9): ground strokes for the cracks, the slam preset (A5) and the electric bursts; then, only if Gate 2 passed on Saturday and the slam passes, the gallery with search and wear this effect (X3), with a 5-hour cap. Feature freeze at 11 PM | A5, S1–S5, L1; X3 if built | X3 |
 | M6 | Mon Nov 2 | Every suite on the full clip set; README scoreboards | all | yes |
 
@@ -128,7 +130,7 @@ Times are ET. Qai's accounting exam is Thu Oct 29, so Wednesday night and Thursd
 | Wed Oct 28 | 11 AM–4 PM; 11 PM–2 AM | M1 | Wednesday's live session. Rough side-step and walk takes, labeled on the `/label` page once M1 builds it. Night: accounting review | M1 verified; a tail and horns follow him on the side-step clip (on the stand-in until SAM) |
 | Thu Oct 29 | Campus gap (iPad); evening | M2 | Gap: final accounting review. Evening: 30 test strokes in the app plus `fixtures/strokes/labels.json`. Approve one golden per brush (B3). Label the probe clip (needed Fri). Rough indoor slow-turn and spin takes, labeled (needed Sat). Say go for the probe and the fixtures once the key works | M2 built; claimed with Gate 1 once the key works |
 | Fri Oct 30 | 8:30 PM–2 AM | M3 | The side and back views of the hero effect in views mode, saved as `reference/views/hero.json`. In Procreate: the kagune's slam keys (`slam.phases` and `slam.keys` in `reference/timing.json`) and the floor cracks. Decide whether the electric look holds up on the neon brush | Strands sit behind him and swap sides on the turn |
-| Sat Oct 31 | 10 AM–2:30 PM | M4 | Halloween teaser post if it renders (horns and a tail on him). Between Saturday and Monday: `fixtures/manual/X1.json`, `X2.json` and `G2.json` once he's checked export and the live link by hand | Gate 2 (G2): the full pipeline works on the live link |
+| Sat Oct 31 | 10 AM–2:30 PM | M4 | Halloween teaser post if it renders (horns and a tail on him). Between Saturday and Monday: `fixtures/manual/X1.json`, `X2.json`, `X5.json` and `G2.json` once he's checked export on his iPhone, the whole flow on his iPhone, and the live link by hand | Gate 2 (G2): the full pipeline works on the live link |
 | Sun Nov 1 | All day | M5; feature freeze at 11 PM | Before 3 PM (clocks fall back; sunset is about 4:50): hero footage (the spin and slam, tripod locked, a full turn in about 1.5–2 s, shutter 1/500 s) and the 6 test clips in daylight, plus one friend's turn with written consent in `fixtures/clips.json`. Time hand-animating 1 second (12 drawings), then do it in Inkwell | Hero footage shot; the slam renders on it; the gallery and wear this effect only if Gate 2 passed (5-hour cap); features frozen |
 | Mon Nov 2 | 10 AM–3:30 PM | M6 | Render testers' clips (3+ people, written consent). Record the unedited live take with a clock on screen. Lock the script; collect quotes | Live take, script, README and quotes done |
 | Tue Nov 3 | Campus gap (iPad); 7 PM–2 AM | Final fixes only | Gap: edit the demo video (5-hour cap). Night: cut the X clip, make the repo public, fill in the submission form | Everything submittable by 2 AM |
@@ -209,7 +211,7 @@ Remove-Item Env:INKWELL_SETUP_EDITS
 
 ```
 src/
-  app/       UI: load clip, draw (pointer pressure; iPad Safari and desktop Chrome), views mode,
+  app/       UI: load clip, draw (finger on iPhone first, Pencil on iPad, mouse in desktop Chrome), views mode,
              plan panel with one-tap overrides, timeline, preview, /label page for ground truth
   video/     CFR conversion (Mediabunny -> H.264, constant 30 fps), frame index from timestamps
   sam/       SAM 3.1 client (through the proxy), prompt builders, mask decoding, cache by clip hash
@@ -219,7 +221,7 @@ src/
   physics/   one engine: Verlet chain + pull toward a target shape, fixed timestep, seeded
   motion/    stepped drawings on 2s/3s, line boil, action presets composed with view targets
   render/    perfect-freehand outlines; compositing around the person mask; contact sheets
-  export/    WebCodecs MP4 in desktop Chrome, original audio
+  export/    WebCodecs MP4 on iPhone (720p), iPad and desktop Chrome (1080p), original audio
   types/     shared types, including effect.ts (the effect JSON in §7)
 functions/   Cloudflare Pages Function: holds keys, proxies Meta API, passcode, daily spend cap
 scripts/     verify pipeline, metrics, tree-hash.mjs, scan-secrets.mjs; scripts/live/ = paid calls
@@ -631,10 +633,11 @@ Each criterion has one test file, `tests/<milestone>/<ID>.test.ts`, which also w
 
 | ID | Criterion | Threshold |
 |---|---|---|
-| X1 | A 10 s clip exports in desktop Chrome to H.264 MP4 with the original audio | < 60 s (measured by a browser test). Manual part: Qai confirms it plays in QuickTime and uploads to Instagram |
+| X1 | A 10 s clip exports to H.264 MP4 with the original audio, on the iPhone and in desktop Chrome | Desktop: < 60 s (measured by a browser test). Manual part, on Qai's iPhone: 720p export in < 120 s *(start)*, it saves to Photos, opens in Edits and uploads to Instagram |
 | X2 | Live link | A server test shows the daily spend cap blocks calls past the limit, and uploads need the passcode. Manual part: Qai confirms the 3 cached samples work on the live link |
 | X3 | Wear this effect (if built): pick a premade effect from the gallery, found by searching its name or a tag, and apply it to a new person's clip with no redraw | K1 and T1 hold on that clip; search finds every premade effect by its name and by each of its tags |
 | X4 | Publish (after Nov 4 unless it fits): anyone saves their effect to the gallery with a name and tags, free to wear | The published effect round-trips to identical JSON; applying it still goes through the spend cap; a report button hides it until Qai reviews it |
+| X5 | The whole flow on Qai's iPhone, in Safari: load a clip, draw a stroke with a finger, preview, export | Manual: preview holds ≥ 24 fps *(start)*, nothing crashes or reloads, and a finger stroke follows him like a Pencil stroke does |
 
 ### Gates, locked look, probe
 
@@ -645,7 +648,7 @@ Each criterion has one test file, `tests/<milestone>/<ID>.test.ts`, which also w
 | L1 | Every approved golden in `tests/golden/` re-renders within 0.5% pixel difference, unless Qai re-approves it |
 | PROBE | `fixtures/probe/report.md` and `strip.png` exist and contain everything listed in the Probe part of §9 |
 
-**Manual evidence.** The manual parts of X1 and X2, and all of G2, are evidenced by `fixtures/manual/<ID>.json`:
+**Manual evidence.** The manual parts of X1 and X2, and all of G2 and X5, are evidenced by `fixtures/manual/<ID>.json`:
 
 ```json
 { "id": "X1", "by": "Qai", "date": "2026-11-01", "result": "pass", "notes": "plays in QuickTime, uploaded to IG" }
@@ -765,7 +768,7 @@ Skipped: Best Agentic Use-Case (Inkwell isn't an agent) and Best Open Weight Bui
 
 1. 0:00 to 0:05 (Demo): the hero test: he spins with the electric kagune whipping around him, slams the floor and it cracks, then the kagune slams down and electricity bursts out.
 2. 0:05 to 0:30 (Impact): who it's for: a doodle animator's 24–30 hours per video, his timed second by hand vs Inkwell, and Edits' preset effects vs drawing your own. Name SAM 3.1 and Muse Wonder here, for Stage 1.
-3. 0:30 to 1:30 (Meta tooling, technical depth): one unedited take with a clock on screen: draw on the iPad, Wonder's plan appears, SAM's masks stream in, the physics takes over, export.
+3. 0:30 to 1:30 (Meta tooling, technical depth): one unedited take with a clock on screen: draw with a finger on the iPhone, Wonder's plan appears, SAM's masks stream in, the physics takes over, export to Photos and open it in Edits.
 4. 1:30 to 2:00 (Technical depth): the turn with and without the turn signal, side by side; without it, the strands stay on the wrong side when his back turns.
 5. 2:00 to 2:30 (Impact): search the gallery, tap a premade effect, and it's on 3+ people; testers' clips if wear this effect didn't make it.
 6. 2:30 to 3:00 (Technical depth, Impact): the scoreboards, including Wonder vs the dumb rule, then the closing line: "Draw it once. Anyone can wear it."
@@ -795,7 +798,8 @@ Shaky tracking is the biggest risk, because every wobble in the mask shows up in
 | People upload anime characters or worse once publishing opens | X4 stays after Nov 4 unless it fits; when it opens, a report button hides an effect until Qai reviews it |
 | Judges read it as a toy | Lead Impact with the 24–30 hour number, the timed second, and 3+ outside people in their own clips |
 | Wonder is slow to answer | One plan call per drawing and one facing call per clip, both cached, with "reading your drawing" on screen |
-| MP4 export fails in iPad Safari | Export from desktop Chrome; for the demo, screen-record the canvas |
+| iPhone export is too slow, or the phone heats up and slows down | 720p on the phone; 1080p from iPad or desktop Chrome; for the demo, screen-record the canvas. Test on the iPhone early (from M2), through Mac Safari's Web Inspector if one is around |
+| iPhone Safari runs out of memory and drops the canvas or reloads the tab | Fixed internal resolution, reused buffers, one video texture, and the scene rebuilds from the stroke data |
 | The $150 of credits runs low, or the X post brings a traffic spike | Upload each clip once and reuse its file id (SAM bills per frame, minimum 50 frames per request); cached samples, a passcode and a daily spend cap before posting |
 | Nothing tracks steadily in the probe | Stop and decide before building anything else (§9) |
 
@@ -804,7 +808,7 @@ Shaky tracking is the biggest risk, because every wobble in the mask shows up in
 - **Effects:** impact frames, speed lines, smears, capes and cloth.
 - **Props:** swords and other hand-held props (SAM doesn't guarantee hand masks).
 - **Scenes:** multiple people, a moving camera.
-- **Export:** iPad export.
+- **Export:** 1080p export on the iPhone, if 720p is all that holds up.
 - **Models:** SAM 3D Body, Glimmer, Muse Image drafting of missing views (a v2 idea for people who draw only once).
 - **Agents:** an agentic self-critique pass.
 - **Also parked:** the rest of the "moments" layer (air slash, spin speed lines, impact frames; the slam is in, §8.9), moments found automatically, imported brushes, accounts and paid artists in the gallery, Stand-style fights, voice-to-doodle.
