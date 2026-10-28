@@ -8,6 +8,7 @@ import type { FollowMode } from '../track/standin';
 import { torsoHeights } from '../track/torso';
 import { maskHasPerson, maskNear, trackStroke, type Pose, type Tracking } from '../track/tracking';
 import { animateStroke, drawLive, type DrawnStroke, type Stroke } from './engine';
+import type { BrushId } from '../types/effect';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const stage = $<HTMLElement>('stage');
@@ -29,6 +30,7 @@ const wobbleToggle = $<HTMLInputElement>('wobble');
 const stiffnessSlider = $<HTMLInputElement>('stiffness');
 const stiffnessValue = $<HTMLOutputElement>('stiffness-value');
 const rigidToggle = $<HTMLInputElement>('rigid');
+const brushSelect = $<HTMLSelectElement>('brush');
 const rawButton = $<HTMLButtonElement>('raw-strokes');
 const undoButton = $<HTMLButtonElement>('undo');
 const clearButton = $<HTMLButtonElement>('clear');
@@ -43,6 +45,7 @@ let frame = 0; // the frame on screen
 let targetFrame = 0; // the frame asked for last; the arrow keys step from it
 let strokes: Stroke[] = [];
 let live: Stroke | null = null; // the stroke being drawn right now
+let livePointer = -1; // the finger or pen drawing it; any other touch is ignored
 let nextStrokeId = 1;
 let busy = false; // converting or exporting
 let playing = false;
@@ -306,19 +309,39 @@ new ResizeObserver(layout).observe(stage);
 
 // ---- Drawing -------------------------------------------------------------------
 
-// Screen position to clip pixels. A mouse has no pressure, so it draws at
-// an even 0.5; the brush doesn't make pressure up from speed.
+// Screen position to clip pixels. A pen reports its pressure. A mouse has
+// none, so it draws at an even 0.5. A finger has none either, and it's the
+// main way to draw on a phone, so its pressure is made up from speed
+// (fingerPoint).
 function pointFrom(e: PointerEvent): Point {
   const box = view.getBoundingClientRect();
-  return [
-    ((e.clientX - box.left) / box.width) * clip!.width,
-    ((e.clientY - box.top) / box.height) * clip!.height,
-    e.pointerType === 'pen' ? e.pressure : 0.5,
-  ];
+  const x = ((e.clientX - box.left) / box.width) * clip!.width;
+  const y = ((e.clientY - box.top) / box.height) * clip!.height;
+  if (e.pointerType === 'touch') return fingerPoint(x, y);
+  return [x, y, e.pointerType === 'pen' ? e.pressure : 0.5];
+}
+
+// Finger input, the way a brush pen behaves: slow is heavy, fast is light.
+// Each point is pulled part of the way toward the finger (streamline), which
+// takes the wobble out of quick finger strokes, and pressure eases toward a
+// target set by how far the point moved, in brush sizes. Both happen once, as
+// the stroke is drawn, so the stored stroke is what renders everywhere.
+const FINGER_STREAMLINE = 0.5; // share of the way toward the finger each event
+const FINGER_EASE = 0.3; // share of the way toward the target pressure each event
+function fingerPoint(x: number, y: number): Point {
+  const last = live?.points.at(-1);
+  if (!last) return [x, y, 0.5];
+  const px = last[0] + (x - last[0]) * (1 - FINGER_STREAMLINE);
+  const py = last[1] + (y - last[1]) * (1 - FINGER_STREAMLINE);
+  const speed = Math.hypot(px - last[0], py - last[1]) / Math.max(1, live!.size);
+  const target = Math.min(1, Math.max(0.2, 1 - speed));
+  return [px, py, last[2] + (target - last[2]) * FINGER_EASE];
 }
 
 view.addEventListener('pointerdown', (e) => {
   if (!clip || busy || e.button !== 0) return;
+  if (live) return; // a second finger while drawing: not a new stroke, and not a pinch
+  livePointer = e.pointerId;
   pause();
   // Capture keeps the stroke going if the finger slides off the canvas. If a
   // browser refuses it, draw anyway.
@@ -330,6 +353,7 @@ view.addEventListener('pointerdown', (e) => {
   live = {
     id: nextStrokeId++,
     color: document.querySelector<HTMLInputElement>('input[name="color"]:checked')!.value,
+    brush: brushSelect.value as BrushId,
     size: Number(sizeSlider.value),
     frame,
     pen: e.pointerType === 'pen',
@@ -342,15 +366,15 @@ view.addEventListener('pointerdown', (e) => {
 });
 
 view.addEventListener('pointermove', (e) => {
-  if (!live) return;
+  if (!live || e.pointerId !== livePointer) return;
   // A pen reports more positions than events; use them all for a smoother line.
   const events = e.getCoalescedEvents?.() ?? [];
   for (const event of events.length > 0 ? events : [e]) live.points.push(pointFrom(event));
   requestPaint();
 });
 
-function finishStroke() {
-  if (!live) return;
+function finishStroke(e: PointerEvent) {
+  if (!live || e.pointerId !== livePointer) return;
   // A tap, or a press that never moved, has no direction to draw or
   // resample along: drop it.
   const distinct = new Set(live.points.map(([x, y]) => `${x},${y}`)).size;

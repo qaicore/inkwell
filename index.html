@@ -232,6 +232,17 @@
         <label class="group"><input type="radio" name="layer" value="front" checked />Front</label>
         <label class="group"><input type="radio" name="layer" value="behind" />Behind</label>
       </div>
+      <label class="group" aria-label="Brush"
+        ><span class="size-word">Brush</span>
+        <select id="brush">
+          <option value="ink" selected>Ink</option>
+          <option value="textured">Textured</option>
+          <option value="fine-ink">Fine ink</option>
+          <option value="fine-textured">Fine textured</option>
+          <option value="neon-straight">Neon, flat ends</option>
+          <option value="neon-round">Neon, round ends</option>
+        </select></label
+      >
       <label class="group" aria-label="Brush size"
         ><span class="size-word">Size</span> <input id="size" type="range" min="4" max="96" value="28" /><output id="size-value">28</output></label
       >

@@ -4,10 +4,11 @@
 // clip is then animated at once (src/motion/animate.ts): the physics runs
 // underneath, and the drawings are held on 2s or 3s with the boil on top.
 // The preview and the export both draw from the result, so they match.
-import type { Effect, Stroke as EffectStroke } from '../types/effect.ts';
+import type { BrushId, Effect, Stroke as EffectStroke } from '../types/effect.ts';
 import { animate } from '../motion/animate.ts';
 import type { Timing } from '../motion/timing.ts';
-import { DEFAULT_BRUSH, fillOutline, resampleStroke, strokeOutline, type Point } from '../render/brush.ts';
+import { DEFAULT_BRUSH, resampleStroke, type Point } from '../render/brush.ts';
+import { brushSettings, drawBrushStroke, type BrushTarget, type MakeScratch } from '../render/brushes.ts';
 import { anchorTransform, toTorso, type TorsoTransform } from '../track/torso.ts';
 import type { Pose } from '../track/tracking.ts';
 
@@ -16,7 +17,8 @@ import type { Pose } from '../track/tracking.ts';
 export type Stroke = {
   id: number;
   color: string;
-  size: number; // brush diameter at full pressure, clip px
+  brush: BrushId;
+  size: number; // ink brush diameter at full pressure, clip px; the other brushes scale from it
   frame: number; // the frame it was drawn on
   pen: boolean; // real pen pressure; a mouse gets an even 0.5
   layer: 'front' | 'behind'; // in front of the person, or tucked behind them
@@ -27,11 +29,14 @@ export type Stroke = {
 
 // A stroke as it appears on one frame, in clip pixels.
 export type DrawnStroke = {
+  id: number;
   points: [number, number][];
   pressure: number[];
   layer: 'front' | 'behind';
   color: string;
+  brush: BrushId;
   size: number; // px on this frame: the drawn size, scaled with the body
+  k: number; // drawing index: the neon flicker changes with it
 };
 
 export interface ClipMotion {
@@ -75,7 +80,16 @@ export function animateStrokes(strokes: Stroke[], m: ClipMotion): DrawnStroke[][
     frame.placed.map((placed) => {
       const stroke = byId.get(placed.id)!;
       const grown = anchors.get(placed.id)!(frame.f).unit / anchors.get(placed.id)!(stroke.frame).unit;
-      return { points: placed.points, pressure: placed.pressure, layer: placed.layer, color: stroke.color, size: stroke.size * grown };
+      return {
+        id: placed.id,
+        points: placed.points,
+        pressure: placed.pressure,
+        layer: placed.layer,
+        color: stroke.color,
+        brush: stroke.brush,
+        size: stroke.size * grown,
+        k: frame.k,
+      };
     }),
   );
 }
@@ -86,20 +100,42 @@ export function animateStroke(stroke: Stroke, m: ClipMotion): DrawnStroke[] {
   return animateStrokes([stroke], m).map((frame) => frame[0]);
 }
 
-// Fills one stroke's outline: the same brush code the engine's tests and
-// contact sheets use, with the stroke's own size.
+// Scratch canvases for the textured and neon brushes in the browser. Reads
+// back pixels, so the context says so (Safari and Chrome keep it on the CPU).
+const browserScratch: MakeScratch = (width, height) => {
+  const canvas = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(width, height) : Object.assign(document.createElement('canvas'), { width, height });
+  const ctx = canvas.getContext('2d', { willReadFrequently: true }) as unknown as BrushTarget;
+  return { canvas, ctx };
+};
+const INK_SETTINGS = { brush: DEFAULT_BRUSH };
+
+// Draws one stroke with its brush: the same brush code the engine's tests
+// and contact sheets use. The stroke's size is the ink brush's on this frame,
+// and every brush scales from it (fine tips, the glow's radius, the grain).
 export function drawStroke(ctx: CanvasRenderingContext2D, stroke: DrawnStroke) {
-  fillOutline(ctx, strokeOutline(stroke.points, stroke.pressure, { ...DEFAULT_BRUSH, size: stroke.size }), stroke.color);
+  drawBrushStroke(ctx as unknown as BrushTarget, browserScratch, {
+    id: stroke.id,
+    points: stroke.points,
+    pressure: stroke.pressure,
+    color: stroke.color,
+    brush: stroke.brush,
+    settings: brushSettings(INK_SETTINGS, stroke.brush),
+    scale: stroke.size / DEFAULT_BRUSH.size,
+    k: stroke.k,
+  });
 }
 
 // The stroke still being drawn, straight from the pointer.
 export function drawLive(ctx: CanvasRenderingContext2D, stroke: Stroke) {
   drawStroke(ctx, {
+    id: stroke.id,
     points: stroke.points.map(([x, y]): [number, number] => [x, y]),
     pressure: stroke.points.map(([, , pressure]) => pressure),
     layer: stroke.layer,
     color: stroke.color,
+    brush: stroke.brush,
     size: stroke.size,
+    k: 0,
   });
 }
 
@@ -119,6 +155,7 @@ function toEffectStroke(stroke: Stroke, at: TorsoTransform, wobble: boolean): Ef
   return {
     id: stroke.id,
     color: 0, // the app keeps its own colors; the engine doesn't use these
+    brush: stroke.brush,
     kind: stroke.kind,
     anchor: { type: 'point', time: stroke.frame / 30, xy: [stroke.points[0][0], stroke.points[0][1]] },
     bodyAngle: 0,

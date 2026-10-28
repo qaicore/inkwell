@@ -8,6 +8,7 @@ function stroke(kind: Stroke['kind']): Stroke {
   return {
     id: 1,
     color: '#e8203a',
+    brush: 'ink',
     size: 30,
     frame: 10,
     pen: false,
