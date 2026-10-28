@@ -8,10 +8,14 @@
 //     in the stroke's own coordinates (distance along the centerline, distance
 //     across it), seeded by the stroke id, so it rides the line as the physics
 //     bends it instead of sliding over it.
-//   - neon-straight, neon-round: a glow, worked out at quarter resolution
-//     from each pixel's distance to the centerline and added ('lighter') under
-//     a pale core. Its intensity flickers per drawing, seeded by stroke id and
-//     drawing index k, so it changes on 2s and re-renders identically.
+//   - neon-straight, neon-round: a lit tube. A glow worked out once per stroke
+//     at quarter resolution from each pixel's distance to the centerline, laid
+//     down twice: a normal blend, so it still reads on light footage, then
+//     added ('lighter'), so it blazes on dark. On top, nested outlines: a thin
+//     deep-colored edge (keeps the line readable on light footage), the full
+//     brush color, and a hot near-white core along the center. The glow's
+//     intensity flickers per drawing, seeded by stroke id and drawing index k,
+//     so it changes on 2s and re-renders identically.
 // The same code draws in Node (@napi-rs/canvas) and in the browser; the
 // caller passes a way to make scratch canvases, and they're reused.
 import type { BrushId, BrushSettings, Effect, Vec2 } from '../types/effect.ts';
@@ -25,8 +29,22 @@ export const FINE_TIP_THINNING = 0.85; // ink's is 0.65: the line gets fine at f
 export const GRAIN = 0.35;
 export const NEON_GLOW = { radiusPx: 12, intensity: 0.8 }; // at 1080 wide
 export const NEON_CORE_SIZE = 0.5; // × the ink brush's size
-const NEON_CORE_WHITE = 0.7; // how far the core's color is mixed toward white
-const GLOW_REACH = 1.4; // the glow fades to nothing at 1.4 × its radius
+// The tube, from the outside in: [size × the brush's, mix toward white];
+// a negative mix darkens toward black.
+// Small steps from color to white, so the core fades in rather than banding.
+const NEON_TUBE: [number, number][] = [
+  [1.0, -0.35], // the edge
+  [0.82, 0], // the brush color
+  [0.66, 0.25],
+  [0.52, 0.5],
+  [0.4, 0.72],
+  [0.29, 0.88],
+  [0.19, 0.97], // the hot core
+];
+const GLOW_REACH = 1.7; // the glow fades to nothing at 1.7 × its radius (B2 allows 2 ×)
+const GLOW_HALO = 0.6; // of the glow's strength in the wide halo; the rest hugs the line
+const GLOW_GAIN = 1.6; // how lit the glow is at full intensity, clipped at opaque
+const GLOW_OVER = 0.5; // opacity of the normal-blend pass, for light footage
 const FLICKER = 0.25; // the glow's intensity drops by up to a quarter on a drawing
 const GRAIN_CELLS_PER_SIZE = 6; // grain cells across the brush: finer than 1/5 reads as texture, not dirt
 const GRAIN_CONTRAST = 1.2;
@@ -63,6 +81,7 @@ export interface Pixels {
 }
 export interface BrushTarget extends PathTarget {
   globalCompositeOperation: string;
+  globalAlpha: number;
   imageSmoothingEnabled: boolean;
   setTransform(a: number, b: number, c: number, d: number, e: number, f: number): void;
   clearRect(x: number, y: number, w: number, h: number): void;
@@ -114,7 +133,10 @@ export function drawBrushStroke(ctx: BrushTarget, make: MakeScratch, s: BrushStr
   const outline = strokeOutline(s.points, s.pressure, s.settings, s.scale, endsOf(s.brush));
   if (s.settings.glow) {
     drawGlow(ctx, make, s);
-    fillOutline(ctx, outline, mixWhite(s.color, NEON_CORE_WHITE));
+    for (const [size, white] of NEON_TUBE) {
+      const ring = strokeOutline(s.points, s.pressure, { ...s.settings, size: s.settings.size * size }, s.scale, endsOf(s.brush));
+      fillOutline(ctx, ring, white < 0 ? mixBlack(s.color, -white) : mixWhite(s.color, white));
+    }
   } else if (s.settings.grain) {
     drawGrained(ctx, make, outline, s);
   } else {
@@ -181,9 +203,11 @@ function drawGlow(ctx: BrushTarget, make: MakeScratch, s: BrushStroke) {
     for (let x = 0; x < w; x++) {
       const dist = line.distance(x0 + (x + 0.5) * q, y0 + (y + 0.5) * q);
       if (dist >= reach) continue;
+      // A wide halo plus a tight bloom: lit up along the line, soft far out.
       const u = dist / reach;
-      const falloff = (1 - u * u) ** 3;
-      const a = Math.round(255 * intensity * falloff + BAYER[(y & 3) * 4 + (x & 3)]);
+      const near = Math.max(0, 1 - u / 0.4);
+      const falloff = GLOW_HALO * (1 - u) ** 1.5 + (1 - GLOW_HALO) * near * near;
+      const a = Math.round(255 * GLOW_GAIN * intensity * falloff + BAYER[(y & 3) * 4 + (x & 3)]);
       if (a <= 0) continue;
       const i = (y * w + x) * 4;
       d[i] = r;
@@ -195,8 +219,12 @@ function drawGlow(ctx: BrushTarget, make: MakeScratch, s: BrushStroke) {
   buf.ctx.putImageData(img, 0, 0);
   const op = ctx.globalCompositeOperation;
   const smooth = ctx.imageSmoothingEnabled;
-  ctx.globalCompositeOperation = 'lighter';
+  const alpha = ctx.globalAlpha;
   ctx.imageSmoothingEnabled = true;
+  ctx.globalAlpha = alpha * GLOW_OVER;
+  ctx.drawImage(buf.canvas as never, 0, 0, w, h, x0, y0, w * q, h * q);
+  ctx.globalAlpha = alpha;
+  ctx.globalCompositeOperation = 'lighter';
   ctx.drawImage(buf.canvas as never, 0, 0, w, h, x0, y0, w * q, h * q);
   ctx.globalCompositeOperation = op;
   ctx.imageSmoothingEnabled = smooth;
@@ -304,7 +332,12 @@ function rgb(hex: string): [number, number, number] {
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
 
-function mixWhite(hex: string, w: number): string {
-  const [r, g, b] = rgb(hex).map((c) => Math.round(c + (255 - c) * w));
-  return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`;
+const hex = ([r, g, b]: number[]) => `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`;
+
+function mixWhite(color: string, w: number): string {
+  return hex(rgb(color).map((c) => Math.round(c + (255 - c) * w)));
+}
+
+function mixBlack(color: string, k: number): string {
+  return hex(rgb(color).map((c) => Math.round(c * (1 - k))));
 }
