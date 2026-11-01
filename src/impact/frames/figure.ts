@@ -720,12 +720,18 @@ export function paintMarks(ctx: PosterTarget, sink: GlowSink, marks: readonly Ve
 
 // ---- Test doubles (the sheet and the tests) ------------------------------------------
 
+// The ink brush size (px at 1080 wide) whose widest point matches the widest of
+// `width` (full widths in px on a frame `frameWidth` wide): perfect-freehand's
+// width at full pressure is PEAK_WIDTH × size.
+export function brushSizeForWidth(width: readonly number[], frameWidth: number): number {
+  return (Math.max(1, ...width) / PEAK_WIDTH) * (1080 / frameWidth);
+}
+
 // An impact stroke given as widths per point (tests/unit/helpers/impact-drawings.ts),
 // as a Crack: the brush sized so its widest point matches, its draw-on end by
 // the 0.08 S rule.
 export function crackFromStroke(stroke: { id: number; points: readonly Vec2[]; pressure: readonly number[]; width: readonly number[] }, P: Vec2, S: number, frameWidth: number, color: 0 | 1 | 2 = 2): Crack {
-  const widest = Math.max(1, ...stroke.width);
-  const size = (widest / PEAK_WIDTH) * (1080 / frameWidth);
+  const size = brushSizeForWidth(stroke.width, frameWidth);
   return {
     id: stroke.id,
     points: stroke.points.map((p): Vec2 => [p[0], p[1]]),

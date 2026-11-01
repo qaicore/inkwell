@@ -29,7 +29,15 @@
 //   - Eyes: a strand that splits off and rejoins, about one per 0.72 U of path.
 //   - Thin bolts: U{1..3}, 0.1–0.26 U long, 0.005–0.010 S wide, tortuosity
 //     1.03–1.09, no kinks and no core.
-//   - Tones: the discharge set (decision 6), edge, band, core and pale.
+//   - The area budget (round 1): the ribbons, eyes and bolts cover at most
+//     AREA_BUDGET of the frame (2.6 % to A11, 3.5 % from A12; the reference
+//     measures 1.8–6.2 % with the floods). Over it, every ribbon width comes
+//     down by one factor (plan.fit), so the paths, kinks and pools keep
+//     their planned shape and spacing; the planned medians stay in the
+//     bands, and the thin bolts keep their widths.
+//   - Tones: the discharge set (decision 6), edge, band, core and pale, with
+//     the ribbons' body lavender (#969ef0) and the core cyan (#94fdfd) in the
+//     unrotated set, as measured; a rotated set mixes band toward pale.
 //   - Gain: linear to 0 at J_end − 5, with one last full-gain kr step on
 //     J_end − 7 (the last flicker), read per kr step at its last frame so a
 //     step never changes mid-step. A wash turned bolt brightening (washes.ts)
@@ -44,7 +52,7 @@ import type { GlowSink, ImpactContext, LayerDraw } from '../contracts.ts';
 import type { BrushTarget, MakeScratch } from '../../render/glow.ts';
 import { kr } from '../clock.ts';
 import { floorCircle } from '../floor.ts';
-import { mixHex, roles } from '../palette.ts';
+import { DISCHARGE, mixHex, roles } from '../palette.ts';
 import { fnv1a32, int, rng, uniform, type Rng } from '../rng.ts';
 import { boltBoost, boxOf, clamp, energyFrame, faded, fillUnion, krSpan, memo, onFloor, sceneKey, type EnergyFrame, type WashOptions } from './washes.ts';
 
@@ -77,6 +85,8 @@ export const POOLS = { count: [2, 4], ratio: [4.4, 7.6], least: 4 } as const; //
 export const CORE = { coverage: [0.3, 0.7], most: 0.76, share: [0.2, 0.32], wobble: 0.15, shift: [0.07, 0.24], thin: 0.009 } as const; // share × (1 ± wobble) stays in 0.13–0.42; a node's step never takes the coverage past most
 export const BOLTS = { count: [1, 3], length: [0.1, 0.26], width: [0.005, 0.01], tortuosity: [1.035, 1.085] } as const;
 export const MAIN_PATH = 0.25; // U: shorter ribbons are thinner, × SHORT_WIDTH
+export const AREA_BUDGET: Readonly<Record<RibbonBand['name'], number>> = { lead: 0.01, early: 0.026, mid: 0.026, late: 0.035 }; // of the frame
+export const LIGHTNING_TONES = { band: '#969ef0', core: '#94fdfd' } as const; // the measured body and core, for the unrotated set
 export const PHONE_RIBBONS = 4;
 export const PHONE_NODES = 48;
 export const BOLT_FADE = 9; // frames: the gain falls from 1 on J_end − 14 to 0 on J_end − 5
@@ -112,12 +122,12 @@ export function bandAt(j: number): RibbonBand | null {
 
 // The bolts' gain on frame I + j, per kr step: 1 until the fade, then linear
 // to 0 at J_end − 5, read at the step's last frame; the step holding J_end − 7
-// flickers back to full. 0 before A3.
-export function boltGain(ictx: ImpactContext, j: number): number {
+// flickers back to full, except steady (Reduce flashing). 0 before A3.
+export function boltGain(ictx: ImpactContext, j: number, steady = false): number {
   if (kr(j) < 17) return 0;
   const { first, last } = krSpan(j);
   const flicker = ictx.jEnd - 7;
-  if (first <= flicker && flicker <= last) return 1;
+  if (!steady && first <= flicker && flicker <= last) return 1;
   return clamp((ictx.jEnd - 5 - last) / BOLT_FADE, 0, 1);
 }
 
@@ -153,6 +163,7 @@ export interface LightningPlan {
   boost: number; // × the glow on a bolt brightening, else 1
   ribbons: Ribbon[];
   bolts: Strand[];
+  fit: number; // the widths' factor that keeps the area budget (1: under it as planned)
   tones: { edge: string; band: string; core: string; pale: string };
   line: number; // px: the ink line's width
   key: string;
@@ -161,22 +172,27 @@ export interface LightningPlan {
 export interface LightningOptions extends WashOptions {
   maxRibbons?: number; // the cut order's step 3: 4 → 2 ribbons
   floor?: boolean; // follow the floor arcs and line round P as well (default true)
+  steady?: boolean; // Reduce flashing: drawn once, the lead band's ribbons held in place to the fade (no flicker back), with no cores
 }
 
 // The lightning on frame I + j, crawling along `sources` (frame px
 // polylines), or null when nothing shows: before A3, from J_end − 5, past
 // J_end.
 export function ribbons(ictx: ImpactContext, j: number, sources: readonly (readonly Vec2[])[] = [], opts: LightningOptions = {}): LightningPlan | null {
-  const band = bandAt(j);
-  const gain = boltGain(ictx, j);
-  if (!band || !(gain > 0) || j > ictx.jEnd) return null;
+  const live = bandAt(j);
+  const gain = boltGain(ictx, j, opts.steady);
+  if (!live || !(gain > 0) || j > ictx.jEnd) return null;
+  // Steady (Reduce flashing): one draw for the bolts' whole life, the lead
+  // band's, so nothing jumps when the band changes; only the gain moves.
+  const band = opts.steady ? RIBBON_BANDS.lead : live;
   const k = kr(j);
   const fr = energyFrame(ictx);
   const { S, U } = fr;
   const phone = ictx.tier === 'phone';
   const tracks = prepare(ictx, fr, sources, opts.floor !== false, band);
   if (tracks.length === 0) return null;
-  const r = rng(ictx.seed, 'bolt', k);
+  const kp = opts.steady ? -1 : k;
+  const r = rng(ictx.seed, 'bolt', kp);
 
   // How many and how long: the longest ribbon's extent E, the rest sharing
   // what's left of the total, none longer than the longest. A few ribbons
@@ -205,8 +221,8 @@ export function ribbons(ictx: ImpactContext, j: number, sources: readonly (reado
   let longest = 0;
   for (const i of chosen) {
     // Where it runs is drawn once; a rebuild only changes how far it goes.
-    const place = placeOn(rng(ictx.seed, 'bolt', k, i + 1, 0), tracks, taken, lengths[i]);
-    const build = (length: number) => buildRibbon(rng(ictx.seed, 'bolt', k, i + 1), place, length, medians[i], main[i], band, fr, phone);
+    const place = placeOn(rng(ictx.seed, 'bolt', kp, i + 1, 0), tracks, taken, lengths[i]);
+    const build = (length: number) => buildRibbon(rng(ictx.seed, 'bolt', kp, i + 1), place, length, medians[i], main[i], band, fr, phone);
     const first = i === chosen[0];
     const cap = first ? 0.98 * eHi : 0.97 * longest;
     const low = first ? 1.02 * eLo : 0;
@@ -259,15 +275,49 @@ export function ribbons(ictx: ImpactContext, j: number, sources: readonly (reado
   const out = made.map((m) => m.rb);
   const bolts: Strand[] = [];
   for (let b = 0, n = int(r, BOLTS.count[0], BOLTS.count[1]); b < n; b++) {
-    const bolt = buildBolt(rng(ictx.seed, 'bolt', k, 100 + b), tracks, fr, phone);
+    const bolt = buildBolt(rng(ictx.seed, 'bolt', kp, 100 + b), tracks, fr, phone);
     if (bolt) bolts.push(bolt);
   }
 
+  // The area budget: one factor on every ribbon width (the thin bolts keep
+  // theirs, and count against it).
+  const area = addUp(out.map(ribbonArea));
+  const budget = Math.max(0, AREA_BUDGET[band.name] * ictx.width * ictx.height - addUp(bolts.map(strandArea)));
+  const fit = area > budget ? budget / area : 1;
+  const fitted = fit < 1 ? out.map((rb) => thinner(rb, fit)) : out;
+  // Steady (Reduce flashing) draws no white-hot cores: the body alone.
+  const ribbonsFit = opts.steady ? fitted.map((rb) => ({ ...rb, core: rb.core.map(() => 0) })) : fitted;
+
   const boost = boltBoost(ictx, j, opts);
   const d = roles(ictx.palette).discharge;
-  const tones = { edge: d.edge, band: d.band, core: boost > 1 ? mixHex(d.core, d.pale, 0.45) : d.core, pale: d.pale };
-  const key = ['bolt', sceneKey(ictx), k, gain.toFixed(4), boost, opts.maxRibbons ?? '-', opts.floor === false ? 'nf' : 'f', sourcesHash(sources)].join(':');
-  return { j, kr: k, A: k - 14, band: band.name, gain, boost, ribbons: out, bolts, tones, line: Math.max(1, 0.0022 * S), key };
+  const unrotated = d.band === DISCHARGE.band;
+  const body = unrotated ? LIGHTNING_TONES.band : mixHex(d.band, d.pale, 0.35);
+  const coreTone = unrotated ? LIGHTNING_TONES.core : d.core;
+  const tones = { edge: d.edge, band: body, core: boost > 1 ? mixHex(coreTone, d.pale, 0.45) : coreTone, pale: d.pale };
+  const key = ['bolt', sceneKey(ictx), k, gain.toFixed(4), boost, opts.maxRibbons ?? '-', opts.floor === false ? 'nf' : 'f', opts.steady ? 's' : '-', sourcesHash(sources)].join(':');
+  return { j, kr: k, A: k - 14, band: band.name, gain, boost, ribbons: ribbonsFit, bolts, fit, tones, line: Math.max(1, 0.0022 * S), key };
+}
+
+const addUp = (xs: readonly number[]) => xs.reduce((a, b) => a + b, 0);
+
+// A strand's area: its width over each segment, trapezoids.
+function strandArea(st: Strand): number {
+  let a = 0;
+  for (let i = 1; i < st.path.length; i++) a += (hyp(st.path[i][0] - st.path[i - 1][0], st.path[i][1] - st.path[i - 1][1]) * (st.width[i] + st.width[i - 1])) / 2;
+  return a;
+}
+
+// A ribbon's area, its eyes with it.
+function ribbonArea(rb: Ribbon): number {
+  let a = 0;
+  for (let i = 1; i < rb.path.length; i++) a += (hyp(rb.path[i][0] - rb.path[i - 1][0], rb.path[i][1] - rb.path[i - 1][1]) * (rb.left[i] + rb.right[i] + rb.left[i - 1] + rb.right[i - 1])) / 2;
+  return a + addUp(rb.eyes.map(strandArea));
+}
+
+// A ribbon with every width × k: the same path, kinks and pools.
+function thinner(rb: Ribbon, k: number): Ribbon {
+  const x = (v: readonly number[]) => v.map((w) => w * k);
+  return { ...rb, width: x(rb.width), left: x(rb.left), right: x(rb.right), coreShift: x(rb.coreShift), median: rb.median * k, eyes: rb.eyes.map((e) => ({ path: e.path, width: x(e.width) })) };
 }
 
 // `total` split into `count` random parts, each within [lo, hi]: random

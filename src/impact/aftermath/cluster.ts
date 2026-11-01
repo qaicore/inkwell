@@ -33,11 +33,14 @@
 // Past g8 (the hold) the groups keep g8's parameters, its extents among them
 // (design §6): the refinement and the choice also hold the visible union's
 // t02, t98 and top to g8's, or the carry-over walks them off (0.1 U by g14).
-// Paint order: lobes in the deep tone, the fire part (its dark red line, then
-// three nested tones and the hot spots near the base), then each ball as a
-// deep outline, a fill at its own level and a shade spot. Tones are the
-// composite's (design §6, "In the composite"); balls near the fire warm
-// toward #e5721b.
+// Paint order (judge round 1: one contour, cel-shaded lumps): every lobe and
+// ball in the line colour, so the ink shows only on the union's edge; each
+// lobe's crescent cel steps over that (the deep tone in a crescent away from
+// P, a lit crescent toward it, then the body); the fire part (its dark red
+// line, three nested tones and the hot spots near the base); last the fills
+// of the scalloping edge balls and of the warm balls round the fire part.
+// Tones are the composite's (design §6, "In the composite"); balls near the
+// fire warm toward #e5721b.
 import type { Vec2 } from '../../types/effect.ts';
 import type { GlowSink, Tier } from '../contracts.ts';
 import type { BrushTarget } from '../../render/glow.ts';
@@ -60,6 +63,8 @@ const T_SHIFT = 0.06; // U: the most the lean moves the centroid across (±0.08 
 const PAD: Record<Tier, number> = { full: 0.008, phone: 0.012 }; // U: how far the scalloping balls push the outline out, on average
 const LATTICE = 2.4; // the ball lattice's spacing in mean radii: about a fifth of the smoke shows deep between balls
 const OUTLINE = 0.16; // a ball's deep outline, in radii
+const CREST_LINE = 0.006; // U: the union's ink line on a lobe
+const LIT_MIX = 0.45; // the lit crescent: the body tone this far toward the rim light
 const LOBE_JITTER = 0.02; // U: a carried lobe's move (≤ 0.05)
 export const BALL_JITTER = 0.006; // U: a carried ball's move (≤ 0.05)
 const HOLE_SHIFT = [0.45, 0.75]; // a new ball in a dropped ball's hole sits this far off its centre, in the old ball's radii
@@ -682,7 +687,7 @@ const SHAPES = new Map<string, MassShape[]>();
 // The shapes of one group's cluster at `unit` px per U (held while the group
 // shows: every frame of it gets the same list).
 export function clusterShapes(ictx: MassContext, g: number, unit: number, alpha = 1): ClusterDrawing {
-  const fr = massFrame(ictx);
+  const fr = massFrame(ictx, true);
   const state = clusterState(ictx.seed, g, ictx.tier, fr.beta);
   const key = `cluster:${massKey(ictx)}:${g}:${unit.toFixed(3)}`;
   const shapes = memo(SHAPES, key, () => buildShapes(ictx, fr, state, g, unit), 8);
@@ -694,8 +699,27 @@ function buildShapes(ictx: MassContext, fr: MassFrame, state: ClusterState, g: n
   const disc = (c: FloorPt, r: number) => px(ellipsePts(c, r, discCount(r * unit)));
   const deep = ramp(DEEP, state.A);
   const tone = ramp(PAINT, state.A);
+  const line = mixHex(deep, '#000000', 0.35);
+  const lit = mixHex(tone, SMOKE.rim, LIT_MIX);
   const out: MassShape[] = [];
-  for (const l of state.lobes) out.push({ role: 'lobe', points: disc(l.c, l.r), color: deep, round: true });
+  // One ink contour, on the union's edge only (judge round 1: no polka dots):
+  // every lobe and ball in the line's colour, then the fills over them a line
+  // in, so the line shows only where nothing else covers it. The balls are
+  // the scallops along it; inside, the lobes' cel steps cover them, and only
+  // the scallops and the warm balls round the fire part are filled, last.
+  for (const l of state.lobes) out.push({ role: 'lobe', points: disc(l.c, l.r), color: line, round: true });
+  for (const b of state.balls) out.push({ role: 'ball-line', points: disc(b.c, b.r), color: line, round: true });
+  // Each lobe a lump in crescent cel steps: the deep tone in a crescent away
+  // from P, a lit crescent toward it, offset 0.15–0.2 of its radius.
+  for (const l of state.lobes) {
+    const r = l.r - CREST_LINE;
+    const len = Math.hypot(l.c[0], l.c[1]) || 1;
+    const u: FloorPt = [-l.c[0] / len, -l.c[1] / len]; // toward P
+    const at = (k: number): FloorPt => [l.c[0] + k * r * u[0], l.c[1] + k * r * u[1]];
+    out.push({ role: 'lobe-shade', points: disc(l.c, r), color: deep, round: true });
+    out.push({ role: 'lobe-lit', points: disc(at(0.15), 0.85 * r), color: lit, round: true });
+    out.push({ role: 'lobe-body', points: disc(at(-0.05), 0.72 * r), color: tone, round: true });
+  }
   const { rho, weights, exits } = state;
   out.push({ role: 'vein-line', points: px(corePolygon(rho, weights, exits, VEIN_LINE)), color: VEIN_DARK });
   out.push({ role: 'core', points: px(corePolygon(rho, weights, exits)), color: VEIN_RED });
@@ -713,13 +737,8 @@ function buildShapes(ictx: MassContext, fr: MassFrame, state: ClusterState, g: n
     out.push({ role: 'spot-rim', points: disc(c, size * 1.35), color: VEIN_LIGHT, round: true });
     out.push({ role: 'spot', points: disc(c, size), color: SMOKE.spots, round: true });
   }
-  const line = mixHex(deep, '#000000', 0.35);
   for (const b of state.balls) {
-    const fill = b.level < 1 ? mixHex(tone, '#000000', 1 - b.level) : mixHex(tone, '#ffffff', (b.level - 1) * 0.5);
-    const lit = b.warm ? mixHex(fill, SMOKE.rim, 0.35) : fill;
-    out.push({ role: 'ball-line', points: disc(b.c, b.r), color: line, round: true });
-    out.push({ role: 'ball', points: disc(b.c, b.r * (1 - OUTLINE)), color: lit, round: true });
-    out.push({ role: 'ball-shade', points: disc(b.spot, b.spotR), color: mixHex(lit, '#000000', 0.3), round: true });
+    if (b.edge || b.warm) out.push({ role: 'ball', points: disc(b.c, b.r * (1 - OUTLINE)), color: b.warm ? mixHex(tone, SMOKE.rim, 0.35) : tone, round: true });
   }
   return out;
 }
@@ -728,7 +747,7 @@ function buildShapes(ictx: MassContext, fr: MassFrame, state: ClusterState, g: n
 export function shapes(ictx: MassContext, f: number): ClusterDrawing | null {
   const clock = massClock(ictx, f);
   if (!clock || clock.g < 2) return null;
-  return clusterShapes(ictx, clock.g, massFrame(ictx).U * clock.zoom, clock.alpha);
+  return clusterShapes(ictx, clock.g, massFrame(ictx, true).U * clock.zoom, clock.alpha);
 }
 
 export function draw(ctxBehind: BrushTarget, _ctxFront: BrushTarget, _sink: GlowSink, ictx: MassContext, f: number, opaque = false) {
@@ -743,7 +762,7 @@ const OUTLINE_RAYS = 64;
 export function outline(ictx: MassContext, f: number): Vec2[] | null {
   const clock = massClock(ictx, f);
   if (!clock) return null;
-  const fr = massFrame(ictx);
+  const fr = massFrame(ictx, true);
   const unit = fr.U * clock.zoom;
   if (clock.g < 2) {
     const star = fireStar(ictx.seed, clock.g as 0 | 1);

@@ -13,6 +13,10 @@
 //     posters' hot ramp is the large red here (#733002, #441003, #260200).
 //   - G6, cooldown: a slam whose IF1 lands within 24 drawings (30 frames) of
 //     the last one's is a single IF4 glint, held 8 frames.
+//   - G7, calm runs (decision 12): no light on the dark fields (no emission),
+//     and IF4's star, IF5's cross and IF7's comet at 0.4 of their width, so
+//     each run only moves a 10° field once: up on IF1, down on IF5, up on
+//     the way out.
 // And the poster side of the export's flash ladder, reduced mode only (WP12's
 // ladder.ts orders the steps, WP13's export walks them):
 //   - step 4, the slow replay: each poster holds 5 frames (WP0's freezeMap);
@@ -21,7 +25,7 @@
 //   - step 6, glint only: G6's glint, whatever the cooldown says;
 //   - step 7, no posters: the same plan as frames.count 0.
 import { kr, posterHolds, POSTER_COUNT } from '../clock.ts';
-import { HOT, isSaturatedRed } from '../palette.ts';
+import { HOT, isSaturatedRed, linear } from '../palette.ts';
 import { hex, rgb } from '../../render/geometry.ts';
 
 export const LIGHT_FLOOR = 0.8; // G3: the least relative luminance of a light field's tint
@@ -40,6 +44,7 @@ export interface PosterSpec {
   minL: number; // G3: the least relative luminance a tint keeps (0: none)
   redSafe: boolean; // G4
   glint: boolean; // G6 and ladder step 6: IF4 standing in for the whole hit
+  calm?: boolean; // G7: no emission, and the big light marks thin (Reduce flashing)
 }
 
 export interface PosterPlan {
@@ -56,9 +61,9 @@ export function fullSpec(si: number): PosterSpec {
   return { si, field: FULL_FIELD[si], disc: si === 1 ? 'ink' : null, minL: 0, redSafe: false, glint: false };
 }
 
-// G1–G4 on one poster.
+// G1–G4 and G7 on one poster.
 export function gentleSpec(spec: PosterSpec): PosterSpec {
-  return { ...spec, field: spec.si >= 4 ? 'dark' : 'light', disc: spec.disc ? 'tint' : null, minL: LIGHT_FLOOR, redSafe: true };
+  return { ...spec, field: spec.si >= 4 ? 'dark' : 'light', disc: spec.disc ? 'tint' : null, minL: LIGHT_FLOOR, redSafe: true, calm: true };
 }
 
 // Poster si on the plain plan for a flash mode.
@@ -95,7 +100,7 @@ export const polarityLock = (plan: PosterPlan): PosterPlan => ({
 
 // Ladder step 6 (and G6): IF4, light, held 8 frames.
 export function glintOnly(plan: PosterPlan): PosterPlan {
-  const glint: PosterSpec = { si: GLINT_POSTER, field: 'light', disc: null, minL: LIGHT_FLOOR, redSafe: true, glint: true };
+  const glint: PosterSpec = { si: GLINT_POSTER, field: 'light', disc: null, minL: LIGHT_FLOOR, redSafe: true, glint: true, calm: true };
   return { flash: plan.flash, steps: Array.from({ length: GLINT_HOLD }, () => ({ ...glint })) };
 }
 
@@ -136,6 +141,22 @@ export function redSafe(color: string): string {
   const b = Math.max(b0, Math.floor(RED_B * r));
   while (isSaturatedRed(hex([r, g, b])) && g < 255) g++;
   return hex([r, g, b]);
+}
+
+// A saturated red cooled toward crimson instead: B raised, and R lowered to
+// hold the relative luminance, until the linear ratio is under 0.8. A moving
+// limb in it then trades no red flash for a general one (Reduce flashing's
+// palette, scene.ts). Anything else comes back as it was.
+export function redSafeCool(color: string): string {
+  const [r0, g, b0] = rgb(color);
+  if (!isSaturatedRed(color)) return hex([r0, g, b0]);
+  const L = 0.2126 * linear(r0) + 0.7152 * linear(g) + 0.0722 * linear(b0);
+  for (let b = b0 + 1; b <= 255; b++) {
+    const rl = (L - 0.7152 * linear(g) - 0.0722 * linear(b)) / 0.2126;
+    const r = Math.max(0, Math.min(255, Math.round(255 * (rl <= 0.0031308 ? 12.92 * rl : 1.055 * rl ** (1 / 2.4) - 0.055))));
+    if (!isSaturatedRed(hex([r, g, b]))) return hex([r, g, b]);
+  }
+  return hex([r0, g, 255]);
 }
 
 // The ramp a dark poster's emission is coloured through (WP10's light.ts takes

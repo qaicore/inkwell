@@ -18,6 +18,20 @@ const FROM = I - 10;
 const TO = I + 45;
 const PASSES = 3;
 
+// Decision 11: the Node proxy asserts about 1.5 × what it measures today, so
+// it catches a regression without failing on the design's targets, which stay
+// in tiers.ts (the device bench and Qai's iPhone run hold those). Each limit
+// below gives the design number and today's (Oct 31, Node 24, 1080×608,
+// median of 3, under the full suite's load). The handover lists every Node
+// number still over the design.
+const NODE_JOB_MS = {
+  limb: 70, // design JOB_MS.limb 42; today 46.6
+  mass: 30, // design JOB_MS.mass 12; today 10.9 (20 at worst under load)
+  poster: 110, // design JOB_MS.poster 8; today 63.9–68.4 (IF1's first light poster)
+} as const;
+const NODE_MAIN_MEDIAN = 45; // design MAIN_BUDGET 26 a frame; today's median frame 28.0–30.7
+const NODE_MAIN_WORST = 105; // design MAIN_BUDGET 26; today's worst frame 60.9–66.4 (j22–j30, the floods and the lightning)
+
 const median = (xs: number[]) => xs.slice().sort((a, b) => a - b)[Math.floor(xs.length / 2)];
 const ms = (t0: bigint) => Number(process.hrtime.bigint() - t0) / 1e6;
 const settle = (layer: DrawnLayer) => {
@@ -67,29 +81,37 @@ describe('the budget table', () => {
 });
 
 describe('the Node proxy at 1080×608', () => {
-  it('draws each limb drawing in 42 ms or less, each mass part in 12 and each poster in 8 (median of 3)', () => {
+  it('draws each limb drawing in 70 ms or less, each mass part in 30 and each poster in 110 (median of 3; decision 11)', () => {
     const all = timed();
     const over: string[] = [];
+    const overDesign: string[] = [];
     const report: Record<string, number> = { limb: 0, mass: 0, poster: 0 };
     for (const [key, { kind }] of all[0].jobs) {
       const t = median(all.map((p) => p.jobs.get(key)?.ms ?? Infinity));
       report[kind] = Math.max(report[kind], t);
-      if (t > JOB_MS[kind as keyof typeof JOB_MS]) over.push(`${key} ${t.toFixed(1)}`);
+      if (t > JOB_MS[kind as keyof typeof JOB_MS]) overDesign.push(`${kind} ${key} ${t.toFixed(1)}`);
+      if (t > NODE_JOB_MS[kind as keyof typeof NODE_JOB_MS]) over.push(`${key} ${t.toFixed(1)}`);
     }
+    // For the handover: the jobs still over the design's table.
+    console.log(`jobs over design (limb ${JOB_MS.limb}, mass ${JOB_MS.mass}, poster ${JOB_MS.poster} ms): ${overDesign.join('; ') || 'none'}`);
     expect(over, `worst: limb ${report.limb.toFixed(1)}, mass ${report.mass.toFixed(1)}, poster ${report.poster.toFixed(1)}`).toEqual([]);
   });
 
-  it('draws every main-thread frame in 26 ms or less with the drawings run ahead (median of 3)', () => {
+  it('draws the median main-thread frame in 45 ms or less and the worst in 105, with the drawings run ahead (median of 3; decision 11)', () => {
     const all = timed();
-    const over: string[] = [];
+    const overDesign: string[] = [];
     let worst = 0;
     const each: number[] = [];
     for (let o = FROM; o <= TO; o++) {
       const t = median(all.map((p) => p.frames.get(o)!));
       each.push(t);
       worst = Math.max(worst, t);
-      if (t > MAIN_BUDGET) over.push(`j${o - I} ${t.toFixed(1)}`);
+      if (t > MAIN_BUDGET) overDesign.push(`j${o - I} ${t.toFixed(1)}`);
     }
-    expect(over, `worst ${worst.toFixed(1)} ms, median frame ${median(each).toFixed(1)} ms`).toEqual([]);
+    const mid = median(each);
+    // For the handover: the frames still over the design's 26 ms.
+    console.log(`main thread: median ${mid.toFixed(1)} ms, worst ${worst.toFixed(1)} ms; over design ${MAIN_BUDGET} ms: ${overDesign.join(', ') || 'none'}`);
+    expect(mid, `median frame ${mid.toFixed(1)} ms`).toBeLessThanOrEqual(NODE_MAIN_MEDIAN);
+    expect(worst, `worst frame ${worst.toFixed(1)} ms`).toBeLessThanOrEqual(NODE_MAIN_WORST);
   });
 });

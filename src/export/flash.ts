@@ -678,3 +678,53 @@ function toByte(l: number): number {
   }
   return lo > 0 && l - LIN[lo - 1] < LIN[lo] - l ? lo - 1 : lo;
 }
+
+// ---- Reduce flashing's red guard ---------------------------------------------------------
+
+// Design §5's G4, laid on the whole finished frame: under Reduce flashing the
+// export raises the green of every pixel whose linear R/(R+G+B) is GUARD_RATIO
+// or more until it is under, so the video holds no saturated red and so can
+// make no red transition, whatever the footage under the effect shows (a warm
+// wood floor can: the hero clip's is at 0.8–0.9 round P, and the posters
+// covering it and the return were a red flash). The margin under 0.8 keeps
+// the check copies' rounding from lifting a pixel back over.
+export const GUARD_RATIO = 0.78;
+let guardG: Uint8Array | null = null; // per (r, b): the least green that is under GUARD_RATIO
+
+function guardTable(): Uint8Array {
+  if (guardG) return guardG;
+  const t = new Uint8Array(65536);
+  for (let r = 0; r < 256; r++) {
+    const R = LIN[r];
+    for (let b = 0; b < 256; b++) {
+      // R < GUARD·(R + G + B) ⟺ G > R·(1 − GUARD)/GUARD − B
+      const need = (R * (1 - GUARD_RATIO)) / GUARD_RATIO - LIN[b];
+      let lo = 0;
+      let hi = 255;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (LIN[mid] > need) hi = mid;
+        else lo = mid + 1;
+      }
+      t[(r << 8) | b] = lo;
+    }
+  }
+  return (guardG = t);
+}
+
+// In place over RGBA pixels; returns how many it changed.
+export function guardRed(data: Uint8ClampedArray | Uint8Array): number {
+  const t = guardTable();
+  let changed = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    const r = data[i];
+    const g = data[i + 1];
+    if (r <= g) continue;
+    const least = t[(r << 8) | data[i + 2]];
+    if (g < least) {
+      data[i + 1] = least;
+      changed++;
+    }
+  }
+  return changed;
+}

@@ -66,6 +66,7 @@ const RING_DARK = 0.45; // rings on dark fields: mix(ring, ink, 0.45), grey-brow
 const FRINGE = 0.006; // S: the cream fringe outside ink shapes
 const FRINGE_SHOWS = 12; // a fringe on plain paper this close to cream (largest channel gap, 0..255) can't be seen
 const DEG = Math.PI / 180;
+const CALM = 0.4; // G7 (gentle.ts): IF4's star, IF5's cross and IF7's comet at this × their width
 
 // ---- The recipes' numbers (design §5's table; impact.md §4 and §7.6) -------------------
 
@@ -196,7 +197,7 @@ export function posterTones(palette: Palette, spec: PosterSpec, flat = false): P
     orange: safe(ORANGE_BAND),
     tint: (s) => safe(R.tint(s, spec.minL)),
     fringe: light && !flat ? safe(CREAM) : null,
-    emit: !light && !flat ? safe(CREAM) : null,
+    emit: !light && !flat && !spec.calm ? safe(CREAM) : null,
   };
 }
 
@@ -634,10 +635,11 @@ function star(d: Draft) {
   // The big star: one tapering arm per screen direction, each its own scale.
   const a = d.r(1);
   const { reach: R, wide, core, coreReach, scale } = IF4.star;
+  const thin = d.spec.calm ? CALM : 1;
   const arms = [L.long, L.short, neg(L.long), neg(L.short)].map((e) => {
     const k = uniform(a, scale[0], scale[1]);
     const length = R * S * k ** 0.25;
-    return arm(G, e, length, (x) => k * S * (wide * Math.max(0, 1 - (x / (R * S)) ** 2) + core * Math.max(0, 1 - x / (coreReach * S))), STAR_SAMPLES, a);
+    return arm(G, e, length, (x) => thin * k * S * (wide * Math.max(0, 1 - (x / (R * S)) ** 2) + core * Math.max(0, 1 - x / (coreReach * S))), STAR_SAMPLES, a);
   });
   d.shapes.push(fill(Z.star, 'fg', arms, L));
   // The small stars at S1 and S2, with their broken rings.
@@ -700,7 +702,8 @@ function negativeCross(d: Draft) {
   const G = L.hud.G;
   d.centre = G;
   const { base, mid, midReach, core, coreReach } = IF5.cross;
-  const t = (x: number) => S * (base + mid * Math.max(0, 1 - x / (midReach * S)) + core * Math.max(0, 1 - x / (coreReach * S)));
+  const thin = d.spec.calm ? CALM : 1;
+  const t = (x: number) => thin * S * (base + mid * Math.max(0, 1 - x / (midReach * S)) + core * Math.max(0, 1 - x / (coreReach * S)));
   const arms = [L.long, L.short, neg(L.long), neg(L.short)].map((e) => {
     const length = reach(G, e, L.width, L.height) + 0.05 * S; // every arm runs off the frame
     const at = [0, 0.01, 0.025, 0.04, 0.05, 0.07, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5].map((x) => (x * S) / length).filter((f) => f < 1);
@@ -795,14 +798,15 @@ function negativeStrike(d: Draft) {
   const { head, half, teeth, saw, tilt } = IF7.comet;
   const axis = rotate(neg(L.u), uniform(r, -tilt, tilt)); // up the strike axis, toward the striker
   const end = (reach(L.P, axis, L.width, L.height) + 0.05 * S) / S;
+  const thin = d.spec.calm ? CALM : 1;
   const halfAt = (s: number) => {
-    if (s <= 0) return half[0][1] * Math.sqrt(Math.max(0, 1 - (s / head) ** 2));
+    if (s <= 0) return thin * half[0][1] * Math.sqrt(Math.max(0, 1 - (s / head) ** 2));
     for (let i = 1; i < half.length; i++) {
       const [s1, h1] = half[i];
       const [s0, h0] = half[i - 1];
-      if (s <= s1) return h0 + ((h1 - h0) * (s - s0)) / (s1 - s0);
+      if (s <= s1) return thin * (h0 + ((h1 - h0) * (s - s0)) / (s1 - s0));
     }
-    return half[half.length - 1][1];
+    return thin * half[half.length - 1][1];
   };
   // Teeth: past the head, each side's edge runs out from `saw` of the
   // envelope to all of it over a tooth, then snaps back in: points trailing
@@ -826,7 +830,7 @@ function negativeStrike(d: Draft) {
     return pts;
   };
   const comet = oriented([...side(1), ...side(-1).reverse().slice(1)]);
-  if (d.comp && !light) {
+  if (d.comp && !light && !d.spec.calm) {
     // The comp's orange band: the envelope, without its teeth, grown by half
     // the band under the comet, so it shows round it and in its notches.
     const envelope = (sign: number): Vec2[] => [...head1(sign), ...half.slice(1).filter(([s]) => s < end).map(([s, w]) => local(L.P, axis, s * S, sign * w * S)), local(L.P, axis, end * S, sign * halfAt(end) * S)];

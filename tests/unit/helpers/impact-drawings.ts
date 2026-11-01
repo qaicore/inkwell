@@ -9,6 +9,7 @@
 // the way the hero's crack 16 runs off the bottom.
 import type { Stroke, Vec2 } from '../../../src/types/effect.ts';
 import { rng, uniform } from '../../../src/impact/rng.ts';
+import { brushSizeForWidth } from '../../../src/impact/frames/figure.ts';
 
 // The hero's impact (Qai, Oct 29): contact on f84 at P, striking along d.
 export const HERO = { width: 1920, height: 1080, S: 1080, I: 84, P: [942, 1061] as Vec2, d: [-0.06, 0.998] as Vec2, seed: 84 } as const;
@@ -168,10 +169,12 @@ export function messyDrawings(seed: number = HERO.seed): Record<MessyKind, Impac
 
 // As effect strokes: ground-anchored and kept in frame px, rooted at their
 // first point (as the brush samples store ground strokes).
-export function asGroundStrokes(strokes: readonly ImpactStroke[], color: 0 | 1 | 2 = 2): Stroke[] {
+export function asGroundStrokes(strokes: readonly ImpactStroke[], color: 0 | 1 | 2 = 2, frameWidth: number | null = null): Stroke[] {
   return strokes.map((s): Stroke => ({
     id: s.id,
     color,
+    // With the frame's width, at the size its widths give (the app keeps each impact stroke's own).
+    ...(frameWidth ? { size: brushSizeForWidth(s.width, frameWidth) } : {}),
     kind: 'rigid',
     anchor: { type: 'ground', xy: [s.points[0][0], s.points[0][1]] },
     bodyAngle: 0,

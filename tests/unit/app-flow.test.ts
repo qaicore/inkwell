@@ -358,10 +358,13 @@ describe('effectOf with the flow', () => {
     expect(slam?.frames).toEqual({ count: 7, flash: 'safe' });
   });
 
-  it('stores the impact strokes in frame px on the ground, and sizes the limb brush from the drawn root', () => {
+  it('stores the impact strokes in frame px on the ground, at the size he drew them, and sizes the limb brush from the drawn root', () => {
     const effect = effectOf(strokes, motion(atPreview(60)));
     const ground = effect.strokes.find((s) => s.id === 11)!;
     expect(ground.anchor).toEqual({ type: 'ground', xy: [943, 1000] });
+    // Its own size, as px at 1080 wide (the brush's unit), so its crack renders as wide as he drew it.
+    expect(ground.size).toBeCloseTo((17 * 1080) / 1920, 2);
+    expect(effect.strokes.find((s) => s.id === 1)!.size).toBeUndefined();
     expect(ground.wobble).toBe(0);
     expect(ground.views.front.root).toEqual([943, 1000]);
     expect(ground.views.front.points[0][0]).toBeCloseTo(943, 6);

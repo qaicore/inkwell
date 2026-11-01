@@ -63,7 +63,7 @@ import type { BrushTarget, MakeScratch } from '../render/glow.ts';
 import { gradeAt, type Grade } from '../render/grade.ts';
 import { compositeGlows, createGlow, type Glow } from '../render/light.ts';
 import { drawLimb, keySwing, limbR0, limbTones, outlineClasses, pinnedSimilarity, type LimbTarget, type Matrix, type PlateLuma } from '../render/limb.ts';
-import { drawPops, emitPops, emitPulses, limbClock, pulsesAt, pulseTimeline, type PopTarget, type PulseTimeline } from '../render/pulse.ts';
+import { drawPops, emitPops, emitPulses, limbClock, pulsesAt, pulseTimeline, type PopTarget, type Pulses, type PulseTimeline } from '../render/pulse.ts';
 import { maskBox, type Affine, type StackTarget } from '../render/stack.ts';
 import { cameraAt } from './camera.ts';
 import { c1, drawingStart, jEnd, limbDrawingAt, phaseAt, type LimbDrawing, type Phase } from './clock.ts';
@@ -81,11 +81,11 @@ import { shapes as dustShapes } from './aftermath/dust.ts';
 import { drawingAge, shapes as fireShapes, massClock, paint, type MassContext, type MassDrawing } from './aftermath/fire.ts';
 import { emitLightning, lightningShapes, paintLightning, ribbons, type LightningPlan } from './aftermath/lightning.ts';
 import { paintParticles, particles, particleShapes, type ParticleFrame } from './aftermath/particles.ts';
-import { boxOf, emitFlood, flashShapes, floodShapes, groupClock, krSpan, paintFlash, paintFlood, paintVeil, veilShapes, type Box, type FloodDrawing, type WashOptions } from './aftermath/washes.ts';
+import { boxOf, emitFlood, flashShapes, floodShapes, groupClock, krSpan, liftCap, paintFlash, paintFlood, paintVeil, veilShapes, type Box, type FloodDrawing, type WashOptions } from './aftermath/washes.ts';
 import { shapes as wispShapes, wispKind, wispOpacity } from './aftermath/wisps.ts';
 import { drawPoster } from './frames/draw.ts';
 import { drawOnEnd, posterFigure, traceMask, type PosterTarget } from './frames/figure.ts';
-import { posterAt, posterHotRamp, posterPlan, type PosterPlan, type PosterSpec } from './frames/gentle.ts';
+import { posterAt, posterHotRamp, posterPlan, redSafeCool, type PosterPlan, type PosterSpec } from './frames/gentle.ts';
 import { posterLayout, type PosterLayout } from './frames/layout.ts';
 
 const FPS = 30;
@@ -105,6 +105,30 @@ const BURST_PAD = 4; // px round the strike's bursts, past their widest
 const MEMO = 32; // tube sets and lightning plans kept
 const EMERGING: readonly (BrushId | undefined)[] = ['electric', 'limb']; // what an emerge with no stroke list covers (motion/moments.ts)
 const IDENTITY: Matrix = [1, 0, 0, 1, 0, 0];
+// Reduce flashing (decision 12): the limbs keep a steady charge, with no
+// pulses running down them, no pops and the arcs' glow held at this gain
+// instead of flickering 0.6–1.0, so the cord's own light never flashes.
+const GENTLE_ARC = 0;
+const GENTLE_LIMB_GLOW = 0.25; // the limbs' own steady glow (the root bursts and the cord), × this
+// ... and the lightning is one steady draw from the cracks alone, the lead
+// band's ribbons held in place to the fade with no flicker back (lightning.ts
+// steady), its glow at this share and its ribbons at GENTLE_BOLT.
+const GENTLE_BOLT_GLOW = 0.35;
+const GENTLE_BOLT = 0.6; // the ribbons' own opacity
+// ... and the 2s masses lie at these opacities, the cap on their swing: the
+// smoke cluster, the dust, the debris and the sparks at GENTLE_MASS, the fire's
+// flare at GENTLE_FIRE. Over a mid-grey plate the smoke's darkest line then
+// moves L by about 0.10, and what a field gathers after the return at j 9 (the
+// flare leaving, the smoke standing up, the limbs settling) stays under 25 %
+// until the washes. The grade holds still from the return (grade.ts, still)
+// and the floods have no dark edge (washes.ts), so neither tips it late.
+const GENTLE_MASS = 0.3;
+const GENTLE_FIRE = 0.6;
+// The ladder's last step (no flash elements) also stills what is left: no
+// lightning, and every mass, the fire and the sparks at this opacity.
+const STILL_MASS = 0.25;
+const QUIET: Pulses = { spans: [], pops: [] };
+const FIRE_CLEAR = 0.6; // U round P: no arc glow there while the burst shows
 
 // ---- Types ---------------------------------------------------------------------------
 
@@ -278,7 +302,10 @@ export function createImpactScene(effect: Effect, clip: ImpactClip, opts: SceneO
     S,
     cuts,
     dps,
-    palette: [effect.palette[0], effect.palette[1], effect.palette[2]],
+    // Reduce flashing cools a saturated red palette toward crimson (G4 for
+    // the limbs, redSafeCool): red limbs whipping through a turn flash red on
+    // their own, which no ladder step removes.
+    palette: (slam?.frames?.flash === 'safe' ? effect.palette.map(redSafeCool) : [...effect.palette]) as Palette,
     slam,
     I,
     base: null,
@@ -324,7 +351,9 @@ function slamContext(rig: Rig, slam: Moment, I: number, crackIds: readonly numbe
     const st = byId.get(id);
     if (!st || st.views.front.points.length < 2) return [];
     const points = strokePx(rig, st, I).map((p): Vec2 => [p[0] * s, p[1] * s]);
-    return [{ id, points, pressure: [...st.views.front.pressure], brush: brushSettings(effect, st.brush ?? 'ink'), color: st.color, fromP: drawOnEnd(points, P, S) }];
+    // Each crack keeps the size it was drawn at (the effect's brush size when it has none).
+    const brush = brushSettings(effect, st.brush ?? 'ink');
+    return [{ id, points, pressure: [...st.views.front.pressure], brush: st.size ? { ...brush, size: st.size } : brush, color: st.color, fromP: drawOnEnd(points, P, S) }];
   });
   const at = (f: number) => Math.min(Math.max(0, clip.frames - 1), Math.max(0, f));
   return {
@@ -796,6 +825,8 @@ function sceneOf(rig: Rig, step: number): ImpactScene {
   const { W, H, S, s, I, clip } = rig;
   const base = rig.base;
   const degrade = degradeAt(step, base?.flash ?? 'full');
+  const gentle = base?.flash === 'safe';
+  const still = gentle && degrade.posters === 'none'; // the ladder's step 7
   const ictx: ImpactContext | null = base ? { ...base, posters: base.posters && degrade.posters === 'seven' } : null;
   const ectx: MassContext | null = ictx ? { ...ictx, dps: rig.dps } : null;
   const washOpts: WashOptions = { washes: degrade.washes, noFlash: degrade.noFlash };
@@ -853,6 +884,8 @@ function sceneOf(rig: Rig, step: number): ImpactScene {
     const plate = clip.luma?.(t) ?? null;
     const luma: PlateLuma | null = plate ? (x, y) => plate(x / s, y / s) : null;
     const mask = clip.personMask(Math.min(Math.max(0, clip.frames - 1), t));
+    const fireOn = ectx !== null && (massClock(ectx, t)?.g ?? Infinity) <= 1;
+    const clear = FIRE_CLEAR * (ictx?.frame.U ?? 0);
     const box = limbBox(tubes, P, S, W, H);
     const steady = recordingSink();
     const arcs: DrawnGlow[] = [];
@@ -867,9 +900,11 @@ function sceneOf(rig: Rig, step: number): ImpactScene {
       const age = info.emergeK === null ? undefined : k - info.emergeK;
       const phase = arcPhase(age ?? null, j);
       if (!phase) continue;
-      const { spans, pops } = pulsesAt(tube.id, k, info.timeline);
+      const { spans, pops } = gentle ? QUIET : pulsesAt(tube.id, k, info.timeline);
       const outline = luma ? outlineClasses(tube, luma, { S, palette: rig.palette, settings: rig.settings }) : null;
-      const { far, near } = sheathArcs(tube, k, phase, tube.id, { S, P: P ?? undefined, idle: rig.settings.arcs, lift: rig.settings.arcLift, fewer: rig.cuts.fewerArcs });
+      // While the burst shows (A0–2) the tip arcs wait for A3, and no arc
+      // glows within FIRE_CLEAR U of P, so the flame reads (judge round 1).
+      const { far, near } = sheathArcs(tube, k, phase, tube.id, { S, P: P && !fireOn ? P : undefined, idle: rig.settings.arcs, lift: rig.settings.arcLift, fewer: rig.cuts.fewerArcs });
       const side = (runs: ArcRun[], inFront: boolean) => runs.filter((run) => run.front === inFront);
       if (b && f) {
         drawArcs(b, side(far, false), tones, newPath);
@@ -882,7 +917,7 @@ function sceneOf(rig: Rig, step: number): ImpactScene {
       emitPulses(steady, tube, spans, 1, pulseTones);
       emitPops(steady, tube, pops, 1, tones);
       const own = recordingSink();
-      emitArcs(own, [...far, ...near], 1, tones);
+      emitArcs(own, fireOn && P ? [...far, ...near].filter((run) => run.points.every((q) => Math.hypot(q[0] - P[0], q[1] - P[1]) > clear)) : [...far, ...near], 1, tones);
       if (own.calls.length > 0) arcs.push({ id: tube.id, calls: own.calls });
     }
     back?.ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -907,12 +942,20 @@ function sceneOf(rig: Rig, step: number): ImpactScene {
     if (cc) out.push(massSpec('cracks', 'cracks', `cracks:${cc.fraction.toFixed(4)}:${cc.cool.toFixed(5)}`, cc.alpha, () => crackShapes(ectx, c), W, H));
     const mc = massClock(ectx, c);
     if (!mc || !(mc.alpha > 0)) return out;
-    if (mc.g <= 1) out.push(massSpec('fire', 'fire', `fire:${mc.g}:${mc.start}`, mc.alpha, () => fireShapes(ectx, c), W, H));
-    else out.push(massSpec('cluster', 'fire', `cluster:${mc.g}:${mc.start}`, mc.alpha, () => clusterShapes(ectx, c), W, H));
-    if (mc.g >= 1) out.push(massSpec('dust', 'dust', `dust:${mc.g}:${mc.start}`, mc.alpha, () => dustShapes(ectx, c), W, H));
+    const calm = still ? STILL_MASS : gentle ? GENTLE_MASS : 1;
+    const flare = still ? STILL_MASS : gentle ? GENTLE_FIRE : 1;
+    // The burst and the cluster stand in front of him, face-cut like the veil
+    // (judge round 1: he crouches over P and hid them); the dust stays behind.
+    // Reduce flashing keeps them behind him at his size (fire.ts massFrame).
+    const front: StackSlot = gentle ? 'fire' : 'fx';
+    if (mc.g <= 1) out.push(massSpec('fire', front, `fire:${mc.g}:${mc.start}`, flare * mc.alpha, () => fireShapes(ectx, c), W, H));
+    else out.push(massSpec('cluster', front, `cluster:${mc.g}:${mc.start}`, calm * mc.alpha, () => clusterShapes(ectx, c), W, H));
+    if (mc.g >= 1) out.push(massSpec('dust', 'dust', `dust:${mc.g}:${mc.start}`, calm * mc.alpha, () => dustShapes(ectx, c), W, H));
     const age = drawingAge(ectx, c);
-    if (wispKind(age.A)) out.push(massSpec('wisps', 'fx', `wisp:${age.k}:${age.A}:${age.start}`, wispOpacity(age.A) * mc.alpha, () => wispShapes(ectx, c), W, H));
-    out.push(massSpec('debris', 'fx', `debris:${mc.g}:${mc.start}:${chunkDrawing(ectx, c)}`, mc.alpha, () => debrisShapes(ectx, c), W, H));
+    // Reduce flashing holds the wisps under +0.08 L, like the veil (washes.ts's liftCap).
+    const wispAlpha = gentle ? Math.min(wispOpacity(age.A), liftCap(rig.palette[1])) : wispOpacity(age.A);
+    if (wispKind(age.A)) out.push(massSpec('wisps', 'fx', `wisp:${age.k}:${age.A}:${age.start}`, wispAlpha * mc.alpha, () => wispShapes(ectx, c), W, H));
+    out.push(massSpec('debris', 'fx', `debris:${mc.g}:${mc.start}:${chunkDrawing(ectx, c)}`, calm * mc.alpha, () => debrisShapes(ectx, c), W, H));
     const v = veilShapes(ectx, c, washOpts);
     if (v) {
       out.push({ name: 'veil', slot: 'fx', key: `veil:${c}`, alpha: 1, box: () => boxOf([v.rings[0]], PART_PAD, W, H), paint: (ctx, mk) => paintVeil(ctx, mk, v, ectx.personMask(c), W, H) });
@@ -925,7 +968,7 @@ function sceneOf(rig: Rig, step: number): ImpactScene {
         name: 'particles',
         slot: 'fx',
         key: `particles:${gc.g}:${gc.start}:${rig.cuts.halfParticles ? 'half' : 'all'}`,
-        alpha: pf.alpha,
+        alpha: calm * pf.alpha,
         box: () => {
           const sh = particleShapes(ectx, pf);
           return boxOf([...sh.embers.flatMap((e) => e.polys), ...sh.rings, ...sh.sparks], PART_PAD, W, H);
@@ -977,18 +1020,36 @@ function sceneOf(rig: Rig, step: number): ImpactScene {
     if (!ictx || !ectx || I === null) return null;
     const j = c - I;
     if (j < 9 || j > ictx.jEnd) return null;
-    const jl = rig.cuts.lightning2s ? Math.max(drawingStart(drawingIndex(c, rig.dps), rig.dps), I + 9) - I : krSpan(j).first;
+    if (still) return null;
+    const jl = rig.cuts.lightning2s || gentle ? Math.max(drawingStart(drawingIndex(c, rig.dps), rig.dps), I + 9) - I : krSpan(j).first;
     const memo = plans.get(jl);
     if (memo !== undefined) return memo;
     const cl = Math.min(clip.frames - 1, Math.max(0, I + jl));
     const sources: Vec2[][] = [];
-    const ol = clusterOutline(ectx, cl);
+    // Reduce flashing keeps to the still sources, the cracks and the floor
+    // arcs, and draws steady: the ribbons crackle in place (GENTLE_BOLT_GLOW).
+    const ol = gentle ? null : clusterOutline(ectx, cl);
     if (ol && ol.length >= 2) sources.push(ol);
     for (const cr of ictx.cracks) sources.push(cr.points);
-    const mask = clip.personMask(cl);
+    const mask = gentle ? null : clip.personMask(cl);
     if (mask) sources.push(...maskEdge(rig, ictx, mask));
-    for (const p of liftOf(rig).frames[cl]?.placed ?? []) sources.push(p.points.map((q): Vec2 => [q[0] * s, q[1] * s]));
-    const lp = ribbons(ictx, jl, sources, { ...washOpts, maxRibbons: rig.cuts.maxRibbons });
+    // The limbs only where they reach P (judge 1): runs of their points within
+    // EDGE_REACH U of it, so the lightning crawls off the hit, not along them.
+    const reach = EDGE_REACH * ictx.frame.U;
+    const P = ictx.frame.P;
+    for (const p of gentle ? [] : liftOf(rig).frames[cl]?.placed ?? []) {
+      let run: Vec2[] = [];
+      for (const q of p.points) {
+        const v: Vec2 = [q[0] * s, q[1] * s];
+        if (Math.hypot(v[0] - P[0], v[1] - P[1]) <= reach) run.push(v);
+        else {
+          if (run.length >= 2) sources.push(run);
+          run = [];
+        }
+      }
+      if (run.length >= 2) sources.push(run);
+    }
+    const lp = ribbons(ictx, jl, sources, { ...washOpts, maxRibbons: rig.cuts.maxRibbons, steady: gentle });
     if (plans.size >= MEMO) plans.delete(plans.keys().next().value as number);
     plans.set(jl, lp);
     return lp;
@@ -1012,7 +1073,7 @@ function sceneOf(rig: Rig, step: number): ImpactScene {
     const first = plan ? plan.steps.findIndex((st) => st !== null && st.si === spec.si) : 0;
     return clipOf((I ?? 0) + Math.max(0, first));
   };
-  const posterKey = (spec: PosterSpec, fig: number) => `poster:${spec.si}:${spec.field}:${spec.disc}:${spec.minL}:${spec.redSafe ? 1 : 0}:${spec.glint ? 1 : 0}:${fig}`;
+  const posterKey = (spec: PosterSpec, fig: number) => `poster:${spec.si}:${spec.field}:${spec.disc}:${spec.minL}:${spec.redSafe ? 1 : 0}:${spec.glint ? 1 : 0}:${spec.calm ? 1 : 0}:${fig}`;
 
   // The poster, baked with its glow into a frame-sized canvas (the dark
   // fields' hot ramp; the light ones have none).
@@ -1139,8 +1200,8 @@ function sceneOf(rig: Rig, step: number): ImpactScene {
     const lp = lightningPlan(c);
     if (lp) {
       const part = lightningPart(lp);
-      if (part.image) add('fx', 'lightning', part.key, lp.gain, 'energy', blit(part));
-      world.push({ name: 'lightning', content: part.key, calls: () => part.glow?.[0]?.calls ?? [], gain: 1 });
+      if (part.image) add('fx', 'lightning', part.key, lp.gain, 'energy', blit(part, gentle ? GENTLE_BOLT : 1));
+      world.push({ name: 'lightning', content: part.key, calls: () => part.glow?.[0]?.calls ?? [], gain: gentle ? GENTLE_BOLT_GLOW : 1 });
       gains.lightning = lp.gain;
     }
     for (const sp of specs) {
@@ -1159,7 +1220,7 @@ function sceneOf(rig: Rig, step: number): ImpactScene {
       const { part, T } = limbGlow;
       const k1 = c1(c, I);
       const own = part.glow ?? [];
-      const arcGains = own.map((g) => (g.id === null ? 1 : arcFlicker(g.id, k1)));
+      const arcGains = own.map((g) => (g.id === null ? (gentle ? GENTLE_LIMB_GLOW : 1) : gentle ? GENTLE_ARC : arcFlicker(g.id, k1)));
       own.forEach((g, i) => {
         if (g.id !== null) gains[`arc:${g.id}`] = arcGains[i];
       });
@@ -1185,7 +1246,7 @@ function sceneOf(rig: Rig, step: number): ImpactScene {
     if (ictx && j !== null) {
       const cam = cameraAt(j, ictx);
       camera = { a: cam.a, b: cam.b, c: cam.c, d: cam.d, e: cam.e, f: cam.f };
-      grade = gradeAt(j, ictx);
+      grade = gradeAt(j, ictx, gentle);
       if (degrade.calm && j >= -8 && j <= -1) grade = { ...grade, lift: 1 };
     }
     if (now) times.layers = now() - t0;

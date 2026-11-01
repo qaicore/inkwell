@@ -138,7 +138,8 @@ export function animateStrokes(strokes: Stroke[], m: ClipMotion): DrawnStroke[][
 // The effect JSON for the app's strokes (SPEC §7): each stored in torso
 // space around its root, as it sat on the frame it was drawn on, and the
 // ground strokes in frame px; with the flow's moments and turn when it has
-// them, and the limb brush sized by the first limb's size.
+// them, and the limb brush sized by the first limb's size. Each ground (impact)
+// stroke keeps its own drawn size, so its crack renders as wide as he drew it.
 export function effectOf(strokes: Stroke[], m: ClipMotion, anchors = new Map(strokes.map((stroke) => [stroke.id, anchorFor(stroke, m)])), overrides: Effect['overrides'] = {}): Effect {
   const limb = strokes.find((stroke) => stroke.brush === 'limb');
   return {
@@ -147,7 +148,7 @@ export function effectOf(strokes: Stroke[], m: ClipMotion, anchors = new Map(str
     ...(limb ? { brushes: { limb: { ...brushSettings(INK_SETTINGS, 'limb'), size: limbBrushSize(limb.size, Math.min(m.width, m.height)) } } } : {}),
     palette: PALETTE,
     timing: { drawingsPerSecond: m.timing.dps },
-    strokes: strokes.map((stroke) => toEffectStroke(stroke, anchors.get(stroke.id)!(stroke.frame), m.wobble)),
+    strokes: strokes.map((stroke) => toEffectStroke(stroke, anchors.get(stroke.id)!(stroke.frame), m.wobble, m.width)),
     ...(m.moments && m.moments.length > 0 ? { moments: m.moments } : {}),
     ...(m.turn ? { turn: m.turn } : {}),
     overrides,
@@ -221,13 +222,16 @@ function anchorFor(stroke: Stroke, m: ClipMotion): (f: number) => TorsoTransform
   return (f) => (poses ? anchorTransform(poses[f], unit) : still);
 }
 
-function toEffectStroke(stroke: Stroke, at: TorsoTransform, wobble: boolean): EffectStroke {
+// A stroke's size is its brush size in clip px; the effect keeps a ground
+// stroke's as px at 1080 wide (the brush's unit), `width` the clip's.
+function toEffectStroke(stroke: Stroke, at: TorsoTransform, wobble: boolean, width: number): EffectStroke {
   const { points, pressure } = resampleStroke(stroke.points);
   const ground = isGround(stroke);
   return {
     id: stroke.id,
     color: Math.max(0, PALETTE.indexOf(stroke.color)) as 0 | 1 | 2,
     brush: stroke.brush,
+    ...(ground && stroke.size > 0 ? { size: Math.round(((stroke.size * 1080) / width) * 100) / 100 } : {}),
     kind: stroke.kind,
     anchor: stroke.anchor ?? { type: 'point', time: stroke.frame / 30, xy: [stroke.points[0][0], stroke.points[0][1]] },
     bodyAngle: stroke.bodyAngle ?? 0,

@@ -40,6 +40,7 @@ export interface SceneSetup {
   count?: 0 | 7; // the impact frames; missing = 7
   tap?: boolean; // the turn tapped at f60; missing = true
   portrait?: boolean;
+  unit?: number; // his torso U, clip px; missing = UNIT (the hero's is about 380 at 1080)
 }
 
 export interface SceneClip {
@@ -50,7 +51,7 @@ export interface SceneClip {
 }
 
 export function sceneClip(setup: SceneSetup = {}): SceneClip {
-  const { flash = 'full', seconds = 1.5, count = 7, tap = true, portrait = false } = setup;
+  const { flash = 'full', seconds = 1.5, count = 7, tap = true, portrait = false, unit = UNIT } = setup;
   const width = portrait ? HERO.height : HERO.width;
   const height = portrait ? HERO.width : HERO.height;
   const S = Math.min(width, height);
@@ -84,7 +85,7 @@ export function sceneClip(setup: SceneSetup = {}): SceneClip {
       views: { front: { points, pressure: points.map((_, k) => 1 - (0.6 * k) / n), root: points[0], layer: 'behind' } },
     };
   });
-  const cracks = asGroundStrokes(HERO_CRACKS.map((c) => ({ ...c, points: c.points.map((p): Vec2 => [p[0] + shift[0], p[1] + shift[1]]) })));
+  const cracks = asGroundStrokes(HERO_CRACKS.map((c) => ({ ...c, points: c.points.map((p): Vec2 => [p[0] + shift[0], p[1] + shift[1]]) })), 2, width);
   const slam: Moment = {
     kind: 'slam',
     at: HERO.I / 30,
@@ -124,7 +125,7 @@ export function sceneClip(setup: SceneSetup = {}): SceneClip {
     faceMask: () => face,
     poses,
     bodies: null,
-    units: Array.from({ length: FRAMES }, () => UNIT),
+    units: Array.from({ length: FRAMES }, () => unit),
     luma: () => () => PLATE,
   };
   return { effect, clip, P, d };

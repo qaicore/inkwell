@@ -21,7 +21,11 @@
 //     hue, lift and pool, and B× = 1 − 0.34·g/8;
 //   - hold, j 32..J_end − 14: g8's values;
 //   - decay, the last 14 frames: linear to identity, exactly at J_end, with
-//     the same decayAlpha every decaying layer uses.
+//     the same decayAlpha every decaying layer uses;
+//   - still (Reduce flashing): from j 9 the aftermath holds g8's values up to
+//     the decay, so the plate does not drift group by group. That drift (the
+//     pool round P dims by about 0.06 L over j 9..31) tips pixels a flood or
+//     the flare left just short of 0.10 into transitions off the flash plan.
 import type { ImpactContext, Vec2 } from '../impact/contracts.ts';
 import { decayAlpha, kr, massGroup } from '../impact/clock.ts';
 import { hex, rgb } from './geometry.ts';
@@ -98,11 +102,12 @@ const lightOf = (h: number, s = LIGHT_SAT) => toHex(hsvRgb(h, s, 1));
 
 // ---- The timeline -----------------------------------------------------------------------
 
-// The grade on frame j (frames since contact; null without a slam).
-export function gradeAt(j: number | null, ictx: GradeContext): Grade {
+// The grade on frame j (frames since contact; null without a slam); `still`
+// holds the aftermath at g8's values (Reduce flashing).
+export function gradeAt(j: number | null, ictx: GradeContext, still = false): Grade {
   if (j === null || j < -8 || j >= ictx.jEnd) return NEUTRAL_GRADE;
   if (j <= 8) return strikeGrade(j, ictx);
-  const base = aftermathGrade(j <= 31 ? groupOf(j) : 8, ictx);
+  const base = aftermathGrade(j <= 31 && !still ? groupOf(j) : 8, ictx);
   return fade(base, decayAlpha(j, ictx.jEnd));
 }
 

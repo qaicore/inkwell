@@ -89,14 +89,24 @@ export interface MassFrame {
 
 const MAX_LEAN = (20 * Math.PI) / 180;
 
-export function massFrame(ictx: ImpactContext): MassFrame {
+// The burst, the cluster and the dust are sized at least as the reference's
+// are against its frame (judge round 1): U × max(scale, BURST_SIGMA/σ), σ =
+// U/S, so a figure who fills the frame doesn't shrink the destruction round
+// him. The washes, the lightning and the rest keep U × scale, and so does
+// Reduce flashing (decision 12): there the burst stays his size, behind him,
+// so its flare leaving moves no 10° field on its own.
+export const BURST_SIGMA = 0.85;
+
+export function massFrame(ictx: ImpactContext, grown = false): MassFrame {
   const { P, n, t } = floorFrame(ictx.frame.P, ictx.floor);
+  const sigma = ictx.frame.U / ictx.frame.S;
+  const scale = grown && sigma > 0 && ictx.flash !== 'safe' ? Math.max(ictx.aftermath.scale, BURST_SIGMA / sigma) : ictx.aftermath.scale;
   const u = ictx.frame.u;
   const along = u[0] * t[0] + u[1] * t[1];
   const side: 1 | -1 = along >= 0 ? 1 : -1;
   const down = Math.abs(u[0] * n[0] + u[1] * n[1]);
   const beta = Math.max(-MAX_LEAN, Math.min(MAX_LEAN, Math.atan2(Math.abs(along), Math.max(down, 1e-9))));
-  return { P, n, t: [side * t[0], side * t[1]], side, U: ictx.frame.U * ictx.aftermath.scale, beta };
+  return { P, n, t: [side * t[0], side * t[1]], side, U: ictx.frame.U * scale, beta };
 }
 
 // A floor-frame point to frame px, at `unit` px per mass unit.
@@ -520,7 +530,6 @@ const FIRE_CENTROID = [0.14, 0.29];
 const FIRE_LINE = 0.0065; // U: the olive-brown ink line, 3–5 px on the reference
 const STEPS = 120; // radius samples across the fan
 const BANDS = [0.45, 0.38, 0.31, 0.23]; // U: the gradient's cel steps, out to in, saturated to pale
-const BUBBLES = [6, 41]; // amber bubbles: A0, A1–2
 
 interface Tongue {
   phi: number; // radians from n̂
@@ -536,17 +545,21 @@ export interface FireStar {
   scale: number; // what the raw radii were scaled by to hit the area
 }
 
+// A tongue's profile. Neighbouring tongues overlap (A1–2: 16–19° either
+// side, 24–33° apart), so the rim between them never drops to the core: one
+// billowing silhouette, not petals (judge round 1). The side tongues are a
+// little shorter to keep the measured centroid with the wider ones.
 const bump = (d: number, w: number) => (Math.abs(d) >= w ? 0 : Math.cos((Math.abs(d) / w) * (Math.PI / 2)) ** 0.7);
 
 function tonguesFor(burst: boolean, r: Rng): Tongue[] {
   if (!burst) {
-    // A0, the crown: tongues at −74° (0.42 U) and +8° (0.54 U), and 6–10 thin petals of 0.25–0.54 U.
+    // A0, the crown: tongues at −74° (0.42 U) and +8° (0.54 U), and 6–10 smaller billows of 0.25–0.54 U.
     const out: Tongue[] = [
-      { phi: uniform(r, -76, -72) * DEG, reach: uniform(r, 0.4, 0.44), width: uniform(r, 9, 11) * DEG, lick: true },
-      { phi: uniform(r, 6, 10) * DEG, reach: uniform(r, 0.52, 0.56), width: uniform(r, 8, 10) * DEG, lick: true },
+      { phi: uniform(r, -76, -72) * DEG, reach: uniform(r, 0.4, 0.44), width: uniform(r, 18, 22) * DEG, lick: true },
+      { phi: uniform(r, 6, 10) * DEG, reach: uniform(r, 0.52, 0.56), width: uniform(r, 16, 20) * DEG, lick: true },
     ];
     for (let i = int(r, 6, 10); i > 0; i--) {
-      out.push({ phi: uniform(r, -78, 60) * DEG, reach: 0.25 + 0.29 * r() ** 2, width: uniform(r, 4, 7) * DEG, lick: false });
+      out.push({ phi: uniform(r, -78, 60) * DEG, reach: 0.25 + 0.29 * r() ** 2, width: uniform(r, 12, 16) * DEG, lick: false });
     }
     return out;
   }
@@ -556,18 +569,28 @@ function tonguesFor(burst: boolean, r: Rng): Tongue[] {
   const c = Math.max(-80, a - uniform(r, 24, 33));
   const d = Math.max(-80, c - uniform(r, 24, 33));
   const e = Math.min(60, b + uniform(r, 24, 33));
-  const tongue = (phi: number, reach: number): Tongue => ({ phi: phi * DEG, reach, width: uniform(r, 12, 15) * DEG, lick: true });
-  return [tongue(d, uniform(r, 0.5, 0.53)), tongue(c, uniform(r, 0.5, 0.53)), tongue(a, uniform(r, 0.59, 0.62)), tongue(b, uniform(r, 0.6, 0.62)), tongue(e, uniform(r, 0.53, 0.56))];
+  const tongue = (phi: number, reach: number): Tongue => ({ phi: phi * DEG, reach, width: uniform(r, 16, 19) * DEG, lick: true });
+  return [tongue(d, uniform(r, 0.44, 0.47)), tongue(c, uniform(r, 0.46, 0.49)), tongue(a, uniform(r, 0.59, 0.62)), tongue(b, uniform(r, 0.6, 0.62)), tongue(e, uniform(r, 0.47, 0.5))];
 }
 
 // The star's raw radii for a core of `core` U (a low, wide crown on A0).
 function rawRadii(phis: number[], tongues: Tongue[], core: number, burst: boolean): number[] {
+  // Between two neighbouring tongues the rim keeps WEB of the shorter one's
+  // reach, so the tongues read as lobes of one billow (judge round 1).
+  const byPhi = [...tongues].sort((a, b) => a.phi - b.phi);
   return phis.map((phi) => {
     let r = core * (burst ? 1 : 0.5 + 0.5 * Math.abs(Math.sin(phi)));
     for (const tg of tongues) r = Math.max(r, tg.reach * bump(phi - tg.phi, tg.width));
+    for (let i = 1; i < byPhi.length; i++) {
+      const a = byPhi[i - 1];
+      const b = byPhi[i];
+      if (phi > a.phi && phi < b.phi && b.phi - a.phi < WEB_GAP) r = Math.max(r, WEB * Math.min(a.reach, b.reach));
+    }
     return r;
   });
 }
+const WEB = 0.7; // the rim between neighbouring tongues, × the shorter one's reach
+const WEB_GAP = 40 * DEG; // tongues further apart than this aren't joined
 
 // Area and n-centroid of the star r(φ) around P, in closed form per sample.
 function starMoments(phis: number[], radii: number[]): { area: number; n: number } {
@@ -631,7 +654,7 @@ export function shapes(ictx: MassContext, f: number): FireDrawing | null {
   const clock = massClock(ictx, f);
   if (!clock || clock.g > 1) return null;
   const g = clock.g as 0 | 1;
-  const fr = massFrame(ictx);
+  const fr = massFrame(ictx, true);
   const unit = fr.U * clock.zoom;
   const star = fireStar(ictx.seed, g);
   const px = (pts: readonly FloorPt[]) => pts.map((p) => toFrame(fr, unit, p));
@@ -643,31 +666,8 @@ export function shapes(ictx: MassContext, f: number): FireDrawing | null {
   BANDS.forEach((cap, i) => {
     out.push({ role: 'band', points: px(starPolygon(star, 1, 0, cap)), color: mixHex(FIRE.outer, FIRE.core, (i + 1) / BANDS.length) });
   });
-  const r = rng(ictx.seed, 'fire', g, 1);
-  star.tongues.forEach((tg, i) => {
-    if (tg.lick) out.push({ role: 'lick', points: px(lickPolygon(star, tg, r)), color: FIRE.licks[i % 2] });
-  });
-  // Amber bubbles, each wholly inside the star (so inside the fan, over the
-  // floor line): a draw that pokes out is drawn again nearer the middle, and
-  // one that never fits is left out.
-  const bubbles = BUBBLES[g];
-  for (let i = 0; i < bubbles; i++) {
-    const at = uniform(r, 0.02, 0.98);
-    const deep = uniform(r, 0.2, 0.82);
-    const size = uniform(r, 0.008, 0.02);
-    const stretch = uniform(r, 1.3, 1.8);
-    for (let pull = 0; pull < 8; pull++) {
-      const k = Math.round((0.5 + (at - 0.5) * (1 - pull / 7)) * STEPS);
-      const phi = star.phis[k];
-      const rho = star.radii[k] * deep * (1 - pull / 14);
-      const c: FloorPt = [rho * Math.cos(phi), rho * Math.sin(phi)];
-      const ring = ellipsePts(c, size + 0.004, 12, (size * stretch + 0.004) / (size + 0.004), phi);
-      if (!ring.every((p) => insideStar(star, p))) continue;
-      out.push({ role: 'bubble-ring', points: px(ring), color: lineColor, round: true });
-      out.push({ role: 'bubble', points: px(ellipsePts(c, size, 12, stretch, phi)), color: FIRE.amber, round: true });
-      break;
-    }
-  }
+  // One silhouette (judge round 1): the star and its cel bands only, with no
+  // licks or amber bubbles on it to read as loose petals and coins.
   return { layer: 'behind', key: `fire:${massKey(ictx)}:${g}:${unit.toFixed(3)}`, alpha: clock.alpha, shapes: out, g, A: clock.A, unit, star };
 }
 
@@ -680,32 +680,6 @@ export function insideStar(star: FireStar, [n, t]: FloorPt): boolean {
   const k = Math.min(STEPS - 1, Math.floor(u));
   const rim = star.radii[k] + (star.radii[k + 1] - star.radii[k]) * (u - k);
   return Math.hypot(n, t) <= rim;
-}
-
-// A tongue's lick: the star's rim over the tongue's tip, down to a saw-tooth
-// inner edge 22–30 % of the reach in, with 3–6 teeth; both edges keep to the
-// fan (a tongue near its end is cut there).
-function lickPolygon(star: FireStar, tg: Tongue, r: Rng): FloorPt[] {
-  const depth = uniform(r, 0.22, 0.3);
-  const teeth = int(r, 3, 6);
-  const span = tg.width * Math.acos(Math.min(1, (1 - depth) ** (1 / 0.7))) * (2 / Math.PI);
-  const ks: number[] = [];
-  star.phis.forEach((phi, k) => {
-    if (Math.abs(phi - tg.phi) <= span) ks.push(k);
-  });
-  if (ks.length < 2) return [];
-  const outer: FloorPt[] = ks.map((k) => [star.radii[k] * Math.cos(star.phis[k]), star.radii[k] * Math.sin(star.phis[k])]);
-  const inner: FloorPt[] = [];
-  const n = teeth * 2;
-  const lo = star.phis[ks[0]];
-  const hi = star.phis[ks[ks.length - 1]];
-  for (let q = n; q >= 0; q--) {
-    const phi = clamp(tg.phi - span + (2 * span * q) / n, lo, hi);
-    const tooth = q % 2 === 0 ? 1 : 1 - 0.35 * depth;
-    const rho = tg.reach * (1 - depth * tooth);
-    inner.push([rho * Math.cos(phi), rho * Math.sin(phi)]);
-  }
-  return [...outer, ...inner];
 }
 
 export function draw(ctxBehind: BrushTarget, _ctxFront: BrushTarget, _sink: GlowSink, ictx: MassContext, f: number, opaque = false) {

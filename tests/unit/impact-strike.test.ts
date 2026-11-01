@@ -15,6 +15,7 @@ import { isSaturatedRed } from '../../src/impact/palette.ts';
 import {
   BURST,
   CHARGE_RADIUS,
+  GENTLE_STRIKE,
   SPLASH,
   SPLASH_ANGLES,
   STRIKE,
@@ -272,10 +273,36 @@ describe('beams', () => {
     }
   });
 
+  it('gentle (Reduce flashing, decision 12): one rise, the light and the charge never fall, the splash grows in place, no swell', () => {
+    const gentle = strikeOptions('safe');
+    for (let seed = 1; seed <= 4; seed++) {
+      const ictx = context({ P: [540, 560], seed, flash: 'safe' });
+      const plans = Array.from({ length: 7 }, (_, s) => planStrike(ictx, s, limbs(ictx, s), gentle));
+      for (let s = 1; s < 7; s++) {
+        expect(plans[s].glow, `S${s} glow`).toBeGreaterThanOrEqual(plans[s - 1].glow);
+        expect(plans[s].charge?.c ?? 0, `S${s} charge`).toBeGreaterThanOrEqual(plans[s - 1].charge?.c ?? 0);
+        // The splash is S6's pieces, scaled, from the first step it shows.
+        const a = plans[s - 1].splash;
+        const b = plans[s].splash;
+        if (a && b) expect(b.pieces.length).toBe(a.pieces.length);
+      }
+      for (const [s, plan] of plans.entries()) {
+        expect(plan.glow).toBe(GENTLE_STRIKE.glow[s]);
+        for (const b of plan.beams) {
+          // Calm widths, and S6 a plain beam: no swell to flash.
+          expect(b.target / b.base).toBeGreaterThanOrEqual(STRIKE.calm[0] - 1e-9);
+          expect(b.target / b.base).toBeLessThanOrEqual(STRIKE.calm[1] + 1e-9);
+        }
+      }
+      // Full is untouched (decision 12).
+      expect(planStrike(ictx, 6, limbs(ictx, 6), FULL).glow).toBe(STRIKE.glow[6]);
+    }
+  });
+
   it('calm: the multipliers clamp to 0.7–1.0 and S6 stays at 1.0·w_b; only Reduce flashing from ladder step 3 calms', () => {
-    expect(strikeOptions('full', 7)).toEqual({ swell: true, calm: false });
-    expect(strikeOptions('safe', 2)).toEqual({ swell: true, calm: false });
-    expect(strikeOptions('safe', 3)).toEqual({ swell: true, calm: true });
+    expect(strikeOptions('full', 7)).toEqual({ swell: true, calm: false, gentle: false });
+    expect(strikeOptions('safe', 2)).toEqual({ swell: true, calm: false, gentle: true });
+    expect(strikeOptions('safe', 3)).toEqual({ swell: true, calm: true, gentle: true });
     const calm = strikeOptions('safe', 3);
     for (let s = 0; s < 7; s++) {
       for (let seed = 1; seed <= 4; seed++) {

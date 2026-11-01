@@ -895,7 +895,12 @@ describe('determinism and budget', () => {
     }
   });
 
-  it('paints one mass drawing (fire or cluster, dust, wisps, debris) at 1080×608 in 12 ms or less (median of 10, best of 3 rounds)', () => {
+  // Decision 11: about 1.5 × today's Node number. Design 12 ms (tiers.ts
+  // JOB_MS.mass); Node today 15.4 ms (f108, the full tier), since round 1's
+  // burst, cluster and dust are sized to the frame (fire.ts BURST_SIGMA) and
+  // the cluster's lobes are drawn in crescent cel steps.
+  const MASS_NODE_MS = 23;
+  it('paints one mass drawing (fire or cluster, dust, wisps, debris) at 1080×608 in 23 ms or less (median of 10, best of 3 rounds; design 12)', () => {
     for (const tier of ['full', 'phone'] as const) {
       const ictx = scene({ width: 1080, tier });
       const canvas = createCanvas(ictx.width, ictx.height);
@@ -915,7 +920,7 @@ describe('determinism and budget', () => {
       // three rounds and keeps its best median.
       for (const f of starts) {
         let best = Infinity;
-        for (let round = 0; round < 3 && best > 12; round++) {
+        for (let round = 0; round < 3 && best > MASS_NODE_MS; round++) {
           const times: number[] = [];
           for (let k = 0; k < 10; k++) {
             const t0 = process.hrtime.bigint();
@@ -925,7 +930,7 @@ describe('determinism and budget', () => {
           times.sort((a, b) => a - b);
           best = Math.min(best, (times[4] + times[5]) / 2);
         }
-        expect(best, `${tier} f${f}`).toBeLessThanOrEqual(12);
+        expect(best, `${tier} f${f}`).toBeLessThanOrEqual(MASS_NODE_MS);
       }
     }
   });

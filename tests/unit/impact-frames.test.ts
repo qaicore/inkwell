@@ -13,7 +13,7 @@ import { strikeFrame } from '../../src/impact/floor.ts';
 import { HOT, isSaturatedRed, luminance } from '../../src/impact/palette.ts';
 import { drawPoster, INK_CAP, posterShapes, posterTones, Z, type PosterContext, type PosterOptions } from '../../src/impact/frames/draw.ts';
 import { crackFraction, crackFromStroke, drawOn, markOutlines, NO_FIGURE, posterFigure, signedArea, syntheticCrouch, traceMask, type PosterFigure, type PosterTarget } from '../../src/impact/frames/figure.ts';
-import { cooldown, fullPlan, gentle, GLINT_HOLD, LIGHT_FLOOR, posterFirstJ, posterHotRamp, posterPlan, posterSpec, redSafe } from '../../src/impact/frames/gentle.ts';
+import { cooldown, fullPlan, gentle, GLINT_HOLD, LIGHT_FLOOR, posterFirstJ, posterHotRamp, posterPlan, posterSpec, redSafe, redSafeCool } from '../../src/impact/frames/gentle.ts';
 import { HUD, hudSlide, posterLayout, withSide } from '../../src/impact/frames/layout.ts';
 import { hex } from '../../src/render/geometry.ts';
 import { nodeScratch } from '../../src/render/headless.ts';
@@ -213,6 +213,18 @@ describe('the posters on the clock', () => {
       const T = posterTones(TEST, posterSpec(si, 'safe'));
       for (const c of [T.field, T.fg, T.bg, T.accent, T.ring, T.tan, T.orange, T.tint(0.1), T.tint(1)]) expect(isSaturatedRed(c), `IF${si + 1} ${c}`).toBe(false);
     }
+  });
+
+  it('cools a saturated red limb colour toward crimson at the same luminance, and leaves the rest', () => {
+    // The scene's palette under Reduce flashing (scene.ts): the limbs move the
+    // whole strike, so their red can't be saturated (the hero failed on it).
+    for (const red of ['#e8203a', '#ff0000', '#c0102a', '#6a2c03']) {
+      const cool = redSafeCool(red);
+      expect(isSaturatedRed(cool), `${red} → ${cool}`).toBe(false);
+      expect(Math.abs(luminance(cool) - luminance(red)), `${red} → ${cool}`).toBeLessThan(0.004);
+    }
+    expect(redSafeCool('#e8203a')).toBe('#e22075');
+    for (const c of ['#f4f1ea', '#16141a', '#2b6cff', '#6a3b0a', '#e5721b', '#7efefd']) if (!isSaturatedRed(c)) expect(redSafeCool(c)).toBe(c);
   });
 });
 

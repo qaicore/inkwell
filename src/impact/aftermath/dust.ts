@@ -524,7 +524,7 @@ export function shapes(ictx: MassContext, f: number): DustDrawing | null {
   const clock = massClock(ictx, f);
   if (!clock || clock.g < 1) return null;
   const state = dustState(ictx.seed, clock.g);
-  const fr = massFrame(ictx);
+  const fr = massFrame(ictx, true);
   const unit = fr.U * clock.zoom;
   const px = (pts: readonly FloorPt[]) => pts.map((p) => toFrame(fr, unit, p));
   const out: MassShape[] = [];

@@ -4,10 +4,11 @@
 //     (16 % of the frame), A11 (30 %), A15 (29 %) and A17 (58 %), each on its
 //     own kr step, seeded rng(seed, 'flood', wash, A). Gentle mode (Reduce
 //     flashing) keeps wash 1 (A10–11) and wash 3 (A17) only, one shape each,
-//     seeded rng(seed, 'flood', wash), at 22 % of the frame. Each ramps up over
-//     2 frames and down over 2 either side of its plateau (wash 1 j 20–25,
-//     wash 3 j 28–33, the flash plan of design §5), and wash 2 becomes a bolt
-//     brightening on its step;
+//     seeded rng(seed, 'flood', wash), at 22 % of the frame, with no ink lines
+//     or band (its edge is the pale fringe). Each ramps up over
+//     2 frames and down over 2 either side of its plateau (wash 1 up on j
+//     20–21, gone on 25; wash 3 up on 28–29, gone on 33: the flash plan of
+//     design §5), and wash 2 becomes a bolt brightening on its step;
 //   - the ladder hooks: washes.w1 / w3 'bolt' turn a wash into a brightening
 //     on its plateau, with no flood pixels; noFlash drops the washes, the
 //     brightenings, the veil and the flash;
@@ -411,7 +412,11 @@ export const FLOODS: readonly FloodSpec[] = [
 ];
 
 export const GENTLE_FLOOD_AREA = 0.22; // under the 25 % cap, with room for the lobes
-export const GENTLE_RAMP = [1 / 3, 2 / 3, 1, 1, 2 / 3, 1 / 3] as const; // up 2 frames, the plateau, down 2
+// Up over the plan's two frames and down over its two (decision 12): the
+// level moves only on j 20–21 and 24–25 (28–29, 32–33), so every pixel's
+// change lands within a frame of the planned transition; it is 0 again on
+// the 6th frame.
+export const GENTLE_RAMP = [1 / 2, 1, 1, 1, 1 / 2] as const;
 export const GENTLE_WASHES = [
   { wash: 1, from: 20, A: 10, dir: 68, field: 'rim' }, // j 20–25: up on 20–21, the plateau on A10–11 (j 22–23), down on 24–25
   { wash: 3, from: 28, A: 17, dir: -95, field: 'deep' }, // j 28–33: up on 28–29, the plateau on A17 (j 30–31), down on 32–33
@@ -616,7 +621,10 @@ function floodGeometry(ictx: ImpactContext, plan: FloodPlan): Pick<FloodDrawing,
     { role: 'fringe', color: mixHex(tones.core, tones.pale, 0.6), points: region((k) => B + notch[k] + ink1) },
     ...steps.map(([depth, color]): FloodLayer => ({ role: 'field', color, points: region((k) => fieldEdge(k) + depth) })),
   ];
-  const layers = all.filter((l) => l.points.length >= 3);
+  // Reduce flashing leaves out the dark edge (both ink lines and the band): a
+  // gentle flood's rise is then a brightening only and its fall a darkening
+  // only, where the edge went the other way on the same frames.
+  const layers = all.filter((l) => l.points.length >= 3 && !(ictx.flash === 'safe' && (l.role === 'ink' || l.role === 'band')));
   const outline = layers.length > 0 ? layers[0].points : [];
   return { layers, outline, share: Math.abs(signedArea(outline)) / (W * H), glow: tones.band };
 }

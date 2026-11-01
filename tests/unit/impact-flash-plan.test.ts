@@ -72,6 +72,19 @@ describe('the ladder', () => {
     expect(sceneOf({ flash: 'full' }).degraded(FREEZE_STEP).degrade.step).toBe(0);
   });
 
+  it('holds the budget with hero-sized masses (U 380 px at 1080), and at the last step adds no flash at all over still footage', () => {
+    // Judge round 1: the last step also stills the lightning and the masses
+    // (scene.ts STILL_MASS), so only footage that flashes by itself fails.
+    const hero = sceneOf({ flash: 'safe', unit: 380 });
+    const plan = checked(hero, I - 8, I + 45);
+    expect(plan.worstGeneral).toBeLessThanOrEqual(3);
+    expect(plan.worstRed).toBe(0);
+    const last = hero.degraded(LADDER_STEPS);
+    const r = checked(last, I - 8, Math.min(last.outputLength() - 1, I + 45 + 26));
+    expect(r.worstGeneral, `transitions on j ${r.transitions.map((t) => t.frame - 8).join(',')}`).toBe(0);
+    expect(r.worstRed).toBe(0);
+  });
+
   it("adds 26 frames at step 4, and output I + 35 + n shows clip frame I + 9 + n", () => {
     const s = sceneOf({ flash: 'safe' });
     const frozen = s.degraded(FREEZE_STEP);

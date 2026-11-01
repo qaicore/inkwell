@@ -17,7 +17,7 @@
 // re-encoded with the silence in.
 import { AudioSample, BufferTarget, CanvasSink, Conversion, Mp4OutputFormat, Output, Quality, VideoSample } from 'mediabunny';
 import { FPS, frameTime, retryInSoftware, type Clip } from '../video/clip';
-import { checkFlashes, downsampleFrame, FlashCheckError, flashSummary, type CheckFrame, type FlashReport } from './flash';
+import { checkFlashes, downsampleFrame, FlashCheckError, flashSummary, guardRed, type CheckFrame, type FlashReport } from './flash';
 import { FREEZE_EXTRA, FREEZE_HOLD, POSTER_COUNT } from '../impact/clock';
 import { clipOf, degradeAt, LADDER_STEPS, outputLength, touchedFrames, type Degrade, type LadderWalk } from '../impact/ladder';
 
@@ -164,6 +164,15 @@ function canvasOf(width: number, height: number) {
 
 const checkCopy = (ctx: CanvasRenderingContext2D, width: number, height: number): CheckFrame => downsampleFrame(ctx.getImageData(0, 0, width, height));
 
+// A drawn frame made final: under Reduce flashing the red guard (flash.ts) on
+// its pixels, then, with `collect`, its check copy, from the same read.
+function finish(ctx: CanvasRenderingContext2D, width: number, height: number, flash: 'safe' | 'full', collect: boolean): CheckFrame | null {
+  if (flash !== 'safe') return collect ? checkCopy(ctx, width, height) : null;
+  const img = ctx.getImageData(0, 0, width, height);
+  if (guardRed(img.data) > 0) ctx.putImageData(img, 0, 0);
+  return collect ? downsampleFrame(img) : null;
+}
+
 // One encode at `step`, every output frame drawn by the plan, and with
 // `collect` each one's check copy.
 async function encode(clip: Clip, plan: ExportPlan, step: number, collect: boolean, onProgress: (progress: number) => void): Promise<{ video: Blob; frames: number; copies: CheckFrame[]; notes: string[] }> {
@@ -201,7 +210,8 @@ async function encode(clip: Clip, plan: ExportPlan, step: number, collect: boole
           const made: VideoSample[] = [];
           for (const o of outputs) {
             plan.draw(out.ctx, frameBuffer.canvas, o, step);
-            if (collect) copies[o] = checkCopy(out.ctx, width, height);
+            const copy = finish(out.ctx, width, height, plan.flash, collect);
+            if (copy) copies[o] = copy;
             if (outputs.length === 1 && o === c) return out.canvas;
             made.push(new VideoSample(out.canvas, { timestamp: firstTimestamp + o / FPS, duration: 1 / FPS }));
           }
@@ -256,8 +266,10 @@ async function renderCopies(clip: Clip, plan: ExportPlan, step: number, from: nu
   let i = 0;
   for await (const wrapped of sink.canvasesAtTimestamps(times)) {
     const o = outputs[i++];
-    if (wrapped) plan.draw(out.ctx, wrapped.canvas, o, step);
-    copies.push(checkCopy(out.ctx, width, height));
+    if (wrapped) {
+      plan.draw(out.ctx, wrapped.canvas, o, step);
+      copies.push(finish(out.ctx, width, height, plan.flash, true)!);
+    } else copies.push(checkCopy(out.ctx, width, height));
   }
   return copies;
 }

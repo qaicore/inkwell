@@ -12,7 +12,9 @@ import { limbsFirst } from '../../src/lift/strike.ts';
 import { drawingIndex } from '../../src/motion/timing.ts';
 import type { ImpactScene, SceneLayers } from '../../src/impact/scene.ts';
 import { LIMB_IDS, PLATE, plate, renderAt, sceneOf } from './helpers/impact-scene-clip.ts';
-import { HERO } from './helpers/impact-drawings.ts';
+import { HERO, HERO_CRACKS } from './helpers/impact-drawings.ts';
+import { strokeOutline } from '../../src/render/brush.ts';
+import type { Vec2 } from '../../src/types/effect.ts';
 
 const I = HERO.I; // 84
 const DPS = 12;
@@ -163,6 +165,49 @@ describe('the scars', () => {
       expect(names(s.frameLayers(I + end - 20))).toContain('lightning');
     });
   }
+});
+
+describe('the cracks', () => {
+  // The outline's width across the stroke at each of its points: the filled
+  // run along the local normal, on a raster of the outline.
+  function widest(outline: readonly Vec2[], points: readonly Vec2[], W: number, H: number): number {
+    const c = createCanvas(W, H);
+    const g = c.getContext('2d');
+    g.fillStyle = '#fff';
+    g.beginPath();
+    outline.forEach((p, i) => (i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1])));
+    g.closePath();
+    g.fill();
+    const px = g.getImageData(0, 0, W, H).data;
+    const on = (x: number, y: number) => {
+      const xi = Math.round(x);
+      const yi = Math.round(y);
+      return xi >= 0 && yi >= 0 && xi < W && yi < H && px[(yi * W + xi) * 4] > 127;
+    };
+    let most = 0;
+    for (let i = 1; i < points.length - 1; i++) {
+      const t = [points[i + 1][0] - points[i - 1][0], points[i + 1][1] - points[i - 1][1]];
+      const len = Math.hypot(t[0], t[1]) || 1;
+      const n = [-t[1] / len, t[0] / len];
+      let run = 0;
+      for (const side of [1, -1]) for (let k = 0.25; k < 60 && on(points[i][0] + side * n[0] * k, points[i][1] + side * n[1] * k); k += 0.25) run += 0.25;
+      most = Math.max(most, run);
+    }
+    return most;
+  }
+
+  it('render each hero crack as wide as he drew it: its widest within 1.5× of the drawn widest (judge 2)', () => {
+    const s = scene();
+    const cracks = s.context!.cracks;
+    expect(cracks.map((c) => c.id)).toEqual(HERO_CRACKS.map((c) => c.id));
+    for (const c of cracks) {
+      const drawn = Math.max(...HERO_CRACKS.find((h) => h.id === c.id)!.width) * s.scale;
+      const outline = strokeOutline([...c.points], [...c.pressure], c.brush, s.width / 1080);
+      const ratio = widest(outline, c.points, s.width, s.height) / drawn;
+      expect(ratio, `crack ${c.id}`).toBeGreaterThan(1 / 1.5);
+      expect(ratio, `crack ${c.id}`).toBeLessThan(1.5);
+    }
+  });
 });
 
 describe('portrait', () => {

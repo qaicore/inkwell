@@ -10,6 +10,8 @@ import {
   downsampleFrame,
   flashChecker,
   flashSummary,
+  GUARD_RATIO,
+  guardRed,
   type CheckFrame,
   type FlashKind,
   type FlashReport,
@@ -417,6 +419,46 @@ describe('red flashes', () => {
     const r = checkFlashes(strobe(solid(RED_GREY), patch, 2, 60), FPS);
     expect(r.transitions).toEqual([]);
     expect(r.pass).toBe(true);
+  });
+
+  it("Reduce flashing's guard raises only the green of saturated reds, just under the ratio, and the strobe stops flashing red", () => {
+    const share = (r: number, g: number, b: number) => linear(r) / (linear(r) + linear(g) + linear(b));
+    const rnd = rng(7, 'guard');
+    const data = new Uint8ClampedArray(4 * 4096);
+    for (let i = 0; i < data.length; i += 4) {
+      data[i] = Math.floor(rnd() * 256);
+      data[i + 1] = Math.floor(rnd() * 96);
+      data[i + 2] = Math.floor(rnd() * 96);
+      data[i + 3] = 255;
+    }
+    const before = data.slice();
+    const changed = guardRed(data);
+    let seen = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      const [r, g0, b] = [before[i], before[i + 1], before[i + 2]];
+      const g = data[i + 1];
+      expect(data[i]).toBe(r);
+      expect(data[i + 2]).toBe(b);
+      expect(data[i + 3]).toBe(255);
+      if (r > 0 && share(r, g0, b) >= GUARD_RATIO) {
+        seen++;
+        expect(share(r, g, b), `${r},${g0},${b} → ${g}`).toBeLessThan(GUARD_RATIO);
+        expect(share(r, g - 1, b), `${r},${g0},${b} → ${g}: the least green`).toBeGreaterThanOrEqual(GUARD_RATIO);
+      } else expect(g).toBe(g0);
+    }
+    expect(seen).toBeGreaterThan(100);
+    expect(changed).toBe(seen);
+    // Pure red strobed against its grey fails; guarded, no frame holds a saturated red.
+    const guarded = (f: CheckFrame): CheckFrame => {
+      const d = new Uint8ClampedArray(f.data);
+      guardRed(d);
+      return { data: d, width: f.width, height: f.height };
+    };
+    const frames = [solid(RED_GREY), ...strobe(solid(RED), solid(RED_GREY), 5, 20)];
+    expect(checkFlashes(frames, FPS).worstRed).toBe(2);
+    const safe = checkFlashes(frames.map(guarded), FPS);
+    expect(safe.worstRed).toBe(0);
+    expect(isSaturatedRed('#' + [...guarded(solid(RED)).data.slice(0, 3)].map((v) => v.toString(16).padStart(2, '0')).join(''))).toBe(false);
   });
 });
 

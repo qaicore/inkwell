@@ -49,6 +49,7 @@ import {
 } from '../../scripts/impact-render.ts';
 import { checkFlashes, flashSummary, type CheckFrame } from '../../src/export/flash.ts';
 import { FREEZE_EXTRA, freezeMap, phaseAt } from '../../src/impact/clock.ts';
+import { brushSizeForWidth } from '../../src/impact/frames/figure.ts';
 import type { DrawnMoments } from '../../src/impact/detect.ts';
 import type { PosterSpec } from '../../src/impact/frames/gentle.ts';
 import { turnAt } from '../../src/lift/body.ts';
@@ -81,7 +82,7 @@ const DRAWINGS: HeroDrawings = {
     frame: 84,
     floor: { ratio: 0.763, majorDeg: 2.6 },
     ease: null,
-    strokes: HERO_CRACKS.map((c) => ({ id: c.id, points: c.points.map((p): Vec2 => [p[0], p[1]]), pressure: [...c.pressure], color: 2 as const, anchor: [942, 1061] as Vec2 })),
+    strokes: HERO_CRACKS.map((c) => ({ id: c.id, points: c.points.map((p): Vec2 => [p[0], p[1]]), pressure: [...c.pressure], width: [...c.width], color: 2 as const, anchor: [942, 1061] as Vec2 })),
   },
 };
 
@@ -104,11 +105,14 @@ describe('the drawings as an effect', () => {
       seed: 84,
       palette: ['#e8203a', '#f4f1ea', '#16141a'],
       start: { frame: 22, body: { hipsMid: [808.1, 452.1] }, strokes: [{ id: 1, color: 0, stiffness: 0.1, layer: 'behind', points: [[778, 300], [760, 250], [700, 200]], pressure: [1, 0.8, 0.5] }] },
-      end: { frame: 84, floor: { smallCircleRatioAtP: 0.75, smallCircleMajorAxisDeg: 3 }, strokes: [{ id: 11, anchor: { type: 'ground', xy: [942, 1061] }, points: [[942, 1061], [900, 1060]], pressure: [1, 0.5] }] },
+      end: { frame: 84, floor: { smallCircleRatioAtP: 0.75, smallCircleMajorAxisDeg: 3 }, strokes: [{ id: 11, anchor: { type: 'ground', xy: [942, 1061] }, points: [[942, 1061], [900, 1060]], pressure: [1, 0.5], width: [6.4, 3.2] }, { id: 12, points: [[942, 1061], [940, 1000]], pressure: [1, 0.5] }] },
       moments: [{ kind: 'emerge', at: 0.733 }, { kind: 'slam', ease: { cracks: 'linear', ring: 'out' } }],
     });
     expect(d.start).toEqual({ frame: 22, hips: [808.1, 452.1], strokes: [{ id: 1, points: [[778, 300], [760, 250], [700, 200]], pressure: [1, 0.8, 0.5], color: 0, stiffness: 0.1, layer: 'behind' }] });
-    expect(d.end.strokes).toEqual([{ id: 11, points: [[942, 1061], [900, 1060]], pressure: [1, 0.5], color: 2, anchor: [942, 1061] }]);
+    expect(d.end.strokes).toEqual([
+      { id: 11, points: [[942, 1061], [900, 1060]], pressure: [1, 0.5], width: [6.4, 3.2], color: 2, anchor: [942, 1061] },
+      { id: 12, points: [[942, 1061], [940, 1000]], pressure: [1, 0.5], width: null, color: 2, anchor: [942, 1061] },
+    ]);
     expect(d.end.floor).toEqual({ ratio: 0.75, majorDeg: 3 });
     expect(d.end.ease).toBe('linear');
     expect(d.seed).toBe(84);
@@ -120,6 +124,7 @@ describe('the drawings as an effect', () => {
     expect(() => readDrawings({ end: { frame: 84, strokes: [crack] } })).toThrow(/start drawing/);
     expect(() => readDrawings({ start: { frame: 22, strokes: [] }, end: { frame: 84, strokes: [crack] } })).toThrow(/no limb strokes/);
     expect(() => readDrawings({ start: { frame: 22, strokes: [{ ...limb, pressure: [1] }] }, end: { frame: 84, strokes: [crack] } })).toThrow(/pressures/);
+    expect(() => readDrawings({ start: { frame: 22, strokes: [limb] }, end: { frame: 84, strokes: [{ ...crack, width: [3] }] } })).toThrow(/widths/);
     expect(() => readDrawings({ start: { frame: 22, strokes: [{ ...limb, color: 5 }] }, end: { frame: 84, strokes: [crack] } })).toThrow(/color/);
     expect(() => readDrawings({ start: { frame: 'x', strokes: [limb] }, end: { frame: 84, strokes: [crack] } })).toThrow(/start frame/);
   });
@@ -140,9 +145,13 @@ describe('the drawings as an effect', () => {
 
   it('keeps the cracks as ground strokes, as drawn', () => {
     const c = DRAWINGS.end.strokes[0];
-    const st = crackStroke(c);
+    const st = crackStroke(c, 1920);
     expect(st).toMatchObject({ id: 11, color: 2, kind: 'rigid', anchor: { type: 'ground', xy: [942, 1061] }, stiffness: 1, wobble: 0 });
     expect(st.brush).toBeUndefined(); // the ink brush
+    // At the size its widths give: 6.4 px at its widest on the 1920 clip.
+    expect(st.size).toBeCloseTo(brushSizeForWidth(c.width!, 1920), 2);
+    expect(st.size!).toBeLessThan(4);
+    expect(crackStroke({ ...c, width: null }, 1920).size).toBeUndefined();
     expect(st.views.front.points).toEqual(c.points);
     expect(st.views.front.pressure).toEqual(c.pressure);
   });

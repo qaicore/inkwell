@@ -162,6 +162,13 @@ describe('gradeAt at 1.5 s (J_end 45)', () => {
     const g = gradeAt(-5, ictx(1.5, '#f0f0f0'));
     expect(g.L).toBe('#ffffff');
   });
+
+  it("still (Reduce flashing) holds g8's values from the return at j 9 to the decay, and leaves the strike and the decay as they are", () => {
+    const g8 = gradeAt(31, c);
+    for (let j = 9; j <= 31; j++) expect(gradeAt(j, c, true), `j ${j}`).toEqual(g8);
+    for (let j = -9; j <= 8; j++) expect(gradeAt(j, c, true), `j ${j}`).toEqual(gradeAt(j, c));
+    for (let j = 32; j <= 46; j++) expect(gradeAt(j, c, true), `j ${j}`).toEqual(gradeAt(j, c));
+  });
 });
 
 describe('gradeAt at 3 s (J_end 90)', () => {

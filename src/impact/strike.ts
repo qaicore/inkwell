@@ -21,11 +21,14 @@
 // so they can be planned ahead of the frame that shows them.
 // Full flashing is the default (decision 5). Under Reduce flashing
 // (flash 'safe') the saturated reds are bent toward brown, gentle mode's G4:
-// S6 alone covers 10–14 % of a 10° field in p0's reds. In that mode the
-// export's flash ladder may also ask for strike calm (step 3,
-// strikeOptions), which clamps the multipliers to 0.7–1.0 and the swell to
-// 1.0·w_b. No Math.random, clocks or ctx.filter: every draw is
-// rng(seed, stream, ...ints).
+// S6 alone covers 10–14 % of a 10° field in p0's reds. That mode also runs
+// the strike gentle (decision 12: no flash in the strike): the widths calm,
+// no swell, and the light only rises, step to step (GENTLE: the glow gains,
+// the charge and the splash never drop, and the splash keeps S6's pieces,
+// growing, instead of a fresh set each step). The export's flash ladder may
+// also ask for strike calm (step 3, strikeOptions), which clamps the
+// multipliers to 0.7–1.0 and the swell to 1.0·w_b. No Math.random, clocks
+// or ctx.filter: every draw is rng(seed, stream, ...ints).
 import type { Vec2 } from '../types/effect.ts';
 import type { BrushTarget } from '../render/glow.ts';
 import { resampleStroke } from '../render/brush.ts';
@@ -120,6 +123,16 @@ export const BURST = {
   levels: 3, // midpoint displacements: 9 points an arc (a 4th level would move them under a pixel)
 } as const;
 
+// The gentle strike's light (Reduce flashing), S0..S6: each never below the
+// step before, so a 10° field only ever brightens through the strike, and
+// low enough that none brightens by 0.10 over a quarter of itself before
+// the posters (export/flash.ts).
+export const GENTLE_STRIKE = {
+  glow: [0.08, 0.12, 0.12, 0.12, 0.16, 0.16, 0.2],
+  charge: [0, 0.11, 0.16, 0.16, 0.38, 0.6, 0.8],
+  splash: [0, 0.8, 1.0, 1.0, 1.4, 1.8, 2.2], // % of the frame, × σ²: S6's pieces, growing
+} as const;
+
 export const CHARGE_RADIUS = 0.05; // the disc is 0.05 U·(1 + 2c)
 
 // The charge gain on j. On j 0..3 it fades from 1 to 0, which only shows
@@ -146,14 +159,15 @@ export interface StrikeLimbPath {
 export interface StrikeOptions {
   swell: boolean; // S6 swells (false: S6 is a plain 1.0·w_b beam)
   calm: boolean; // flash ladder step 3
+  gentle?: boolean; // Reduce flashing: calm widths, no swell, and GENTLE_STRIKE's rising light
 }
 
-// The options for a flash mode and the export's flash-ladder step. The
-// ladder only runs under Reduce flashing, and from step 3 on it calms the
-// strike, so Full never calms it.
+// The options for a flash mode and the export's flash-ladder step. Reduce
+// flashing always runs the strike gentle; the ladder only runs under it, and
+// from step 3 on it calms the strike too, so Full never calms it.
 export const STRIKE_CALM_STEP = 3;
 export function strikeOptions(flash: 'safe' | 'full' = 'full', ladder = 0): StrikeOptions {
-  return { swell: true, calm: flash === 'safe' && ladder >= STRIKE_CALM_STEP };
+  return { swell: true, calm: flash === 'safe' && ladder >= STRIKE_CALM_STEP, gentle: flash === 'safe' };
 }
 
 // A limb as the strike reads it, from its tube (lift/tube.ts) on the step's
@@ -228,11 +242,11 @@ export interface StrikePlan {
 // bursts and the charge. Pure in (seed, frame, floor, size, step), and most
 // of the planning, so a caller can plan it ahead and hand it to planStrike.
 export type StrikeContact = Pick<StrikePlan, 'splash' | 'bursts' | 'charge'>;
-export function planStrikeContact(ictx: StrikeContext, s: number): StrikeContact {
+export function planStrikeContact(ictx: StrikeContext, s: number, gentle = false): StrikeContact {
   checkStep(s);
-  const c = STRIKE.charge[s];
+  const c = gentle ? GENTLE_STRIKE.charge[s] : STRIKE.charge[s];
   return {
-    splash: planSplash(ictx, s),
+    splash: planSplash(ictx, s, gentle),
     bursts: planBursts(ictx, s),
     charge: c > 0 ? { c, r: CHARGE_RADIUS * ictx.frame.U * (1 + 2 * c) } : null,
   };
@@ -247,7 +261,7 @@ export function planStrike(ictx: StrikeContext, s: number, limbs: readonly Strik
     const beam = planBeam(ictx, s, limb, i, opts);
     return beam ? [beam] : [];
   });
-  return { s, glow: STRIKE.glow[s], beams, ...(contact ?? planStrikeContact(ictx, s)) };
+  return { s, glow: opts.gentle ? GENTLE_STRIKE.glow[s] : STRIKE.glow[s], beams, ...(contact ?? planStrikeContact(ictx, s, opts.gentle)) };
 }
 
 // Draws step s into the front layer and its light into the glow sink, and
@@ -464,7 +478,8 @@ function simplify(poly: readonly Vec2[], tol: number): Vec2[] {
 // The planned width at each station, and the stations (body) its target
 // holds over. qs run from the root (1) to the contact end (0).
 function beamProfile(s: number, qs: number[], total: number, base: number, S: number, r: Rng, opts: StrikeOptions): { w: number[]; body: [number, number]; target: number } {
-  const multOf = (k: number) => (opts.calm ? clamp(STRIKE.mult[k], STRIKE.calm[0], STRIKE.calm[1]) : STRIKE.mult[k]);
+  const calm = opts.calm || (opts.gentle ?? false);
+  const multOf = (k: number) => (calm ? clamp(STRIKE.mult[k], STRIKE.calm[0], STRIKE.calm[1]) : STRIKE.mult[k]);
   const n = qs.length;
 
   if (s === 0) {
@@ -483,7 +498,7 @@ function beamProfile(s: number, qs: number[], total: number, base: number, S: nu
   }
 
   const window = stationsIn(qs, 0.1, 0.9);
-  if (s === 6 && opts.swell && !opts.calm) {
+  if (s === 6 && opts.swell && !calm) {
     // The swell: the last 40 % at an absolute 0.30–0.38 S, the rest easing
     // down to the far end.
     const swell = S * uniform(r, STRIKE.swell[0], STRIKE.swell[1]);
@@ -723,9 +738,12 @@ export function onFloor(d: Vec2, up: Vec2, ratio: number): Vec2 {
   return [d[0] - along * up[0], d[1] - along * up[1]];
 }
 
-function planSplash(ictx: StrikeContext, s: number): Splash | null {
-  const pct = STRIKE.splash[s];
+// Gentle (Reduce flashing): S6's pieces at GENTLE_STRIKE's area on every
+// step, so the splash grows in place instead of jumping.
+function planSplash(ictx: StrikeContext, step: number, gentle = false): Splash | null {
+  const pct = gentle ? GENTLE_STRIKE.splash[step] : STRIKE.splash[step];
   if (!(pct > 0)) return null;
+  const s = gentle ? STRIKE_STEPS - 1 : step;
   const { P, u, v, U, sigma } = ictx.frame;
   const W = ictx.width;
   const H = ictx.height;

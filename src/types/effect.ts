@@ -46,6 +46,7 @@ export interface Stroke {
   id: number; // drawing order; the same id in every view
   color: 0 | 1 | 2;
   brush?: BrushId; // missing = 'ink'
+  size?: number; // ground strokes: the brush size it was drawn at, px at 1080 wide; missing = the effect's brush size
   accent?: 0 | 1 | 2; // blade: the color of the reflected light on its shadow edge; missing = its own color
   kind: 'strand' | 'rigid'; // rigid = follows its target exactly (horns, halo)
   anchor: Anchor;
@@ -244,6 +245,7 @@ function strokeProblems(s: unknown, i: number): string[] {
   if (!Number.isInteger(s.id)) p.push(`${where}.id is not an integer`);
   if (!isColor(s.color)) p.push(`${where}.color is not 0, 1 or 2`);
   if (s.brush !== undefined && !BRUSH_IDS.includes(s.brush as BrushId)) p.push(`${where}.brush is not a brush`);
+  if (s.size !== undefined && !(isNum(s.size) && s.size > 0)) p.push(`${where}.size is not a positive number`);
   if (s.accent !== undefined && !isColor(s.accent)) p.push(`${where}.accent is not 0, 1 or 2`);
   if (s.kind !== 'strand' && s.kind !== 'rigid') p.push(`${where}.kind is not strand or rigid`);
   p.push(...anchorProblems(s.anchor, `${where}.anchor`));

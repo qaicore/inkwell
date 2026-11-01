@@ -53,9 +53,10 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createCanvas, loadImage, type Canvas, type Image, type SKRSContext2D } from '@napi-rs/canvas';
 import { frameMasks } from '../src/app/pipeline.ts';
-import { checkFlashes, downsampleFrame, FlashCheckError, flashSummary, type CheckFrame, type FlashReport } from '../src/export/flash.ts';
+import { checkFlashes, downsampleFrame, FlashCheckError, flashSummary, guardRed, type CheckFrame, type FlashReport } from '../src/export/flash.ts';
 import { FREEZE_EXTRA, FREEZE_HOLD, POSTER_COUNT, drawingStart, kr, massGroup, type Phase } from '../src/impact/clock.ts';
 import { momentsFromDrawings, type DrawnMoments } from '../src/impact/detect.ts';
+import { brushSizeForWidth } from '../src/impact/frames/figure.ts';
 import type { PosterSpec } from '../src/impact/frames/gentle.ts';
 import { LADDER, touchedFrames, walkLadder } from '../src/impact/ladder.ts';
 import { createImpactScene, type ImpactClip, type ImpactScene, type SceneOptions, type TurnRead } from '../src/impact/scene.ts';
@@ -122,6 +123,7 @@ export interface DrawnCrack {
   id: number;
   points: Vec2[]; // clip px on the end frame
   pressure: number[];
+  width: number[] | null; // the full stroke width at each point, clip px, when given
   color: 0 | 1 | 2;
   anchor: Vec2; // its ground anchor
 }
@@ -191,7 +193,9 @@ export function readDrawings(json: unknown): HeroDrawings {
       strokes: end.strokes.map((v, i): DrawnCrack => {
         const st = strokeOf(v, `crack ${i}`, 2);
         const anchor = isObj(st.s.anchor) && st.s.anchor.xy !== undefined ? vec(st.s.anchor.xy, `crack ${st.id} anchor`) : st.points[0];
-        return { id: st.id, points: st.points, pressure: st.pressure, color: st.color, anchor };
+        const width = Array.isArray(st.s.width) ? st.s.width.map((w, k) => num(w, `crack ${st.id} width ${k}`)) : null;
+        if (width && width.length !== st.points.length) throw new Error(`the drawings' crack ${st.id} has ${st.points.length} points and ${width.length} widths`);
+        return { id: st.id, points: st.points, pressure: st.pressure, width, color: st.color, anchor };
       }),
     },
   };
@@ -227,12 +231,14 @@ export function limbStroke(l: DrawnLimb, at: TorsoTransform): Stroke {
   };
 }
 
-// A crack as a ground stroke: fixed frame px (tripod), as drawn.
-export function crackStroke(c: DrawnCrack): Stroke {
+// A crack as a ground stroke: fixed frame px (tripod), as drawn, at the size
+// its widths give on a clip `clipWidth` px wide (the ink brush's when it has none).
+export function crackStroke(c: DrawnCrack, clipWidth: number): Stroke {
   const points = c.points.map((p): Vec2 => [p[0], p[1]]);
   return {
     id: c.id,
     color: c.color,
+    ...(c.width ? { size: Math.round(brushSizeForWidth(c.width, clipWidth) * 100) / 100 } : {}),
     kind: 'rigid',
     anchor: { type: 'ground', xy: [c.anchor[0], c.anchor[1]] },
     bodyAngle: 0,
@@ -245,7 +251,7 @@ export function crackStroke(c: DrawnCrack): Stroke {
 // The effect the two drawings make: the limbs and cracks, the emerge and slam
 // moments as momentsFromDrawings derived them, with the impact frames in
 // `flash` mode and the hero's floor; his turn only when there is one to give.
-export function heroEffect(o: { drawings: HeroDrawings; moments: DrawnMoments; at: TorsoTransform; flash: 'safe' | 'full'; turn?: Turn | null }): Effect {
+export function heroEffect(o: { drawings: HeroDrawings; moments: DrawnMoments; at: TorsoTransform; flash: 'safe' | 'full'; turn?: Turn | null; clipWidth?: number }): Effect {
   const { drawings: d, moments: m } = o;
   const floor: FloorBlock = { ratio: d.end.floor?.ratio ?? HERO_FLOOR.ratio, majorDeg: d.end.floor?.majorDeg ?? HERO_FLOOR.majorDeg, up: [HERO_FLOOR.up[0], HERO_FLOOR.up[1]], persp: HERO_FLOOR.persp };
   const slam: Moment = { ...m.slam, frames: { count: 7, flash: o.flash }, floor, ...(d.end.ease ? { ease: { cracks: d.end.ease } } : {}) };
@@ -254,7 +260,7 @@ export function heroEffect(o: { drawings: HeroDrawings; moments: DrawnMoments; a
     brush: { ...DEFAULT_BRUSH },
     palette: [d.palette[0], d.palette[1], d.palette[2]],
     timing: { drawingsPerSecond: DPS },
-    strokes: [...d.start.strokes.map((l) => limbStroke(l, o.at)), ...d.end.strokes.map(crackStroke)],
+    strokes: [...d.start.strokes.map((l) => limbStroke(l, o.at)), ...d.end.strokes.map((c) => crackStroke(c, o.clipWidth ?? d.size?.[0] ?? 1920))],
     moments: [m.emerge, slam],
     ...(o.turn ? { turn: o.turn } : {}),
     overrides: {},
@@ -1018,6 +1024,12 @@ class Renderer {
     scene.render(ctx as never, this.video, o);
     ctx.getImageData(0, 0, 1, 1);
     const ms = performance.now() - t0;
+    // Reduce flashing's export guard (src/export/export.ts finish): no
+    // saturated red pixel leaves it. After the timing: it is the export's.
+    if (scene.context?.flash === 'safe') {
+      const img = ctx.getImageData(0, 0, this.W, this.H);
+      if (guardRed(img.data) > 0) ctx.putImageData(img, 0, 0);
+    }
     return { ms, lines: scene.timings() };
   }
 
@@ -1251,7 +1263,7 @@ export async function main(argv: readonly string[]): Promise<void> {
   const plan = turnPlan(args.tap);
   let turn = plan.turn;
   const opts: SceneOptions = { tier, make: nodeScratch, size, clock: () => performance.now(), ...(plan.check ? { turn: plan.check } : {}) };
-  const effectOf = (flash: 'safe' | 'full') => heroEffect({ drawings, moments, at, flash, turn });
+  const effectOf = (flash: 'safe' | 'full') => heroEffect({ drawings, moments, at, flash, turn, clipWidth: CW });
   let firstScene = createImpactScene(effectOf(modes[0]), clip, opts);
   let read = firstScene.turn();
   let fallback = false;

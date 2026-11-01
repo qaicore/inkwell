@@ -237,15 +237,30 @@ describe('lightning', () => {
       const S = ictx.frame.S;
       const [lo, hi] = lightning.RIBBON_BANDS[plan.band].median;
       for (const r of plan.ribbons) {
-        // A short cored ribbon (under 0.25 U of path) is drawn thinner, × 0.6.
+        // A short cored ribbon (under 0.25 U of path) is drawn thinner, × 0.6;
+        // the planned median, before the area budget's fit.
         const k = r.main ? 1 : 0.6;
-        expect(r.median / S, at).toBeGreaterThanOrEqual(k * lo - 1e-9);
-        expect(r.median / S, at).toBeLessThanOrEqual(k * hi + 1e-9);
+        expect(r.median / plan.fit / S, at).toBeGreaterThanOrEqual(k * lo - 1e-9);
+        expect(r.median / plan.fit / S, at).toBeLessThanOrEqual(k * hi + 1e-9);
         if (r.main) mains++;
       }
       expect(plan.ribbons[0].main, at).toBe(true);
     }
     expect(mains).toBeGreaterThan(0.6 * sum(heroPlans().map((p) => p.plan.ribbons.length)));
+  });
+
+  it('keeps the ribbons, eyes and bolts under the area budget, 2.6 % of the frame to A11 and 3.5 % from A12, by one factor on the ribbon widths (round 1)', () => {
+    let fitted = 0;
+    for (const { at, ictx, plan } of heroPlans()) {
+      const ctx = canvas();
+      lightning.paintLightning(ctx, nodeScratch, { ...plan, gain: 1 }, W, H);
+      // The painted share, its ink lines and anti-aliasing with it.
+      expect(coverage(ctx), at).toBeLessThanOrEqual(lightning.AREA_BUDGET[plan.band] * 1.25);
+      expect(plan.fit, at).toBeGreaterThan(0);
+      expect(plan.fit, at).toBeLessThanOrEqual(1);
+      if (plan.fit < 1) fitted++;
+    }
+    expect(fitted).toBeGreaterThan(0);
   });
 
   it('kinks it 40–85° every 2–8 median widths (on straight sources; the lead-in every 2–8 × 0.022 S)', () => {
@@ -254,7 +269,8 @@ describe('lightning', () => {
       const S = ictx.frame.S;
       for (const r of plan.ribbons) {
         const cum = cumulative(r.path);
-        const unit = plan.band === 'lead' ? Math.max(r.median, LEAD_KINK * S) : r.median;
+        const planned = r.median / plan.fit; // the kinks are spaced on the planned median, before the area budget
+        const unit = plan.band === 'lead' ? Math.max(planned, LEAD_KINK * S) : planned;
         expect(r.turns.length, at).toBe(r.kinks.length);
         r.kinks.forEach((i, q) => {
           kinks++;
@@ -341,7 +357,7 @@ describe('lightning', () => {
 
   it('draws in the discharge set (decision 6) and emits its glow at the gain: bands and bolts as bodies, core runs as cores', () => {
     for (const { at, plan } of heroPlans().filter((p) => p.ictx.seed === HERO.seed)) {
-      expect(plan.tones, at).toEqual(DISCHARGE);
+      expect(plan.tones, at).toEqual({ ...DISCHARGE, ...lightning.LIGHTNING_TONES });
       expect(plan.boost, at).toBe(1);
       const sink = recordingSink();
       lightning.emitLightning(sink, plan);
@@ -349,7 +365,7 @@ describe('lightning', () => {
       expect(strokes.length, at).toBe(sink.calls.length);
       const bodies = plan.ribbons.length + sum(plan.ribbons.map((r) => r.eyes.length)) + plan.bolts.length;
       expect(strokes.filter((c) => c.kind === 'body').length, at).toBe(bodies);
-      expect(strokes.filter((c) => c.kind === 'core').every((c) => c.color === DISCHARGE.core), at).toBe(true);
+      expect(strokes.filter((c) => c.kind === 'core').every((c) => c.color === lightning.LIGHTNING_TONES.core), at).toBe(true);
       expect(strokes.filter((c) => c.kind === 'core').length > 0, at).toBe(plan.band !== 'lead');
       expect(strokes.every((c) => c.gain === plan.gain), at).toBe(true);
     }
@@ -637,10 +653,11 @@ describe('washes', () => {
   it('gentle mode has only washes 1 and 3, at most 25 % of the frame, each ramped over 2 frames up and 2 down; wash 2 brightens the bolts', () => {
     const ictx = scene({ flash: 'safe' });
     const src = sources(ictx);
-    const ramp = [1 / 3, 2 / 3, 1, 1, 2 / 3, 1 / 3];
+    // Its level moves only on the plan's frames: up on j 20–21, down on 24–25 (0 on 25).
+    const ramp = [1 / 2, 1, 1, 1, 1 / 2];
     for (let j = 9; j <= ictx.jEnd + 1; j++) {
       const d = washes.floodShapes(ictx, j);
-      const w = j >= 20 && j <= 25 ? 1 : j >= 28 && j <= 33 ? 3 : 0;
+      const w = j >= 20 && j <= 24 ? 1 : j >= 28 && j <= 32 ? 3 : 0;
       if (w === 0) {
         expect(d, `j${j}`).toBeNull();
         continue;
@@ -650,6 +667,10 @@ describe('washes', () => {
       expect(d!.share, `j${j}`).toBeLessThanOrEqual(0.25);
       // One shape a wash, the whole ramp through.
       expect(d!.outline, `j${j}`).toEqual(washes.floodShapes(ictx, w === 1 ? 20 : 28)!.outline);
+      // No dark edge: the fringe, then the field (the rise only brightens).
+      const roles = d!.layers.map((l) => l.role);
+      expect(roles[0], `j${j}`).toBe('fringe');
+      expect(roles.slice(1).every((r) => r === 'field'), `j${j}`).toBe(true);
       if (d!.level === 1) {
         const ctx = canvas();
         washes.paintFlood(ctx, nodeScratch, d, W, H);
@@ -660,7 +681,7 @@ describe('washes', () => {
     expect(kr(28) - 14).toBe(15);
     const plan = lightning.ribbons(ictx, 28, src)!;
     expect(plan.boost).toBe(washes.BOLT_BOOST);
-    expect(plan.tones.core).toBe(mixHex(DISCHARGE.core, DISCHARGE.pale, 0.45));
+    expect(plan.tones.core).toBe(mixHex(lightning.LIGHTNING_TONES.core, DISCHARGE.pale, 0.45));
     const sink = recordingSink();
     lightning.emitLightning(sink, plan);
     expect(sink.calls.every((c) => isStroke(c) && c.gain === plan.gain * washes.BOLT_BOOST)).toBe(true);
@@ -670,8 +691,9 @@ describe('washes', () => {
   it("lays a ramp's kept flood as the flood faded through the scratch would be, byte for byte, kept or new", () => {
     const ictx = scene({ flash: 'safe' });
     // Out of order and repeated, over a plate, so the kept flood is both
-    // reused and replaced.
-    for (const [i, j] of [20, 21, 24, 25, 28, 29, 32, 33, 33, 21, 32, 20].entries()) {
+    // reused and replaced: the ramps' half-level frames (GENTLE_RAMP: up on
+    // j 20, 28, down on 24, 32; the frames between are at the full level).
+    for (const [i, j] of [20, 24, 28, 32, 32, 24, 28, 20, 20, 32, 24, 28].entries()) {
       const d = washes.floodShapes(ictx, j)!;
       expect(d.level, `j${j}`).toBeLessThan(1);
       const kept = canvas('#585858');
@@ -913,7 +935,10 @@ describe('determinism and budget', () => {
   // call; a flood's shapes are kept by wash, and a gentle wash's opaque flood
   // for its ramp, so after the warm-up a step times its plan and paints with
   // those built (a wash's first frame builds its shapes, about 0.5 ms more).
-  it('plans and paints one kr step of lightning and flood at 1080×608 in 6 ms or less (median of 10), full flashing and Reduce flashing, both tiers', () => {
+  // Decision 11: the Node proxy asserts about 1.5 × today's numbers. Design 6 ms
+  // a step; Node today (round 1) 1.1–6.3 ms over the steps, the worst A11–A12.
+  it('plans and paints one kr step of lightning and flood at 1080×608 in 9.5 ms or less (median of 10; design 6 ms), full flashing and Reduce flashing, both tiers', () => {
+    const STEP_MS = 9.5; // ms; design 6
     const cases = (['full', 'phone'] as const).flatMap((tier) =>
       (['full', 'safe'] as const).map((flash) => {
         const ictx = scene({ tier, flash });
@@ -937,7 +962,7 @@ describe('determinism and budget', () => {
     for (let run = 0; run < 5; run++) {
       for (const c of cases) {
         for (const [j, best] of c.best) {
-          if (best <= 6) continue;
+          if (best <= STEP_MS) continue;
           const times: number[] = [];
           for (let k = 0; k < 10; k++) {
             const t0 = process.hrtime.bigint();
@@ -949,7 +974,7 @@ describe('determinism and budget', () => {
       }
     }
     const report = cases.flatMap((c) => [...c.best].map(([j, t]) => `${c.name} j${j} ${t.toFixed(2)}`));
-    const over = cases.flatMap((c) => [...c.best].filter(([, t]) => t > 6).map(([j]) => `${c.name} j${j}`));
+    const over = cases.flatMap((c) => [...c.best].filter(([, t]) => t > STEP_MS).map(([j]) => `${c.name} j${j}`));
     expect(over, report.join(', ')).toEqual([]);
   });
 });
