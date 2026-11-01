@@ -20,9 +20,12 @@
 //     are made: impact-hero.mp4 in full mode, where the flash check only
 //     warns, and impact-hero-reduced.mp4 under Reduce flashing, which walks
 //     the 7-step ladder until the check passes, re-rendering only the frames
-//     each step touches. When step 7 still fails it's FlashCheckError: no
-//     reduced MP4 is kept, and once everything else is written the run ends
-//     with that error (exit 1). --flash full or safe makes only that one.
+//     each step touches. When step 7 still fails it's FlashCheckError: there
+//     is no impact-hero-reduced.mp4, as the app's export saves no file. The
+//     step-0 render (what the preview shows with the toggle on) is kept for
+//     review only, named impact-hero-reduced-failed-check.mp4 with its
+//     sheets, and once everything else is written the run ends with that
+//     error (exit 1). --flash full or safe makes only that one.
 //   - --portrait crops a 9:16 window (608×1080 of 1920×1080) centred on his
 //     mask's box at the contact, crops the masks, the pose and the drawings
 //     with it, and renders it through the same pipeline (h = −1). Every
@@ -30,23 +33,28 @@
 // Outputs, all in --out (never inside the repo): impact-hero.mp4 (H.264
 // yuv420p crf 18, 30 fps, the clip's audio), impact-hero-sheet.png (every 4th
 // frame, labelled f, j, k and the phase), impact-hero-slam.png (every frame
-// on clip f70–130), impact-vs-ref.png and .mp4 (j −8..31: the reference's
-// comp-NN.png, NN = kr(j) + 1, read where it is, on the left; the hero on the
-// right), the -reduced MP4 and sheets, effect.json (and effect-reduced.json),
-// moments.json (the derivation), timing.json (the main thread against 26 ms,
-// and every job), flash.json and turn.json. The clip's frames are read once
-// with ffmpeg into a raw file under --out, deleted at the end.
+// on clip f70–130), impact-hero-closeup.png (every frame from I − 8 to
+// I + 24, a 1.5× window about the punch-in centre mix(frame centre, P, 0.5)
+// at 1:1, with -p1.. pages of 9 that read whole at about 2000 px),
+// impact-vs-ref.png and .mp4 (j −8..31: the reference's comp-NN.png,
+// NN = kr(j) + 1, read where it is, on the left; the hero on the right; with
+// -p1.. pages of 10 pairs at half size), the -reduced MP4 and sheets,
+// effect.json (and effect-reduced.json), moments.json (the derivation),
+// timing.json (the main thread against 26 ms, every job, and the ms a frame
+// of each part of the shot: the limbs and their electricity, the strike, the
+// impact frames, the aftermath), flash.json and turn.json. The clip's frames
+// are read once with ffmpeg into a raw file under --out, deleted at the end.
 // Usage: node scripts/impact-render.ts --clip <clip.mp4> --drawings <test-drawings.json> --out <dir> [--ref <frames dir>] [--frames 0-159] [--tap <frame>] [--flash safe|full] [--tier full|phone] [--scale <× the clip's size>] [--portrait]
 import { createHash } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createCanvas, loadImage, type Canvas, type Image, type SKRSContext2D } from '@napi-rs/canvas';
 import { frameMasks } from '../src/app/pipeline.ts';
 import { checkFlashes, downsampleFrame, FlashCheckError, flashSummary, type CheckFrame, type FlashReport } from '../src/export/flash.ts';
-import { FREEZE_EXTRA, FREEZE_HOLD, POSTER_COUNT, kr, massGroup, type Phase } from '../src/impact/clock.ts';
+import { FREEZE_EXTRA, FREEZE_HOLD, POSTER_COUNT, drawingStart, kr, massGroup, type Phase } from '../src/impact/clock.ts';
 import { momentsFromDrawings, type DrawnMoments } from '../src/impact/detect.ts';
 import type { PosterSpec } from '../src/impact/frames/gentle.ts';
 import { LADDER, touchedFrames, walkLadder } from '../src/impact/ladder.ts';
@@ -77,6 +85,10 @@ const FIELD = 1080; // the internal frame's long side by default (scene.ts)
 const DEFAULT_FRAMES: [number, number] = [0, 159];
 const SHEET_EVERY = 4; // the sheet shows every 4th output frame
 const STRIP = [70, 130] as const; // clip frames the slam strip shows, every one
+const CLOSE_J = [-8, 24] as const; // the close-up: every frame from I − 8 to I + 24
+const CLOSE_ZOOM = 1.5; // the close-up's window: 1/1.5 of the frame about the punch-in centre, at 1:1
+const CLOSE_PAGE = 9; // close-up frames a page (3 × 3): a page reads whole at about 2000 px
+const VS_PAGE = 10; // side-by-side pairs a page (2 × 5), at half size
 const VS_J = [-8, 31] as const; // the side-by-side with the reference
 const TIPS_J = [-8, 9] as const; // frames labelled with the tips' distance from P
 const PLATE_CACHE = 8; // clip frames kept as RGBA
@@ -426,6 +438,25 @@ export function internalSize(width: number, height: number, size: number, resolu
   return { W: Math.round(width * s), H: Math.round(height * s) };
 }
 
+// A source rectangle, internal px.
+export interface Crop {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+// The close-up's window on a W×H frame: 1/zoom of it, even, about the
+// camera's punch-in centre mix(frame centre, P, 0.5) (design decision 7),
+// kept inside the frame. P in internal px.
+export function closeWindow(W: number, H: number, P: Vec2, zoom = CLOSE_ZOOM): Crop {
+  const w = Math.min(W, 2 * Math.round(W / zoom / 2));
+  const h = Math.min(H, 2 * Math.round(H / zoom / 2));
+  const cx = (W / 2 + P[0]) / 2;
+  const cy = (H / 2 + P[1]) / 2;
+  return { x: Math.min(W - w, Math.max(0, Math.round(cx - w / 2))), y: Math.min(H - h, Math.max(0, Math.round(cy - h / 2))), w, h };
+}
+
 // ---- Labels ----------------------------------------------------------------------------------
 
 // The phase in a few words: the limbs' emergence (grow 0–3, pop 0–1, from
@@ -513,6 +544,59 @@ export function timingSummary(frames: readonly FrameTime[], jobs: readonly JobTi
   };
 }
 
+export interface Span {
+  name: string;
+  what: string;
+  from: number; // clip frames, both included
+  to: number;
+}
+
+// The parts of the shot timed apart (decision 11's numbers), in clip frames:
+// the footage before the limbs, the limbs and their electricity (grow, pop,
+// idle and the coil), the strike, the impact frames, the aftermath and the
+// rest. Cut to first..last; a part with no frame left goes.
+export function shotSpans(first: number, last: number, f1: number, I: number | null): Span[] {
+  const grow = drawingStart(drawingIndex(f1, DPS), DPS); // the drawing that holds f1: the limbs start to grow
+  const spans: Span[] = [{ name: 'footage', what: 'the clip before the limbs: the plate and the grade', from: first, to: grow - 1 }];
+  if (I === null) spans.push({ name: 'limbs', what: 'the limbs and their electricity', from: grow, to: last });
+  else {
+    spans.push(
+      { name: 'limbs', what: 'the limbs and their electricity: grow, pop, idle and the coil (j ≤ −9)', from: grow, to: I - 9 },
+      { name: 'strike', what: 'the slam-down S0–S6 (j −8..−1)', from: I - 8, to: I - 1 },
+      { name: 'impact', what: 'the impact frames IF1–IF7 (j 0..8)', from: I, to: I + 8 },
+      { name: 'aftermath', what: 'fire, dust and lightning A0–A17 (j 9..31)', from: I + 9, to: I + 31 },
+      { name: 'after', what: 'the hold, the decay and the scars, with the limbs idle (j ≥ 32)', from: I + 32, to: last },
+    );
+  }
+  return spans.map((sp) => ({ ...sp, from: Math.max(first, sp.from), to: Math.min(last, sp.to) })).filter((sp) => sp.to >= sp.from);
+}
+
+// Each part's ms a frame: the main thread's (render() to a 1 px readback);
+// the drawings (jobs) due on its frames, by kind, wherever they ran; and the
+// two together, a frame with the drawings due on it (each is then held for
+// its frames), as stats and as the mean over the part. `lines` are the
+// medians of the scene's own timings() lines.
+export function segmentTimes(frames: readonly FrameTime[], jobs: readonly JobTime[], spans: readonly Span[]) {
+  const kinds = ['limb', 'mass', 'poster'] as const;
+  return spans.map((sp) => {
+    const mine = frames.filter((f) => f.clip >= sp.from && f.clip <= sp.to);
+    const outs = new Set(mine.map((f) => f.o));
+    const due = jobs.filter((jb) => outs.has(jb.due));
+    const together = mine.map((f) => f.ms + due.filter((jb) => jb.due === f.o).reduce((a, jb) => a + jb.ms, 0));
+    const names = [...new Set(mine.flatMap((f) => Object.keys(f.lines)))];
+    return {
+      name: sp.name,
+      what: sp.what,
+      clip: [sp.from, sp.to],
+      frames: mine.length,
+      main: stats(mine.map((f) => f.ms)),
+      jobs: Object.fromEntries(kinds.map((k) => [k, stats(due.filter((jb) => jb.kind === k).map((jb) => jb.ms))] as const).filter(([, s]) => s.n > 0)),
+      withDrawings: { ...stats(together), mean: r2(together.reduce((a, b) => a + b, 0) / Math.max(1, together.length)) },
+      lines: Object.fromEntries(names.map((n) => [n, stats(mine.map((f) => f.lines[n] ?? 0)).median])),
+    };
+  });
+}
+
 // A report on frames checked from output frame `first` on, numbered as output
 // frames (the checker counts from 0), so its windows, transitions and
 // summary name the frames the MP4 shows.
@@ -526,8 +610,8 @@ export function atFrames(report: FlashReport, first: number): FlashReport {
 }
 
 // The flash report without the parts that only repeat it: the windows and
-// fields that flash at all, and every transition as [frame, field,
-// direction, kind].
+// fields that flash at all (each field with its index, which the
+// transitions name), and every transition as [frame, field, direction, kind].
 export function flashBrief(report: FlashReport) {
   return {
     frames: report.frames,
@@ -540,7 +624,7 @@ export function flashBrief(report: FlashReport) {
     pass: report.pass,
     summary: flashSummary(report),
     windows: report.windows.filter((w) => w.general > 0 || w.red > 0),
-    fields: report.fields.filter((f) => f.general > 0 || f.red > 0),
+    fields: report.fields.flatMap((f, field) => (f.general > 0 || f.red > 0 ? [{ field, ...f }] : [])),
     transitions: report.transitions.map((t) => [t.frame, t.field, t.direction, t.kind] as const),
   };
 }
@@ -687,25 +771,43 @@ function label(ctx: SKRSContext2D, x: number, y: number, lines: readonly string[
 }
 
 const TITLE_PX = 15;
-const TITLE_LINES = 3;
+const TITLE_LINES = 4;
 const GAP = 2;
 
+// `text` broken at spaces into lines no wider than `width` px.
+function wrap(ctx: SKRSContext2D, text: string, width: number): string[] {
+  const out: string[] = [];
+  let line = '';
+  for (const word of text.split(' ')) {
+    const next = line ? `${line} ${word}` : word;
+    if (line && ctx.measureText(next).width > width) {
+      out.push(line);
+      line = word;
+    } else line = next;
+  }
+  if (line) out.push(line);
+  return out;
+}
+
 // A grid of frames with their labels, under a title written when it's saved.
+// With `src`, each cell shows that window of the frame (the close-up).
 class Sheet {
   private readonly slots: Map<number, number>;
   private readonly cols: number;
   private readonly cw: number;
   private readonly ch: number;
+  private readonly src: Crop | null;
   private readonly top: number;
   private readonly px: number;
   private readonly canvas: Canvas;
   private readonly ctx: SKRSContext2D;
 
-  constructor(frames: readonly number[], cols: number, cw: number, ch: number) {
+  constructor(frames: readonly number[], cols: number, cw: number, ch: number, src: Crop | null = null) {
     this.slots = new Map(frames.map((o, i) => [o, i]));
     this.cols = Math.max(1, Math.min(cols, frames.length));
     this.cw = cw;
     this.ch = ch;
+    this.src = src;
     this.px = Math.min(MAX_LABEL_PX, Math.max(9, Math.round(cw / 28)));
     this.top = TITLE_LINES * (TITLE_PX + 4) + 8;
     const rows = Math.max(1, Math.ceil(frames.length / this.cols));
@@ -724,11 +826,13 @@ class Sheet {
     if (i === undefined) return;
     const x = (i % this.cols) * (this.cw + GAP);
     const y = this.top + Math.floor(i / this.cols) * (this.ch + GAP);
-    this.ctx.drawImage(image, 0, 0, image.width, image.height, x, y, this.cw, this.ch);
+    const s = this.src ?? { x: 0, y: 0, w: image.width, h: image.height };
+    this.ctx.drawImage(image, s.x, s.y, s.w, s.h, x, y, this.cw, this.ch);
     label(this.ctx, x + 3, y + 3, lines, this.px);
     this.ctx.getImageData(0, 0, 1, 1); // rasterize now: the source canvas changes next frame
   }
 
+  // The title's lines, wrapped to the sheet's width, up to TITLE_LINES of them.
   save(file: string, title: readonly string[]) {
     const ctx = this.ctx;
     ctx.fillStyle = '#16141a';
@@ -736,10 +840,21 @@ class Sheet {
     ctx.fillStyle = '#f4f1ea';
     ctx.font = `${TITLE_PX}px sans-serif`;
     ctx.textBaseline = 'top';
-    title.slice(0, TITLE_LINES).forEach((l, i) => ctx.fillText(l, 8, 6 + i * (TITLE_PX + 4)));
+    const lines = title.flatMap((l) => wrap(ctx, l, this.canvas.width - 16));
+    lines.slice(0, TITLE_LINES).forEach((l, i) => ctx.fillText(l, 8, 6 + i * (TITLE_PX + 4)));
     writeFileSync(file, this.canvas.toBuffer('image/png'));
   }
 }
+
+// A sheet cut into pages of `per` frames; each page keeps only its own.
+function paged(frames: readonly number[], per: number, make: (frames: readonly number[]) => Sheet): Sheet[] {
+  const out: Sheet[] = [];
+  for (let i = 0; i < frames.length; i += per) out.push(make(frames.slice(i, i + per)));
+  return out;
+}
+
+// A title with the page's number on its first line.
+const pageTitle = (title: readonly string[], i: number, n: number): string[] => [`${title[0]} Page ${i + 1} of ${n}.`, ...title.slice(1)];
 
 const BAR = 32; // the side-by-side's label bar, px
 const PAIR_GAP = 8;
@@ -759,6 +874,7 @@ class VsRef {
   private readonly ctx: SKRSContext2D;
   private readonly video: Encoder;
   private readonly grid: Sheet;
+  private readonly pages: Sheet[]; // the grid's pairs VS_PAGE a page at half size, to read whole
   private readonly cache = new Map<string, Image | null>();
 
   private constructor(dir: string, W: number, H: number, refW: number, frames: readonly number[], mp4: string) {
@@ -772,6 +888,7 @@ class VsRef {
     this.ctx = this.canvas.getContext('2d');
     this.video = encoder(mp4, width, height, null);
     this.grid = new Sheet(frames, 3, Math.round(width / 3), Math.round(height / 3));
+    this.pages = paged(frames, VS_PAGE, (fr) => new Sheet(fr, 2, Math.round(width / 2), Math.round(height / 2)));
   }
 
   // Null when the folder has none of the reference frames.
@@ -812,17 +929,26 @@ class VsRef {
     ctx.fillText(`hero f${c} j${j}: ${phase}`, refW + PAIR_GAP + 10, BAR / 2);
     const data = ctx.getImageData(0, 0, this.canvas.width, this.canvas.height).data;
     await this.video.write(data);
-    this.grid.add(o, this.canvas, [`${name.replace('.png', '')} | f${c} j${j}`, phase]);
+    const lines = [`${name.replace('.png', '')} | f${c} j${j}`, phase];
+    this.grid.add(o, this.canvas, lines);
+    for (const page of this.pages) page.add(o, this.canvas, lines);
     this.pairs.push({ o, c, j, ref: name });
   }
 
-  async close(png: string, title: readonly string[]) {
+  // Writes the video, the grid to `png` and its pages to pageFile(i); returns the PNGs.
+  async close(png: string, title: readonly string[], pageFile: (i: number) => string): Promise<string[]> {
     try {
       await this.video.close();
     } catch (e) {
       if (this.pairs.length > 0) throw e; // no pair at all: no video either
     }
     this.grid.save(png, title);
+    const written = [png];
+    this.pages.forEach((page, i) => {
+      page.save(pageFile(i), pageTitle(title, i, this.pages.length));
+      written.push(pageFile(i));
+    });
+    return written;
   }
 }
 
@@ -1216,12 +1342,28 @@ export async function main(argv: readonly string[]): Promise<void> {
     const stripCols = W >= H ? 10 : 14;
     const sheetFor = (frames: readonly number[]) => new Sheet(frames.filter((o) => (o - frames[0]) % SHEET_EVERY === 0), sheetCols, Math.round(W / 3), Math.round(H / 3));
     const stripFor = (scene: ImpactScene, frames: readonly number[]) => new Sheet(frames.filter((o) => scene.clipOf(o) >= STRIP[0] && scene.clipOf(o) <= STRIP[1]), stripCols, Math.round(W / 4), Math.round(H / 4));
+    // The close-up: every frame from I − 8 to I + 24, its window at 1:1; the first pass also cuts it into pages.
+    const closeWin = closeWindow(W, H, [P[0] * firstScene.scale, P[1] * firstScene.scale]);
+    const closeFrames = (scene: ImpactScene, frames: readonly number[]) => frames.filter((o) => scene.clipOf(o) - I >= CLOSE_J[0] && scene.clipOf(o) - I <= CLOSE_J[1]);
+    const closeFor = (scene: ImpactScene, frames: readonly number[]) => new Sheet(closeFrames(scene, frames), W >= H ? 6 : 10, closeWin.w, closeWin.h, closeWin);
+    const closePagesFor = (scene: ImpactScene, frames: readonly number[]) => paged(closeFrames(scene, frames), CLOSE_PAGE, (fr) => new Sheet(fr, W >= H ? 3 : 5, closeWin.w, closeWin.h, closeWin));
+    const closeAbout = `every frame from I${CLOSE_J[0]} to I+${CLOSE_J[1]} close up: the ${closeWin.w}×${closeWin.h} window at (${closeWin.x}, ${closeWin.y}), 1:1, ${CLOSE_ZOOM}× about mix(frame centre, P, 0.5)`;
+    const saveClose = (close: Sheet, pages: readonly Sheet[], base: string, what: string, verdict: string) => {
+      if (close.size === 0) return;
+      close.save(file(base, 'png'), title(`${what}, ${closeAbout}`, verdict));
+      outputs.push(file(base, 'png'));
+      pages.forEach((page, i) => {
+        page.save(file(`${base}-p${i + 1}`, 'png'), pageTitle(title(`${what}, ${closeAbout}`, verdict), i, pages.length));
+        outputs.push(file(`${base}-p${i + 1}`, 'png'));
+      });
+    };
     const audioFor = (a: number, b: number, freeze: boolean) => (audio ? { clip: clipPath, filter: audioFilter(audioSegments(a, b, I, freeze), audio.rate, audio.layout) } : null);
     const timing = { frames: [] as FrameTime[], jobs: [] as JobTime[], readback: [] as number[] };
     let vsDone = false;
     let timed = false;
+    let paging = true;
 
-    // One pass with everything that comes off the first render: the side-by-side and the timing.
+    // One pass with everything that comes off the first render: the side-by-side, the close-up's pages and the timing.
     const firstPass = async (scene: ImpactScene, mp4: string, sheetName: string, stripName: string, what: string, name: string) => {
       const frames = range(first, last);
       const vsFrames = frames.filter((o) => scene.clipOf(o) - I >= VS_J[0] && scene.clipOf(o) - I <= VS_J[1]);
@@ -1229,16 +1371,20 @@ export async function main(argv: readonly string[]): Promise<void> {
       if (!vsDone && refDir && !vs) log(`  no comp-NN.png in ${refDir}: no side-by-side`);
       const sheet = sheetFor(frames);
       const strip = stripFor(scene, frames);
+      const close = closeFor(scene, frames);
+      const pages = paging ? closePagesFor(scene, frames) : [];
+      paging = false;
       const enc = encoder(mp4, W, H, audioFor(first, last, false));
-      const checks = await renderPass(r, scene, frames, { name, encoder: enc, sheets: [sheet, strip], vs, timing: timed ? null : timing });
+      const checks = await renderPass(r, scene, frames, { name, encoder: enc, sheets: [sheet, strip, close, ...pages], vs, timing: timed ? null : timing });
       await enc.close();
       if (vs) {
-        await vs.close(file('impact-vs-ref', 'png'), [`Inkwell hero render (WP14) beside the reference, j ${VS_J[0]}..${VS_J[1]}: left comp-NN.png (NN = kr(j) + 1), right the hero, ${what}`, facts, vs.missing.size ? `missing: ${[...vs.missing].join(', ')}` : `${vs.pairs.length} pairs`]);
-        outputs.push(file('impact-vs-ref', 'mp4'), file('impact-vs-ref', 'png'));
+        const vsTitle = [`Inkwell hero render (WP14) beside the reference, j ${VS_J[0]}..${VS_J[1]}: left comp-NN.png (NN = kr(j) + 1), right the hero, ${what}`, facts, vs.missing.size ? `missing: ${[...vs.missing].join(', ')}` : `${vs.pairs.length} pairs`];
+        const pngs = await vs.close(file('impact-vs-ref', 'png'), vsTitle, (i) => file(`impact-vs-ref-p${i + 1}`, 'png'));
+        outputs.push(file('impact-vs-ref', 'mp4'), ...pngs);
         vsDone = true;
       }
       timed = true;
-      return { checks, sheet, strip, sheetName, stripName };
+      return { checks, sheet, strip, close, pages, sheetName, stripName };
     };
 
     // Full impact frames: the check only warns (decision 5).
@@ -1253,6 +1399,7 @@ export async function main(argv: readonly string[]): Promise<void> {
         sheet.save(file(base, 'png'), title(`full impact frames (the default)${base.endsWith('slam') ? `, every frame on clip f${STRIP[0]}–${STRIP[1]}` : `, every ${SHEET_EVERY}th frame`}`, verdict));
         outputs.push(file(base, 'png'));
       }
+      saveClose(pass.close, pass.pages, 'impact-hero-closeup', 'full impact frames (the default)', verdict);
       flashJson.full = { video: outName('impact-hero', 'mp4', portrait), mode: 'full', warning: report.pass ? null : flashSummary(report), ...flashBrief(report) };
       log(`  flash check: ${flashSummary(report)}`);
     }
@@ -1291,32 +1438,51 @@ export async function main(argv: readonly string[]): Promise<void> {
         log(`  step ${step} (${ladder.name}, ${rendered} frames re-rendered): ${flashSummary(report)}`);
         return report;
       });
-      let sheets = { sheet: pass0.sheet, strip: pass0.strip };
+      let sheets = { sheet: pass0.sheet, strip: pass0.strip, close: pass0.close, pages: pass0.pages };
       let window: [number, number] = [first, last];
       if (walk.pass && walk.step > 0) {
         // The passing step's render, in full, over the step-0 one.
         const sc = base.degraded(walk.step);
         window = outputWindow(first, last, I, sc.degrade.freeze);
         const frames = range(window[0], window[1]);
-        sheets = { sheet: sheetFor(frames), strip: stripFor(sc, frames) };
+        sheets = { sheet: sheetFor(frames), strip: stripFor(sc, frames), close: closeFor(sc, frames), pages: pass0.pages.length > 0 ? closePagesFor(sc, frames) : [] };
         const enc = encoder(mp4, W, H, audioFor(window[0], window[1], sc.degrade.freeze));
-        await renderPass(r, sc, frames, { name: `reduced, step ${walk.step}`, encoder: enc, sheets: [sheets.sheet, sheets.strip], vs: null, timing: null });
+        await renderPass(r, sc, frames, { name: `reduced, step ${walk.step}`, encoder: enc, sheets: [sheets.sheet, sheets.strip, sheets.close, ...sheets.pages], vs: null, timing: null });
         await enc.close();
       }
       let error: string | null = null;
+      // The step-0 render kept for review when every step fails, under a name that says so.
+      const reviewBase = 'impact-hero-reduced-failed-check';
+      const failedFiles = [file(reviewBase, 'mp4'), ...['sheet', 'slam', 'closeup'].map((s) => file(`${reviewBase}-${s}`, 'png'))];
       if (walk.pass) {
         const what = `Reduce flashing, ladder step ${walk.step}${walk.step > 0 ? ` (${LADDER[walk.step - 1].name})` : ''}`;
         sheets.sheet.save(file('impact-hero-reduced-sheet', 'png'), title(`${what}, every ${SHEET_EVERY}th frame`, flashSummary(walk.report)));
         sheets.strip.save(file('impact-hero-reduced-slam', 'png'), title(`${what}, every frame on clip f${STRIP[0]}–${STRIP[1]}`, flashSummary(walk.report)));
         outputs.push(mp4, file('impact-hero-reduced-sheet', 'png'), file('impact-hero-reduced-slam', 'png'));
+        saveClose(sheets.close, sheets.pages, 'impact-hero-reduced-closeup', what, flashSummary(walk.report));
+        for (const f of failedFiles) rmSync(f, { force: true }); // an earlier run's
       } else {
         error = new FlashCheckError(walk.report).message;
         reducedError = error;
-        rmSync(mp4, { force: true });
-        log(`  FlashCheckError: ${error} No reduced MP4 is kept.`);
+        // No impact-hero-reduced.mp4: the app's export saves no file here
+        // (decision 5). What the preview shows with the toggle on (step 0) is
+        // kept for review only.
+        const review = failedFiles[0];
+        rmSync(review, { force: true });
+        renameSync(mp4, review);
+        for (const f of ['sheet', 'slam', 'closeup'].map((s) => file(`impact-hero-reduced-${s}`, 'png'))) rmSync(f, { force: true }); // an earlier run's
+        const what = 'Reduce flashing as the preview shows it (ladder step 0). It FAILS the flash check at every ladder step, so the export saves no file (FlashCheckError): for review only';
+        const verdict = `fails. Step 0: ${flashSummary(report0)} Step ${walk.step}: ${flashSummary(walk.report)}`;
+        sheets.sheet.save(file(`${reviewBase}-sheet`, 'png'), title(`${what}, every ${SHEET_EVERY}th frame`, verdict));
+        sheets.strip.save(file(`${reviewBase}-slam`, 'png'), title(`${what}, every frame on clip f${STRIP[0]}–${STRIP[1]}`, verdict));
+        outputs.push(review, file(`${reviewBase}-sheet`, 'png'), file(`${reviewBase}-slam`, 'png'));
+        saveClose(sheets.close, sheets.pages, `${reviewBase}-closeup`, what, verdict);
+        log(`  FlashCheckError: ${error} There is no ${outName('impact-hero-reduced', 'mp4', portrait)}; the step-0 render is kept for review as ${basename(review)}.`);
       }
       flashJson.reduced = {
         video: walk.pass ? outName('impact-hero-reduced', 'mp4', portrait) : null,
+        reviewVideo: walk.pass ? null : outName(reviewBase, 'mp4', portrait),
+        reviewNote: walk.pass ? null : 'every ladder step fails, so the export would save no file (FlashCheckError); this is the step-0 render (what the preview shows with Reduce flashing on), kept for review only',
         mode: 'safe',
         step: walk.step,
         stepName: walk.step > 0 ? LADDER[walk.step - 1].name : null,
@@ -1324,6 +1490,7 @@ export async function main(argv: readonly string[]): Promise<void> {
         ladder: rows,
         error,
         ...flashBrief(walk.report),
+        step0: walk.step > 0 ? { note: 'the gentle plan as the preview shows it, before the ladder', ...flashBrief(report0) } : null,
       };
     }
 
@@ -1338,6 +1505,8 @@ export async function main(argv: readonly string[]): Promise<void> {
       physics: { msPerFrame: r2(physics), frames: info.frames, note: 'the lift, the turn and the strike controller, run once for the whole clip' },
       deviceGate: { ...DEVICE_GATE, note: 'Qai’s iPhone run is pending (decision 9)' },
       ...timingSummary(timing.frames, timing.jobs, I),
+      segmentsNote: 'ms a frame for each part of the shot: main is the main thread a frame; jobs are the drawings due on the part’s frames, by kind, each drawn once and then held (limbs on 12 a second, posters 1–2 frames, masses by group); withDrawings is a frame’s main thread plus the drawings due on it, and its mean is the part’s average ms a frame with every drawing counted. Physics (above) is apart.',
+      segments: segmentTimes(timing.frames, timing.jobs, shotSpans(first, last, f1, I)),
       readback: stats(timing.readback),
       frames: timing.frames,
       eachJob: timing.jobs,
@@ -1349,13 +1518,17 @@ export async function main(argv: readonly string[]): Promise<void> {
     rmSync(work, { recursive: true, force: true });
   }
 
-  const tm = timingJson as { main?: { worstFrame: { o: number; ms: number } | null; median: number } } | null;
+  const tm = timingJson as { main?: { worstFrame: { o: number; ms: number } | null; median: number }; segments?: ReturnType<typeof segmentTimes> } | null;
   log(`done in ${((performance.now() - started) / 1000).toFixed(0)} s:`);
   for (const f of [...outputs, ...['effect', 'effect-reduced', 'moments', 'timing', 'flash', 'turn'].map((b) => file(b, 'json'))]) log(`  ${f}`);
   if (tm?.main?.worstFrame) log(`main thread: worst ${tm.main.worstFrame.ms} ms (o${tm.main.worstFrame.o}), median ${tm.main.median} ms, budget ${MAIN_BUDGET} ms`);
+  for (const sg of tm?.segments ?? []) {
+    const jobs = Object.entries(sg.jobs).map(([k, s]) => `${s.n} ${k} drawings median ${s.median} ms, worst ${s.worst}`);
+    log(`  ${sg.name} f${sg.clip[0]}–${sg.clip[1]}: main median ${sg.main.median} ms, worst ${sg.main.worst}; ${jobs.length ? `${jobs.join('; ')}; ` : ''}with the drawings ${sg.withDrawings.mean} ms a frame on average, worst ${sg.withDrawings.worst}`);
+  }
   log(`turn: ${turnText}`);
   // Reduce flashing enforces the check (decision 5): the run fails without its MP4.
-  if (reducedError) throw new Error(`Reduce flashing failed the flash check at every ladder step, so there is no ${outName('impact-hero-reduced', 'mp4', portrait)} (FlashCheckError: ${reducedError} See flash.json.) The other outputs are written.`);
+  if (reducedError) throw new Error(`Reduce flashing failed the flash check at every ladder step, so there is no ${outName('impact-hero-reduced', 'mp4', portrait)} (FlashCheckError: ${reducedError} See flash.json.) Its step-0 render is kept for review as ${outName('impact-hero-reduced-failed-check', 'mp4', portrait)}; the other outputs are written.`);
 }
 
 const fold = (p: string) => (process.platform === 'win32' ? p.toLowerCase() : p);

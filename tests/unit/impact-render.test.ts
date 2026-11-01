@@ -15,6 +15,7 @@ import {
   atFrames,
   audioFilter,
   audioSegments,
+  closeWindow,
   crackStroke,
   cropLeft,
   cropSamMask,
@@ -32,7 +33,9 @@ import {
   readDrawings,
   refName,
   samBox,
+  segmentTimes,
   shiftDrawings,
+  shotSpans,
   standInPoints,
   stats,
   timingSummary,
@@ -307,6 +310,14 @@ describe('the output frames, sizes and audio', () => {
     );
   });
 
+  it('frames the close-up 1.5× about the punch-in centre mix(frame centre, P, 0.5), inside the frame', () => {
+    // The hero's P (943, 1062.5) is (530.4, 597.7) at 1080×608: the window sits on the bottom edge.
+    expect(closeWindow(1080, 608, [530.4, 597.7])).toEqual({ x: 175, y: 202, w: 720, h: 406 });
+    expect(closeWindow(1080, 608, [540, 304])).toEqual({ x: 180, y: 101, w: 720, h: 406 });
+    expect(closeWindow(1080, 608, [0, 0])).toEqual({ x: 0, y: 0, w: 720, h: 406 });
+    expect(closeWindow(608, 1080, [304, 1070])).toEqual({ x: 101, y: 360, w: 406, h: 720 });
+  });
+
   it('names the outputs, and the reference drawing for each j', () => {
     expect(outName('impact-hero', 'mp4', false)).toBe('impact-hero.mp4');
     expect(outName('impact-hero-sheet', 'png', true)).toBe('impact-hero-sheet-portrait.png');
@@ -368,6 +379,41 @@ describe('the reports', () => {
     expect(t.jobs.mass).toMatchObject({ budget: 12, n: 0, over: 0 });
   });
 
+  it('splits the shot as design §8 does: footage, the limbs and their electricity, the strike, the impact frames, the aftermath and the rest', () => {
+    const parts = (first: number, last: number, I0: number | null) => shotSpans(first, last, 22, I0).map((sp) => [sp.name, sp.from, sp.to]);
+    expect(parts(0, 159, I)).toEqual([
+      ['footage', 0, 19],
+      ['limbs', 20, 75],
+      ['strike', 76, 83],
+      ['impact', 84, 92],
+      ['aftermath', 93, 115],
+      ['after', 116, 159],
+    ]);
+    expect(parts(70, 100, I)).toEqual([['limbs', 70, 75], ['strike', 76, 83], ['impact', 84, 92], ['aftermath', 93, 100]]);
+    expect(parts(0, 40, null)).toEqual([['footage', 0, 19], ['limbs', 20, 40]]);
+  });
+
+  it('times each part a frame: the main thread, the drawings due on its frames, and the two together', () => {
+    const frames: FrameTime[] = [
+      { o: 84, clip: 84, j: 0, ms: 2, lines: { total: 1 } },
+      { o: 85, clip: 85, j: 1, ms: 4, lines: { total: 3, glow: 1 } },
+      { o: 93, clip: 93, j: 9, ms: 40, lines: {} },
+    ];
+    const jobs: JobTime[] = [
+      { key: 'p0', kind: 'poster', due: 84, at: 81, ms: 20 },
+      { key: 'p1', kind: 'poster', due: 86, at: 83, ms: 30 }, // due on a frame not timed here
+      { key: '93', kind: 'limb', due: 93, at: 90, ms: 45 },
+    ];
+    const [impact, after] = segmentTimes(frames, jobs, [
+      { name: 'impact', what: 'IF1–IF7', from: 84, to: 92 },
+      { name: 'aftermath', what: 'A0–A17', from: 93, to: 115 },
+    ]);
+    expect(impact).toMatchObject({ name: 'impact', clip: [84, 92], frames: 2, main: { n: 2, worst: 4 }, jobs: { poster: { n: 1, worst: 20 } }, withDrawings: { worst: 22, mean: 13 } });
+    expect(impact.jobs).not.toHaveProperty('limb');
+    expect(impact.lines).toEqual({ total: 3, glow: 1 });
+    expect(after).toMatchObject({ frames: 1, main: { worst: 40 }, jobs: { limb: { n: 1, worst: 45 } }, withDrawings: { mean: 85 } });
+  });
+
   it('keeps the flash report`s verdict, its flashing windows and fields, and every transition', () => {
     const frame = (v: number): CheckFrame => ({ data: new Uint8ClampedArray(160 * 90 * 4).fill(v).map((x, i) => (i % 4 === 3 ? 255 : x)), width: 160, height: 90 });
     const report = checkFlashes(Array.from({ length: 40 }, (_, f) => frame(f % 2 ? 255 : 0)), 30);
@@ -377,6 +423,9 @@ describe('the reports', () => {
     expect(brief.summary).toMatch(/^This video flashes more than 3 times a second/);
     expect(brief.windows.length).toBeGreaterThan(0);
     expect(brief.windows.every((w) => w.general > 0 || w.red > 0)).toBe(true);
+    // Each field keeps its index, so a transition's field can be found.
+    expect(brief.fields.length).toBeGreaterThan(0);
+    expect(brief.fields.every((f) => report.fields[f.field].x === f.x && report.fields[f.field].y === f.y && report.fields[f.field].general === f.general)).toBe(true);
     expect(brief.transitions).toHaveLength(report.transitions.length);
     expect(brief.transitions[0]).toEqual([report.transitions[0].frame, report.transitions[0].field, report.transitions[0].direction, report.transitions[0].kind]);
     const still = flashBrief(checkFlashes(Array.from({ length: 40 }, () => frame(128)), 30));
