@@ -18,9 +18,11 @@
 //     so it changes on 2s and re-renders identically.
 //   - electric: a cel-shaded bolt (electric.ts).
 //   - blade, trail: shaded per pixel and cached per drawing (solid.ts).
-//   - limb: drawn as ink for now. Its settings are registered here; the
-//     shaded tube (render/limb.ts) takes over once the impact scene points
-//     the dispatch at it.
+//   - limb: the shaded tube (render/limb.ts) on its flat centerline, its
+//     sheath arcs (arcs3d.ts) round it, and the brush glow under it. Off a
+//     slam nothing knows the frame's short side, so it's taken as 16:9's,
+//     607.5 at 1080 wide; the impact scene (impact/scene.ts) draws the
+//     limbs itself, lifted, with their pulses and the slam's light.
 // The same code draws in Node (@napi-rs/canvas) and in the browser; the
 // caller passes a way to make scratch canvases, and they're reused.
 import type { BrushId, BrushSettings, Effect, LimbSettings, Vec2 } from '../types/effect.ts';
@@ -29,6 +31,9 @@ import { Centerline, bounds, grainNoise, mixBlack, mixWhite } from './geometry.t
 import { drawGlow, scratch, type BrushTarget, type MakeScratch } from './glow.ts';
 import { ELECTRIC_BOLT, ELECTRIC_GLOW, ELECTRIC_SIZE, drawElectric } from './electric.ts';
 import { BLADE_GLOW, BLADE_SIZE, TRAIL_GLOW, TRAIL_SIZE, drawBlade, drawTrail } from './solid.ts';
+import { arcPhase, arcTones, drawArcs, sheathArcs } from './arcs3d.ts';
+import { drawLimb, limbR0 } from './limb.ts';
+import { buildTube, flatHeld } from '../lift/tube.ts';
 
 export type { BrushTarget, MakeScratch, Pixels, Scratch } from './glow.ts';
 
@@ -104,8 +109,8 @@ export function drawBrushStroke(ctx: BrushTarget, make: MakeScratch, s: BrushStr
   if (s.brush === 'electric') return drawElectric(ctx, make, s);
   if (s.brush === 'blade') return drawBlade(ctx, make, { ...s, accent: s.accent ?? s.color });
   if (s.brush === 'trail') return drawTrail(ctx, make, { ...s, accent: s.accent ?? s.color });
+  if (s.brush === 'limb') return drawLimbStroke(ctx, make, s);
   const outline = strokeOutline(s.points, s.pressure, s.settings, s.scale, endsOf(s.brush));
-  if (s.brush === 'limb') return fillOutline(ctx, outline, s.color); // the ink path, glow and all ignored, until the tube takes over
   if (s.settings.glow) {
     drawGlow(ctx, make, { ...s, glow: s.settings.glow });
     for (const [size, white] of NEON_TUBE) {
@@ -117,6 +122,28 @@ export function drawBrushStroke(ctx: BrushTarget, make: MakeScratch, s: BrushStr
   } else {
     fillOutline(ctx, outline, s.color);
   }
+}
+
+// A limb off a slam: its tube flat on the frame (no depth, all in front),
+// the far arcs, the tube, the near arcs, over the brush glow.
+const LIMB_FRAME_SHORT = 607.5; // the short side at 1080 wide, 16:9
+const LIMB_LIGHT = '#f4f1ea'; // p1 and p2 for the limb's tones: the default palette's cream and ink
+const LIMB_DARK = '#16141a';
+function drawLimbStroke(ctx: BrushTarget, make: MakeScratch, s: BrushStroke) {
+  if (s.points.length < 2) return;
+  const S = LIMB_FRAME_SHORT * s.scale;
+  const settings = s.settings.limb ?? LIMB;
+  const tube = buildTube(flatHeld(s.id, s.points, s.pressure), limbR0(S, s.settings.size, settings), { taper: settings.taper });
+  if (tube.sections.length === 0) return;
+  const palette: [string, string, string] = [s.color, LIMB_LIGHT, LIMB_DARK];
+  const phase = arcPhase(s.emerge ?? null, null);
+  if (s.settings.glow && phase) drawGlow(ctx, make, { ...s, glow: s.settings.glow });
+  const arcs = phase ? sheathArcs(tube, s.k, phase, s.id, { S, idle: settings.arcs, lift: settings.arcLift }) : null;
+  const tones = arcTones(palette);
+  const target = ctx as unknown as Parameters<typeof drawLimb>[0] & Parameters<typeof drawArcs>[0];
+  if (arcs) drawArcs(target, arcs.far, tones);
+  drawLimb(target, target, tube, { S, k: s.k, palette, settings, age: s.emerge });
+  if (arcs) drawArcs(target, arcs.near, tones);
 }
 
 function drawGrained(ctx: BrushTarget, make: MakeScratch, outline: Vec2[], s: BrushStroke) {

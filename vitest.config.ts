@@ -15,6 +15,7 @@ const TIMED = [
   'tests/unit/impact-frames.test.ts',
   'tests/unit/aftermath-mass.test.ts',
   'tests/unit/aftermath-energy.test.ts',
+  'tests/unit/impact-scene-budget.test.ts',
 ];
 
 export default defineConfig({

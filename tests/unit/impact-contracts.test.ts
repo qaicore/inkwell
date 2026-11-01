@@ -11,6 +11,8 @@ import { drawingIndex } from '../../src/motion/timing.ts';
 import { assertOutsideRepo, parseArgs } from '../../scripts/lib/out-dir.ts';
 import { LIMB, LIMB_BRUSH, LIMB_GLOW, brushSettings, endsOf } from '../../src/render/brushes.ts';
 import { renderPng } from '../../src/render/headless.ts';
+import { limbTones } from '../../src/render/limb.ts';
+import { createCanvas, loadImage } from '@napi-rs/canvas';
 import type { PlacedStroke } from '../../src/motion/animate.ts';
 import { BRUSH_IDS, parseEffect, serializeEffect, type Effect, type Vec2 } from '../../src/types/effect.ts';
 import { HERO, HERO_CRACKS, MESSY_KINDS, asGroundStrokes, messyDrawing, messyDrawings } from './helpers/impact-drawings.ts';
@@ -326,14 +328,27 @@ describe("the 'limb' brush", () => {
     expect(brushSettings({ ...OLD, brushes: { limb: { ...s, size: 40 } } }, 'limb').size).toBe(40);
   });
 
-  it('draws through the ink path until the tube takes over', () => {
+  // WP12 points the dispatch at the shaded tube (render/limb.ts): the same
+  // pixels every time, neither the ink path nor the neon one, and the body
+  // in the limb's own cel tones.
+  it('draws the shaded tube, the same every time, in its own body tone', async () => {
     const points = Array.from({ length: 32 }, (_, i): Vec2 => [30 + i * 7, 90 + 40 * Math.sin(i / 5)]);
     const placed: PlacedStroke[] = [{ id: 1, points, pressure: points.map((_, i) => 1 - i / 40), layer: 'front' }];
     const limb = renderPng(300, 200, placed, { ...OLD, strokes: [{ ...OLD.strokes[0], brush: 'limb' }] });
+    const again = renderPng(300, 200, placed, { ...OLD, strokes: [{ ...OLD.strokes[0], brush: 'limb' }] });
     const ink = renderPng(300, 200, placed, { ...OLD, brush: { ...LIMB_BRUSH }, strokes: [{ ...OLD.strokes[0], brush: 'ink' }] });
     const neon = renderPng(300, 200, placed, { ...OLD, brushes: { 'neon-round': brushSettings(OLD, 'limb') }, strokes: [{ ...OLD.strokes[0], brush: 'neon-round' }] });
-    expect(limb.equals(ink)).toBe(true);
-    expect(limb.equals(neon)).toBe(false); // its glow setting doesn't send it down the neon path
+    expect(limb.equals(again)).toBe(true);
+    expect(limb.equals(ink)).toBe(false);
+    expect(limb.equals(neon)).toBe(false);
+    const ctx = createCanvas(300, 200).getContext('2d');
+    ctx.drawImage(await loadImage(limb), 0, 0);
+    const { data } = ctx.getImageData(0, 0, 300, 200);
+    const body = limbTones(OLD.palette).body;
+    const [r, g, b] = [1, 3, 5].map((i) => parseInt(body.slice(i, i + 2), 16));
+    let near = 0;
+    for (let i = 0; i < data.length; i += 4) if (data[i + 3] === 255 && Math.abs(data[i] - r) + Math.abs(data[i + 1] - g) + Math.abs(data[i + 2] - b) <= 12) near++;
+    expect(near).toBeGreaterThan(200); // a band of body tone along the tube
   });
 });
 

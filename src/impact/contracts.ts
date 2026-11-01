@@ -210,3 +210,34 @@ export function syntheticTube(n: number, length: number, r: number, origin: Vec2
   });
   return { id, sections, length };
 }
+
+// ---- Render-ahead (design §10) ------------------------------------------------------
+
+// A drawing's glow as recorded calls, replayed into the frame's glow buffers
+// when the drawing first shows. `id` null is steady light; a limb id is that
+// limb's arcs, which the composite flickers by arcFlicker(id, c1) per kr step.
+export interface DrawnGlow {
+  id: number | null;
+  calls: GlowCall[];
+}
+
+// One drawn part of a frame (a limb layer, a mass, a poster), in a canvas the
+// size of its box: the stack lays its pixels at (x0, y0), frame px.
+export interface DrawnPart {
+  key: string; // what it shows: the same key draws the same pixels
+  slot: StackSlot | 'poster';
+  name: string; // 'fire', 'limbsFront', 'poster', …
+  image: unknown; // the canvas (or a worker's bitmap of it); null when it drew nothing
+  x0: number;
+  y0: number;
+  width: number;
+  height: number;
+  glow?: DrawnGlow[];
+}
+
+// What a DrawingJob draws: its parts, each stored by its own key.
+export interface DrawnLayer {
+  key: string; // the job's key
+  kind: DrawingJob['kind'];
+  parts: DrawnPart[];
+}
