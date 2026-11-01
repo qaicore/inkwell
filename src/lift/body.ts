@@ -10,6 +10,7 @@
 // the drawing frame), x his left, y down his spine, z out of his chest.
 import type { Vec2 } from '../types/effect.ts';
 import type { SamMask } from '../sam/cache.ts';
+import type { Bend } from '../track/bend.ts';
 import type { Pose } from '../track/tracking.ts';
 import type { TorsoTransform } from '../track/torso.ts';
 
@@ -32,8 +33,10 @@ export const TORSO = { cy: -0.325, a: 0.33, b: 0.675, c: 0.2 };
 export const HEAD = { cy: -1.25, r: 0.2 };
 const CAMERA = 10; // camera distance in torso heights: a gentle perspective
 
-// θ in degrees from turn keys [frame, degrees], linear between them.
+// θ in degrees from turn keys [frame, degrees], linear between them. No keys
+// is no turn: 0.
 export function turnAt(keys: readonly Vec2[], f: number): number {
+  if (keys.length === 0) return 0;
   for (let i = 1; i < keys.length; i++) {
     const [f0, a0] = keys[i - 1];
     const [f1, a1] = keys[i];
@@ -77,6 +80,20 @@ export function bendFromHeight(heights: (number | null)[], standing: number): nu
 
 export function bodyFrom(pose: Pose, unit0: number, yawDeg: number, pitch: number): Body3D {
   return { x: pose.x, y: pose.y, unit: unit0 * pose.scale, yaw: (yawDeg * Math.PI) / 180, pitch, roll: pose.angle };
+}
+
+// The body on every frame (impact design §2, "Frames without a pose"): where
+// he is and how big from the anchor pose, which the mask gives on every frame;
+// the turn from the keys (turn.ts); the bend and roll from the stand-in's
+// shoulders and hips (track/bend.ts, which holds them through the frames
+// without a good pose and blends them back). The roll is taken from the
+// drawing frame's, where the anchor is upright. Without a bend, the anchor's
+// own angle and `pitch` (bendFromHeight's, say; upright where it's missing).
+export function liftBodies(poses: readonly Pose[], unit0: number, drawn: number, keys: readonly Vec2[], bend: readonly Bend[] | null, pitch: readonly number[] = []): Body3D[] {
+  return poses.map((pose, f) => {
+    if (!bend) return bodyFrom(pose, unit0, turnAt(keys, f), pitch[f] ?? 0);
+    return { ...bodyFrom(pose, unit0, turnAt(keys, f), bend[f].pitch), roll: bend[f].roll - bend[drawn].roll };
+  });
 }
 
 export function lerpBody(a: Body3D, b: Body3D, w: number): Body3D {

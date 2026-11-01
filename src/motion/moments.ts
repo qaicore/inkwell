@@ -1,6 +1,7 @@
 // Moments on the clip's timeline (SPEC §8.9): when things happen, in drawings.
 //   - emergeAges: for each stroke an 'emerge' moment covers, how many
-//     drawings ago it came out (negative before), for the electric brush.
+//     drawings ago it came out (negative before), for the electric and limb
+//     brushes (an emerge with no stroke list covers both).
 //   - suggestArmsOpen: a frame for that moment, from the stand-in's wrists,
 //     for Qai to confirm or move. Free and local. It looks for the clip's
 //     first fast opening: the wrists' spread (armSpread) rising faster than
@@ -8,13 +9,14 @@
 //     opens the arms too, and the kagune comes out before that). It returns
 //     the first frame where the spread is within 10% of where that rise tops
 //     out.
-import type { Effect, EmergeMoment, Vec2 } from '../types/effect.ts';
+import type { BrushId, Effect, EmergeMoment, Vec2 } from '../types/effect.ts';
 import { drawingIndex } from './timing.ts';
 
 const FPS = 30; // the converted clip's rate (SPEC §8.1)
 const OPEN_SPEED = 0.06; // torso lengths per frame
 const SETTLE = 15; // frames after the rise to look for its top
 const MIN_RISE = 0.5;
+const EMERGING: readonly (BrushId | undefined)[] = ['electric', 'limb']; // the brushes that grow out of him
 
 export function emergeAges(effect: Effect, k: number): Map<number, number> {
   const ages = new Map<number, number>();
@@ -22,7 +24,7 @@ export function emergeAges(effect: Effect, k: number): Map<number, number> {
   for (const m of effect.moments ?? []) {
     if (m.kind !== 'emerge') continue;
     const at = drawingIndex(Math.round(m.at * FPS), dps, FPS);
-    const ids = (m as EmergeMoment).strokes ?? effect.strokes.filter((s) => s.brush === 'electric').map((s) => s.id);
+    const ids = (m as EmergeMoment).strokes ?? effect.strokes.filter((s) => EMERGING.includes(s.brush)).map((s) => s.id);
     for (const id of ids) ages.set(id, k - at);
   }
   return ages;

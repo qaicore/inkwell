@@ -7,7 +7,7 @@ import { drawingIndex, EXAMPLE_TIMING, validateTiming, type Timing } from '../mo
 import type { FollowMode } from '../track/standin';
 import { torsoHeights } from '../track/torso';
 import { followShapes, maskHasPerson, maskNear, smoothTrack, trackStroke, type Pose, type Tracking } from '../track/tracking';
-import { animateStroke, drawLive, effectOf, PALETTE, type ClipMotion, type DrawnStroke, type Stroke } from './engine';
+import { animateStroke, browserScratch, drawLive, drawStroke, effectOf, PALETTE, type ClipMotion, type DrawnStroke, type Stroke } from './engine';
 import { personAndFace, samTracking, type SamSource } from './pipeline';
 import { applyOverride, applyPlan, isOverridden, OVERRIDE_FIELDS, type OverrideField } from './overrides';
 import { renderPlanPanel } from './plan-panel';
@@ -244,7 +244,7 @@ function paint() {
   // pointer, so the frame fills the canvas exactly.
   ctx.setTransform(view.width / clip.width, 0, 0, view.height / clip.height, 0, 0);
   ctx.imageSmoothingQuality = 'high';
-  renderFrame(ctx, frameBuffer, frame, clip.width, clip.height, scene());
+  renderFrame(ctx, frameBuffer, frame, clip.width, clip.height, scene(), { make: browserScratch, drawStroke });
   if (showTracking.checked && tracking) paintTracking(clip);
   if (live) drawLive(ctx, live);
 }
@@ -693,7 +693,7 @@ async function exportVideo() {
     const frameScene = scene();
     const video = await exportClip(
       clip,
-      (exportCtx, image, i) => renderFrame(exportCtx, image, i, width, height, frameScene),
+      (exportCtx, image, i) => renderFrame(exportCtx, image, i, width, height, frameScene, { make: browserScratch, drawStroke }),
       (p) => setStatus(`Exporting… ${percent(p)}`),
     );
     const name = `${clip.name.replace(/\.[^.]+$/, '')}-inkwell.mp4`;

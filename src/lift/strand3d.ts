@@ -4,7 +4,16 @@
 // each joint against the target's bend carried onto the current chain (the
 // smallest rotation that takes the target's parent segment onto the chain's).
 // Same parameters, so stiffness 0.1 means the same floppiness as in 2D.
+//
+// The strike hook (impact design §4): a step can take one LimbControl. Its
+// target replaces the drawing's for the shape pull and the bend limit (the
+// root stays on the lifted root, P1); its stiffness replaces the stroke's;
+// restScale scales every rest length; the impulse is added to each node's
+// velocity before the Verlet step; and the pin holds the tip node, fixed like
+// the root through the distance passes and re-applied after every pass that
+// can move it. Without one, a step is exactly what it always was.
 import { DEFAULT_PHYSICS, type PhysicsParams } from '../physics/strand.ts';
+import type { LimbControl } from '../impact/contracts.ts';
 import type { Vec3 } from './body.ts';
 
 const PULL = 0.5;
@@ -22,18 +31,31 @@ export function createChain3(target: Vec3[], kind: Chain3['kind'], stiffness: nu
   return { kind, stiffness, points: target.map(copy), prev: target.map(copy) };
 }
 
-export function stepChain3(chain: Chain3, target: Vec3[], unitPx: number, params: PhysicsParams = DEFAULT_PHYSICS): void {
+// `target`: the lifted drawing on this step, camera px. `control`: the strike
+// hook's orders for this step (null or missing: none).
+export function stepChain3(chain: Chain3, target: Vec3[], unitPx: number, params: PhysicsParams = DEFAULT_PHYSICS, control?: LimbControl | null): void {
   const { points, prev } = chain;
   const n = points.length;
+  const shape = control?.target ?? target;
+  const stiffness = control?.stiffness ?? chain.stiffness;
+  const pin = control?.pin ?? null;
+  const hold = () => {
+    if (pin) points[n - 1] = copy(pin);
+  };
   if (chain.kind === 'rigid') {
     for (let i = 0; i < n; i++) {
       prev[i] = points[i];
-      points[i] = copy(target[i]);
+      points[i] = copy(i === 0 ? target[0] : shape[i]);
     }
+    hold();
     return;
   }
   const before = new Array<Vec3>(n - 1);
   for (let i = 0; i < n - 1; i++) before[i] = unit(points[i], points[i + 1]);
+
+  // 0. The impulse: velocity is (points − prev)/dt, so it moves prev.
+  const impulse = control?.impulse;
+  if (impulse) for (let i = 1; i < n; i++) prev[i] = sub(prev[i], scale(impulse[i], params.dt));
 
   // 1. Verlet, with gravity straight down the screen (the camera is level).
   const keep = 1 - params.damping;
@@ -46,31 +68,37 @@ export function stepChain3(chain: Chain3, target: Vec3[], unitPx: number, params
   }
   prev[0] = points[0];
   points[0] = copy(target[0]);
+  hold();
 
-  // 2. Distance constraints, then dynamic follow-the-leader.
+  // 2. Distance constraints, then dynamic follow-the-leader. A pinned tip is
+  // fixed like the root, and follow-the-leader stops short of it.
+  const restScale = control?.restScale ?? 1;
   const rest = new Array<number>(n - 1);
-  for (let i = 0; i < n - 1; i++) rest[i] = distance(target[i], target[i + 1]);
+  for (let i = 0; i < n - 1; i++) rest[i] = distance(target[i], target[i + 1]) * restScale;
   for (let pass = 0; pass < params.passes; pass++) {
     const forward = pass % 2 === 0;
     for (let j = 0; j < n - 1; j++) {
       const i = forward ? j : n - 2 - j;
-      satisfy(points, i, rest[i], before[i]);
+      satisfy(points, i, rest[i], before[i], pin !== null);
     }
+    hold();
   }
   const moved: Vec3[] = new Array(n);
   moved[0] = [0, 0, 0];
-  for (let i = 0; i < n - 1; i++) moved[i + 1] = follow(points, i, rest[i], before[i]);
+  for (let i = 0; i < n - 1; i++) moved[i + 1] = pin && i === n - 2 ? [0, 0, 0] : follow(points, i, rest[i], before[i]);
   for (let i = 1; i < n - 1; i++) prev[i] = add(prev[i], scale(moved[i + 1], FTL_DAMPING));
 
   // 3. Shape pull.
-  const k = PULL * chain.stiffness * chain.stiffness;
-  if (k > 0) for (let i = 1; i < n; i++) points[i] = add(points[i], scale(sub(target[i], points[i]), k));
+  const k = PULL * stiffness * stiffness;
+  if (k > 0) for (let i = 1; i < n; i++) points[i] = add(points[i], scale(sub(shape[i], points[i]), k));
+  hold();
 
   // 4. Bend limit.
   if (params.bendLimitDeg !== null) {
     const limit = (params.bendLimitDeg * Math.PI) / 180;
-    const root = Math.PI - (Math.PI - limit) * Math.min(1, chain.stiffness / ROOT_HELD_FROM);
-    limitBends(points, target, limit, root);
+    const root = Math.PI - (Math.PI - limit) * Math.min(1, stiffness / ROOT_HELD_FROM);
+    limitBends(points, shape, limit, root);
+    hold();
   }
 }
 
@@ -82,11 +110,16 @@ function axis(a: Vec3, b: Vec3, before: Vec3): [Vec3, number] {
   return [scale(d, 1 / len), len];
 }
 
-function satisfy(points: Vec3[], i: number, rest: number, before: Vec3) {
+// The root never moves; nor does a pinned tip (`pinned`), so the segment into
+// it moves only its inner end.
+function satisfy(points: Vec3[], i: number, rest: number, before: Vec3, pinned = false) {
   const [u, d] = axis(points[i], points[i + 1], before);
   const error = d - rest;
+  const last = pinned && i === points.length - 2;
   if (i === 0) {
-    points[1] = sub(points[1], scale(u, error));
+    if (!last) points[1] = sub(points[1], scale(u, error));
+  } else if (last) {
+    points[i] = add(points[i], scale(u, error));
   } else {
     points[i] = add(points[i], scale(u, error / 2));
     points[i + 1] = sub(points[i + 1], scale(u, error / 2));

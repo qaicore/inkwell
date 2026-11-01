@@ -9,6 +9,7 @@
 // and the simulation never stops, so momentum carries through the holds.
 import type { Effect, Vec2 } from '../types/effect.ts';
 import { DEFAULT_PHYSICS, createChain, stepChain, type Chain, type PhysicsParams } from '../physics/strand.ts';
+import { gapWeights, holdGaps } from '../track/bend.ts';
 import { lerpTransform, offsetToTorso, toPixels, toTorso, type TorsoTransform } from '../track/torso.ts';
 import { boilOffsets, type BoilParams } from './boil.ts';
 import { warpView, type BodyAngle } from './body.ts';
@@ -38,10 +39,34 @@ export interface AnimateOptions {
   boil: BoilParams;
   physics?: PhysicsParams;
   fps?: number;
-  // The body's facing and forward bend at a (fractional) frame, or null for
-  // upright and facing the camera. When given, each target is turned with it
-  // (body.ts) before the physics, and the layer follows.
+  // The body's facing and forward bend at a (fractional) frame, or null where
+  // there's no pose: those frames hold the last angle there was, and it blends
+  // back over 4 frames when the pose returns (track/bend.ts's gap rule). Null
+  // on every frame is upright and facing the camera. When given, each target
+  // is turned with it (body.ts) before the physics, and the layer follows.
   body?: (frame: number) => BodyAngle | null;
+}
+
+// `body` under the gap rule, from its values on the whole frames. Between
+// two frames that show their own pose it's `body` itself, so a body that is
+// never null is untouched.
+export function heldBody(body: (frame: number) => BodyAngle | null, frames: number): (frame: number) => BodyAngle | null {
+  const at = Array.from({ length: frames }, (_, f) => body(f));
+  const good = at.map((a) => a !== null);
+  if (!good.includes(false)) return body;
+  if (!good.includes(true)) return () => null;
+  const theta = holdGaps(at.map((a) => a?.theta ?? 0), good);
+  const pitch = holdGaps(at.map((a) => a?.pitch ?? 0), good);
+  const w = gapWeights(good);
+  const own = (f: number) => good[f] && w[f] === 1;
+  return (frame) => {
+    const a = Math.max(0, Math.min(frames - 1, Math.floor(frame)));
+    const b = Math.min(frames - 1, a + 1);
+    const live = own(a) && own(b) ? body(frame) : null;
+    if (live) return live;
+    const t = Math.max(0, Math.min(1, frame - a));
+    return { theta: theta[a] + (theta[b] - theta[a]) * t, pitch: pitch[a] + (pitch[b] - pitch[a]) * t };
+  };
 }
 
 export function animate(opts: AnimateOptions): AnimatedFrame[] {
@@ -50,13 +75,14 @@ export function animate(opts: AnimateOptions): AnimatedFrame[] {
   const steps = Math.round(1 / (fps * params.dt));
   if (Math.abs(steps * fps * params.dt - 1) > 1e-9) throw new Error(`dt ${params.dt} doesn't divide a ${fps} fps frame`);
   const dps = opts.effect.timing.drawingsPerSecond;
+  const body = opts.body && heldBody(opts.body, opts.frames);
 
   // M1 has the front view only; the turn (§8.5) blends views here later.
   // Until then, `body` turns the front view (the §8.5 single-view fallback).
   const strokes = opts.effect.strokes.map((stroke) => {
     const view = stroke.views.front;
     const shape = (frame: number) => {
-      const at = opts.body?.(frame);
+      const at = body?.(frame);
       return at ? warpView(view.points, (stroke.bodyAngle * Math.PI) / 180, at) : { points: view.points, layer: view.layer };
     };
     const target = (t: TorsoTransform, frame: number) => shape(frame).points.map((p) => toPixels(t, p));
