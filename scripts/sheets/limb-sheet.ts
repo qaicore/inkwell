@@ -211,11 +211,11 @@ function bandsRow(): Row {
 // ---- 3. Emergence -----------------------------------------------------------------------------
 
 // A quarter circle from a root low on the left up to a tip high on the right.
-const curl = (id: number) => limbAlong(id, (t) => [320 - 255 * Math.cos((Math.PI / 2) * t), 330 - 255 * Math.sin((Math.PI / 2) * t), -40 * t]);
+const curve = (id: number) => limbAlong(id, (t) => [320 - 255 * Math.cos((Math.PI / 2) * t), 330 - 255 * Math.sin((Math.PI / 2) * t), -40 * t]);
 
 function growthRow(): Row {
   const S = 1080;
-  const tube = buildTube(curl(31), limbR0(S));
+  const tube = buildTube(curve(31), limbR0(S));
   const says = ['grows to 44 %, the head hot', 'grows to 75 %', 'grows to 94 %', 'grows to 100 %', 'pops: flash 1, 14 sparks', 'pops: flash 0.5, sparks farther, thinner'];
   return {
     title: 'Emergence, ages 0–5 (EMERGE grow 4, pop 2; on 2s, k = k(f1) + age)',
@@ -231,7 +231,7 @@ function growthRow(): Row {
 
 function detailsRow(): Row {
   const S = 1080;
-  const tube = buildTube(curl(41), limbR0(S));
+  const tube = buildTube(curve(41), limbR0(S));
   const base: LimbOptions = { S, k: 4, palette: PALETTE, crackle: 0 };
   const pulse: PulseSpan = { s: 0.45, len: 0.22, scale: 1.3, core: 0.55 };
   const draw = (opts: LimbOptions) => (ctx: Ctx) => layered(ctx, 360, 405, (behind, front) => drawLimb(behind, front, tube, opts));

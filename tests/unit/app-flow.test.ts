@@ -10,6 +10,7 @@ import {
   asSamMask,
   asSamMasks,
   back,
+  clearTurn,
   flowMoments,
   forgetStroke,
   impactDone,
@@ -29,7 +30,6 @@ import {
   snapRoot,
   suggestLimbFrame,
   turnKeyFrames,
-  turnSkip,
   turnTap,
   type DrawnOn,
   type Flow,
@@ -102,10 +102,11 @@ const cracksOn = (f: number): DrawnOn[] => [
 ];
 const cue = (parked: number | null = null): ImpactCue => ({ parked, masks, S });
 
-// The flow up to the turn sheet, the limbs drawn on f1.
-const atTurn = (f1 = 40) => limbsDone(openLimbs(initialFlow(), f1), limbsOn(f1));
-// Through Done on the impact, drawn on fDrawn, after Skip.
-const atPreview = (fDrawn = 60, f1 = 40) => impactDone(turnSkip(atTurn(f1), cue(fDrawn)), { limbs: limbsOn(f1), cracks: cracksOn(fDrawn) }, masks, S);
+// The flow up to the impact sheet, the limbs drawn on f1: Done on the limbs
+// opens it on the cue (the parked frame, when given), with no tap between.
+const atImpact = (f1 = 40, parked: number | null = null) => limbsDone(openLimbs(initialFlow(), f1), limbsOn(f1), cue(parked));
+// Through Done on the impact, drawn on fDrawn.
+const atPreview = (fDrawn = 60, f1 = 40) => impactDone(atImpact(f1, fDrawn), { limbs: limbsOn(f1), cracks: cracksOn(fDrawn) }, masks, S);
 const slamOf = (flow: Flow) => flowMoments(flow).moments.find((m): m is Moment => m.kind === 'slam');
 
 // ---- The flow ------------------------------------------------------------------------------
@@ -117,44 +118,49 @@ describe('the two-drawing flow', () => {
     expect(flowMoments(initialFlow())).toEqual({ moments: [], turn: null });
   });
 
-  it('opens Draw limbs on the suggested frame, and Done goes to the turn on f1', () => {
+  it('opens Draw limbs on the suggested frame, and Done opens the impact sheet on the cue with no tap between (decision 1)', () => {
     const open = openLimbs(initialFlow(), 22);
     expect(open).toMatchObject({ step: 'limbs', frame: 22 });
-    const done = limbsDone(open, limbsOn(22));
-    expect(done).toMatchObject({ step: 'turn', frame: 22, f1: 22, limbs: [1, 2], derived: null, contact: null, message: null });
-    expect(flowMoments(done).moments).toEqual([{ kind: 'emerge', at: 22 / 30, strokes: [1, 2] }]);
+    const done = limbsDone(open, limbsOn(22), cue());
+    const at = suggestImpactFrame({ parked: null, f1: 22, masks, S }).frame;
+    expect(done).toMatchObject({ step: 'impact', frame: at, f1: 22, limbs: [1, 2], turn: null, derived: null, contact: null, message: null });
+    expect(flowMoments(done)).toEqual({ moments: [{ kind: 'emerge', at: 22 / 30, strokes: [1, 2] }], turn: null });
+    // The frame he parked the scrubber on wins.
+    expect(limbsDone(open, limbsOn(22), cue(70))).toMatchObject({ step: 'impact', frame: 70 });
     // Opened again, it opens on the limbs he drew.
     expect(openLimbs(done, 5).frame).toBe(22);
   });
 
   it('checks the limb drawing: 1 to 6 strokes, all on one frame', () => {
     const open = openLimbs(initialFlow(), 22);
-    expect(limbsDone(open, [])).toMatchObject({ step: 'limbs', f1: null, message: 'Draw the limbs first: 1 to 6 strokes, from his body outward.' });
+    expect(limbsDone(open, [], cue())).toMatchObject({ step: 'limbs', f1: null, message: 'Draw the limbs first: 1 to 6 strokes, from his body outward.' });
     const seven = Array.from({ length: 7 }, (_, i): DrawnOn => ({ ...limbsOn(22)[0], id: i + 1 }));
-    expect(limbsDone(open, seven).message).toBe("That's 7 limbs; 6 at most.");
+    expect(limbsDone(open, seven, cue()).message).toBe("That's 7 limbs; 6 at most.");
     const split = [limbsOn(22)[0], { ...limbsOn(30)[1] }];
-    expect(limbsDone(open, split).message).toBe("The limbs are one drawing: draw them all on one frame (they're on f22, f30).");
+    expect(limbsDone(open, split, cue()).message).toBe("The limbs are one drawing: draw them all on one frame (they're on f22, f30).");
   });
 
-  it('Skip opens the impact sheet on the cue with no turn, so the pose read decides', () => {
-    const skipped = turnSkip(atTurn(), cue(70));
-    expect(skipped).toMatchObject({ step: 'impact', frame: 70, turn: null });
-    const unparked = turnSkip(atTurn(), cue());
-    expect(unparked.frame).toBe(suggestImpactFrame({ parked: null, f1: 40, masks, S }).frame);
-    expect(flowMoments(skipped).turn).toBeNull();
+  it('needs no turn tap: with none, the pose read decides (decision 4)', () => {
+    const impact = atImpact(40, 70);
+    expect(impact).toMatchObject({ step: 'impact', frame: 70, turn: null });
+    expect(flowMoments(impact).turn).toBeNull();
+    expect(flowMoments(atPreview(60)).turn).toBeNull();
+    // There is no turn step to pass through.
+    for (const flow of [initialFlow(), openLimbs(initialFlow(), 22), impact, atPreview(60)]) expect(['idle', 'limbs', 'impact', 'preview']).toContain(flow.step);
   });
 
-  it('This frame keeps his tap, with the direction toggle, and opens the impact sheet on the cue', () => {
-    const tapped = turnTap(atTurn(), 75, cue());
-    expect(tapped.step).toBe('impact');
-    expect(tapped.turn).toEqual({ at: 75 / 30, dir: 1 });
-    expect(tapped.frame).toBe(suggestImpactFrame({ parked: null, f1: 40, masks, S }).frame);
-    const left = turnTap(setTurnDir(atTurn(), -1), 75, cue());
+  it('More: This frame keeps his optional tap, with the direction toggle, and leaves the sheet where it is', () => {
+    const impact = atImpact();
+    const tapped = turnTap(impact, 75);
+    expect(tapped).toMatchObject({ step: 'impact', frame: impact.frame, turn: { at: 75 / 30, dir: 1 } });
+    const left = turnTap(setTurnDir(impact, -1), 75);
     expect(left.turn).toEqual({ at: 75 / 30, dir: -1 });
-    // Only from the turn sheet.
-    const idle = initialFlow();
-    expect(turnTap(idle, 75, cue())).toBe(idle);
-    expect(turnSkip(idle, cue())).toBe(idle);
+    // From any sheet, the preview included.
+    expect(turnTap(atPreview(60), 75)).toMatchObject({ step: 'preview', contact: 63, turn: { at: 75 / 30, dir: 1 } });
+    expect(turnTap(initialFlow(), 75)).toMatchObject({ step: 'idle', turn: { at: 75 / 30, dir: 1 } });
+    // No tap takes it back off.
+    expect(clearTurn(tapped)).toMatchObject({ step: 'impact', turn: null });
+    expect(clearTurn(impact)).toBe(impact);
   });
 
   it('needs the limbs before the impact', () => {
@@ -163,7 +169,7 @@ describe('the two-drawing flow', () => {
   });
 
   it('checks the impact drawing: 2 to 8 strokes, all on one frame', () => {
-    const impact = turnSkip(atTurn(), cue(60));
+    const impact = atImpact(40, 60);
     expect(impactDone(impact, { limbs: limbsOn(40), cracks: cracksOn(60).slice(0, 1) }, masks, S)).toMatchObject({
       step: 'impact',
       message: 'Draw 2 to 8 impact strokes, outward from where the hit lands.',
@@ -211,7 +217,7 @@ describe('the two-drawing flow', () => {
     const last = { ...done, contact: FRAMES - 1 };
     expect(moveContact(last, 1, FRAMES)).toBe(last);
     // Nothing to move before the impact's Done.
-    expect(moveContact(atTurn(), 1, FRAMES)).toEqual(atTurn());
+    expect(moveContact(atImpact(), 1, FRAMES)).toEqual(atImpact());
   });
 
   it('never moves the contact under R1', () => {
@@ -235,7 +241,7 @@ describe('the two-drawing flow', () => {
   });
 
   it("builds the tap's five keys, mirrors them with the toggle and nudges each a frame", () => {
-    const tapped = turnTap(atTurn(), 75, cue());
+    const tapped = turnTap(atImpact(), 75);
     expect(turnKeyFrames(tapped.turn!)).toEqual([
       [63, 0],
       [69, 90],
@@ -256,12 +262,12 @@ describe('the two-drawing flow', () => {
       [87, -360],
     ]);
     // A key can't pass its neighbour or go before f0.
-    let squeezed = turnTap(atTurn(), 12, cue());
+    let squeezed = turnTap(atImpact(), 12);
     for (let i = 0; i < 5; i++) squeezed = nudgeTurnKey(squeezed, 1, -1);
     expect(turnKeyFrames(squeezed.turn!).map(([f]) => f)).toEqual([0, 1, 12, 18, 24]);
     expect(nudgeTurnKey(squeezed, 1, -1)).toBe(squeezed);
     expect(nudgeTurnKey(squeezed, 0, -1)).toBe(squeezed);
-    expect(nudgeTurnKey(atTurn(), 0, 1)).toEqual(atTurn()); // no tap, no keys
+    expect(nudgeTurnKey(atImpact(), 0, 1)).toEqual(atImpact()); // no tap, no keys
   });
 
   it('goes Back without losing anything, and undoing a stroke undoes what its Done read', () => {
@@ -312,7 +318,7 @@ describe('effectOf with the flow', () => {
   const roundTrips = (effect: Effect) => expect(parseEffect(serializeEffect(effect))).toEqual({ effect: JSON.parse(serializeEffect(effect)) });
 
   it('writes the emerge, the slam with its dir, seed, frames and aftermath, and his tap; and it parses', () => {
-    const done = impactDone(turnTap(atTurn(), 75, cue()), { limbs: limbsOn(40), cracks: cracksOn(60) }, masks, S);
+    const done = impactDone(turnTap(atImpact(40, 60), 75), { limbs: limbsOn(40), cracks: cracksOn(60) }, masks, S);
     const effect = effectOf(strokes, motion(done));
     expect(effect.moments?.[0]).toEqual({ kind: 'emerge', at: 40 / 30, strokes: [1, 2] });
     const slam = effect.moments?.[1] as Moment;
@@ -332,12 +338,12 @@ describe('effectOf with the flow', () => {
     roundTrips(effect);
   });
 
-  it('leaves the turn out after Skip, and the slam out until the impact is done', () => {
+  it('leaves the turn out with no tap, and the slam out until the impact is done', () => {
     const skipped = effectOf(strokes, motion(atPreview(60)));
     expect('turn' in skipped).toBe(false);
     expect(skipped.moments?.map((m) => m.kind)).toEqual(['emerge', 'slam']);
     roundTrips(skipped);
-    const limbsOnly = effectOf(strokes, motion(atTurn()));
+    const limbsOnly = effectOf(strokes, motion(atImpact()));
     expect(limbsOnly.moments).toEqual([{ kind: 'emerge', at: 40 / 30, strokes: [1, 2] }]);
     roundTrips(limbsOnly);
     const none = effectOf(strokes.filter((s) => s.brush !== 'limb'), motion(initialFlow()));
@@ -369,7 +375,7 @@ describe('effectOf with the flow', () => {
 
   it('knows which strokes the impact scene draws itself', () => {
     const withSlam = effectOf(strokes, motion(atPreview(60)));
-    const before = effectOf(strokes, motion(atTurn()));
+    const before = effectOf(strokes, motion(atImpact()));
     const [l1, , c11] = [strokes[0], strokes[1], strokes[2]];
     const ink: Stroke = { ...l1, id: 30, brush: 'ink' };
     const lateCrack: Stroke = { ...c11, id: 31 }; // drawn after the impact's Done

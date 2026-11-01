@@ -31,6 +31,7 @@ import {
 import {
   asSamMasks,
   back,
+  clearTurn,
   flowMoments,
   forgetStroke,
   IMPACT_STROKES,
@@ -50,7 +51,6 @@ import {
   suggestLimbFrame,
   TURN_ASK,
   turnKeyFrames,
-  turnSkip,
   turnTap,
   type DrawnOn,
   type Flow,
@@ -104,11 +104,10 @@ const stepLimbs = $<HTMLElement>('step-limbs');
 const limbsBack = $<HTMLButtonElement>('limbs-back');
 const limbsUndo = $<HTMLButtonElement>('limbs-undo');
 const limbsDoneButton = $<HTMLButtonElement>('limbs-done');
-const stepTurn = $<HTMLElement>('step-turn');
 const turnAsk = $<HTMLElement>('turn-ask');
 const turnDirButton = $<HTMLButtonElement>('turn-dir');
 const turnHere = $<HTMLButtonElement>('turn-here');
-const turnSkipButton = $<HTMLButtonElement>('turn-skip');
+const turnClearButton = $<HTMLButtonElement>('turn-clear');
 const stepImpact = $<HTMLElement>('step-impact');
 const flashImpact = $<HTMLInputElement>('flash-impact');
 const impactBack = $<HTMLButtonElement>('impact-back');
@@ -633,9 +632,8 @@ function preselect(step: Step) {
 
 function updateSheet() {
   const { step } = flow;
-  sheetMain.hidden = step === 'limbs' || step === 'turn' || step === 'impact';
+  sheetMain.hidden = step === 'limbs' || step === 'impact';
   stepLimbs.hidden = step !== 'limbs';
-  stepTurn.hidden = step !== 'turn';
   stepImpact.hidden = step !== 'impact';
   sheetMessage.textContent = flow.message ?? '';
   sheetMessage.hidden = !flow.message;
@@ -646,13 +644,15 @@ function updateSheet() {
   contactLabel.value = flow.contact === null ? 'not set' : `f${flow.contact}`;
   aftermathSlider.value = String(Math.round(flow.aftermath * 10));
   aftermathValue.value = `${flow.aftermath.toFixed(1)} s`;
-  view.classList.toggle('tapping', step === 'turn');
   showTurnKeys();
 }
 
-// More → Turn keys: his tap's keys, each a frame earlier or later.
+// More → Turn: the optional override (decision 4). This frame marks where
+// his back faces you; No tap goes back to the pose's turn; each of the tap's
+// keys a frame earlier or later.
 function showTurnKeys() {
   const keys = flow.turn ? turnKeyFrames(flow.turn) : [];
+  turnClearButton.hidden = !flow.turn;
   turnKeysNote.textContent = flow.turn
     ? 'His back faces you on the middle key. Move any key that is off by a frame.'
     : 'No tap: the turn is read from his pose where it reads as one, else there is none.';
@@ -946,11 +946,10 @@ function fingerPoint(x: number, y: number): Point {
 }
 
 // On the impact sheet every stroke is pinned to the ground: fixed frame px,
-// rigid, behind him, no boil. The turn sheet asks for a frame, not a drawing.
+// rigid, behind him, no boil.
 view.addEventListener('pointerdown', (e) => {
   if (!clip || busy || e.button !== 0) return;
   if (live) return; // a second finger while drawing: not a new stroke, and not a pinch
-  if (flow.step === 'turn') return;
   livePointer = e.pointerId;
   pause();
   // Capture keeps the stroke going if the finger slides off the canvas. If a
@@ -1218,7 +1217,7 @@ function updateButtons() {
   trackButton.disabled = !ready;
   drawLimbsButton.disabled = !ready;
   drawImpactButton.disabled = !ready || flow.f1 === null;
-  for (const button of [limbsBack, limbsUndo, limbsDoneButton, turnDirButton, turnHere, turnSkipButton, impactBack, impactUndo, impactDoneButton]) button.disabled = !ready;
+  for (const button of [limbsBack, limbsUndo, limbsDoneButton, turnDirButton, turnHere, turnClearButton, impactBack, impactUndo, impactDoneButton]) button.disabled = !ready;
   contactEarlier.disabled = !ready || flow.contact === null;
   contactLater.disabled = !ready || flow.contact === null;
   aftermathSlider.disabled = !ready;
@@ -1309,16 +1308,13 @@ drawLimbsButton.addEventListener('click', () => {
 });
 limbsDoneButton.addEventListener('click', () => {
   if (!clip || busy) return;
-  setFlow(limbsDone(flow, linesOf(strokes.filter(isLimb))));
+  setFlow(limbsDone(flow, linesOf(strokes.filter(isLimb)), cue(clip, parkedFrame())));
 });
 turnHere.addEventListener('click', () => {
   if (!clip || busy) return;
-  setFlow(turnTap(flow, frame, cue(clip, null)));
+  setFlow(turnTap(flow, frame));
 });
-turnSkipButton.addEventListener('click', () => {
-  if (!clip || busy) return;
-  setFlow(turnSkip(flow, cue(clip, parkedFrame())));
-});
+turnClearButton.addEventListener('click', () => setFlow(clearTurn(flow)));
 turnDirButton.addEventListener('click', () => setFlow(setTurnDir(flow, flow.dir === 1 ? -1 : 1)));
 drawImpactButton.addEventListener('click', () => {
   if (!clip || busy) return;

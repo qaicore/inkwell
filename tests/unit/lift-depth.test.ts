@@ -33,7 +33,7 @@ function bodies3d(spin: boolean, frames = FRAMES): Body3D[] {
   });
 }
 
-// A curl of 32 points from his upper back, drawn on the body `b`.
+// A curve of 32 points from his upper back, drawn on the body `b`.
 function strokePx(b: { x: number; y: number; unit: number }, dir: number, bendBy: number): Vec2[] {
   return Array.from({ length: 32 }, (_, i): Vec2 => {
     const s = i / 31;

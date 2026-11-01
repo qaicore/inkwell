@@ -160,9 +160,6 @@
         background: #000;
         box-shadow: 0 0 0 1px var(--line);
       }
-      #view.tapping {
-        cursor: default; /* the turn sheet asks for a frame, not a drawing */
-      }
       #drop {
         position: absolute;
         inset: 12px;
@@ -445,12 +442,6 @@
         <button id="limbs-undo" class="big">Undo</button>
         <button id="limbs-done" class="big primary">Done</button>
       </div>
-      <div id="step-turn" class="row" hidden>
-        <span id="turn-ask" class="prompt"></span>
-        <button id="turn-dir" class="big" aria-pressed="false" title="Which way he spins round">Right side first</button>
-        <button id="turn-here" class="big primary">This frame</button>
-        <button id="turn-skip" class="big">Skip</button>
-      </div>
       <div id="step-impact" class="row" hidden>
         <span class="prompt">Draw the impact: 2 to 8 strokes, outward from where the hit lands.</span>
         <label class="big toggle" title="At most 3 flashes a second"><input id="flash-impact" type="checkbox" />Reduce flashing</label>
@@ -479,7 +470,11 @@
           >
         </div>
         <div class="row">
-          <span class="label">Turn keys</span>
+          <span class="label">Turn</span>
+          <span id="turn-ask" class="note"></span>
+          <button id="turn-dir" class="big" aria-pressed="false" title="Which way he spins round">Right side first</button>
+          <button id="turn-here" class="big" title="His back faces you on this frame">This frame</button>
+          <button id="turn-clear" class="big" title="Read the turn from his pose again" hidden>No tap</button>
           <span id="turn-keys-note" class="note"></span>
           <div id="turn-keys" class="row"></div>
         </div>

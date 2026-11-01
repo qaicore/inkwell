@@ -2,23 +2,26 @@
 // for next, as a pure state machine the page (main.ts) drives. Qai draws the
 // limbs on one frame and the impact on a later one, and nothing else is asked
 // of him (decision 1):
-//   idle → limbs (the sheet opens on f1) → turn (This frame, or Skip) →
-//   impact (the sheet opens on the cue) → Done: the snap, then everything
-//   derived (detect.ts's momentsFromDrawings) → preview, replayed from I − 20.
+//   idle → limbs (the sheet opens on f1) → Done → impact (the sheet opens
+//   on the cue) → Done: the snap, then everything derived (detect.ts's
+//   momentsFromDrawings) → preview, replayed from I − 20. No tap between
+//   the two drawings.
 //   - Draw limbs opens on the first frame where the person mask is at least
 //     0.6 of its median area: the app's stand-in has no wrists for
 //     suggestArmsOpen. A root more than 0.05 S off the person snaps onto the
 //     nearest mask pixel (the page highlights it for 300 ms). 1–6 strokes, all
 //     on one frame.
-//   - The turn step can be skipped (decision 4): Skip leaves effect.turn out,
-//     so the scene reads the turn from the stand-in pose where it reads as
-//     one, else there's none. His tap overrides it.
+//   - The turn needs no tap (decision 4): with effect.turn left out, the
+//     scene reads the turn from the stand-in pose where it reads as one, else
+//     there's none. More → Turn holds the optional override: This frame (his
+//     back faces you here), the direction toggle, No tap to go back to the
+//     pose's turn, and the keys a frame either way.
 //   - Draw impact opens on suggestImpactFrame's cue: the frame he parked the
 //     scrubber on, the audio onset, the mask's sharpest stop. 2–8 strokes, all
 //     on one frame. Done snaps the contact (the toast says when it moved) and
 //     checks R1 before anything is derived.
-//   - More: Move contact ±1 (slam.at), the aftermath 1.5–3 s, his turn keys
-//     ±1 frame. One Reduce flashing toggle sits on the impact sheet and the
+//   - More: Move contact ±1 (slam.at), the aftermath 1.5–3 s, the turn
+//     override and its keys ±1 frame. One Reduce flashing toggle sits on the impact sheet and the
 //     export sheet (decision 5): the full impact frames by default.
 // Positions are clip px. The masks are the cached SAM ones; asSamMasks gives
 // the stand-in's the same shape, so the detector reads either.
@@ -36,9 +39,9 @@ export const ROOT_FLASH_MS = 300; // how long the page highlights a snapped root
 export const OPEN_AREA = 0.6; // × the person mask's median area: where Draw limbs opens
 export const REPLAY_FROM = 20; // frames before the contact the preview replays from
 export const AFTERMATH_SECONDS = { min: 1.5, max: 3 } as const;
-export const TURN_ASK = 'Does he turn around? Tap the frame where his back faces you.';
+export const TURN_ASK = 'Optional: if he turns around, tap This frame where his back faces you.';
 
-export type Step = 'idle' | 'limbs' | 'turn' | 'impact' | 'preview';
+export type Step = 'idle' | 'limbs' | 'impact' | 'preview';
 
 // A drawn line and the frame it was drawn on.
 export interface DrawnOn extends DrawnLine {
@@ -50,8 +53,8 @@ export interface Flow {
   frame: number; // the frame the current sheet opened on: the page seeks there on each step
   f1: number | null; // the limb drawing's frame, once it's done
   limbs: number[]; // its stroke ids
-  dir: 1 | -1; // the turn's direction toggle, s
-  turn: Turn | null; // his tap, with any nudged keys; null: none, so the pose's turn or none
+  dir: 1 | -1; // the turn override's direction toggle, s
+  turn: Turn | null; // his optional tap in More, with any nudged keys; null: none, so the pose's turn or none
   fDrawn: number | null; // the impact drawing's frame, once it's done
   cracks: number[]; // its stroke ids
   derived: DrawnMoments | null; // what Done read from the two drawings
@@ -97,26 +100,28 @@ export function openLimbs(flow: Flow, f1: number): Flow {
   return { ...flow, step: 'limbs', frame: flow.f1 ?? f1, toast: null, message: null };
 }
 
-// Done on the limbs: 1–6 strokes on one frame, which is f1. New limbs undo
-// whatever was derived from the old ones, so the impact's Done runs again.
-export function limbsDone(flow: Flow, limbs: readonly DrawnOn[]): Flow {
+// Done on the limbs: 1–6 strokes on one frame, which is f1, and the impact
+// sheet opens on the cue straight away: nothing is asked in between
+// (decision 1). New limbs undo whatever was derived from the old ones, so
+// the impact's Done runs again.
+export function limbsDone(flow: Flow, limbs: readonly DrawnOn[], cue: ImpactCue): Flow {
   const problem = drawingProblem(limbs, LIMB_STROKES, 'limb');
   if (problem) return { ...flow, message: problem };
   const f1 = limbs[0].frame;
-  return { ...flow, step: 'turn', frame: f1, f1, limbs: limbs.map((l) => l.id), derived: null, contact: null, toast: null, message: null };
+  return openImpact({ ...flow, f1, limbs: limbs.map((l) => l.id), derived: null, contact: null, toast: null, message: null }, cue);
 }
 
-// This frame: his back faces the camera on `frame` (f_b), and he spins the
-// toggle's way; the scene builds the tap's five keys (lift/turn.ts).
-export function turnTap(flow: Flow, frame: number, cue: ImpactCue): Flow {
-  if (flow.step !== 'turn') return flow;
-  return openImpact({ ...flow, turn: { at: frame / FPS, dir: flow.dir } }, cue);
+// More → This frame, the turn's optional override (decision 4): his back
+// faces the camera on `frame` (f_b), and he spins the toggle's way; the
+// scene builds the tap's five keys (lift/turn.ts). The sheet stays where it is.
+export function turnTap(flow: Flow, frame: number): Flow {
+  return { ...flow, turn: { at: frame / FPS, dir: flow.dir }, toast: null, message: null };
 }
 
-// Skip: no tap, so the turn read from his pose where it reads as one, else none.
-export function turnSkip(flow: Flow, cue: ImpactCue): Flow {
-  if (flow.step !== 'turn') return flow;
-  return openImpact({ ...flow, turn: null }, cue);
+// More → No tap: the override goes, so the turn is read from his pose where
+// it reads as one, else there's none.
+export function clearTurn(flow: Flow): Flow {
+  return flow.turn ? { ...flow, turn: null } : flow;
 }
 
 // The direction toggle, s = ±1. A tap already made spins the other way too,
