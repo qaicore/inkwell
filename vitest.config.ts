@@ -10,6 +10,7 @@ import { defineConfig } from 'vitest/config';
 // a time in a second group, after the rest is done: two projects ordered by
 // sequence.groupOrder. Their thresholds are as their packages wrote them.
 const TIMED = [
+  'tests/unit/limb-render.test.ts',
   'tests/unit/arcs3d.test.ts',
   'tests/unit/impact-frames.test.ts',
   'tests/unit/aftermath-mass.test.ts',

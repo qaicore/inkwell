@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Inkwell limb bench</title>
+    <!-- Dev only (WP17, impact design §10's device gate): `npm run dev:phone`, then /bench.html on the phone. -->
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #121214;
+        --panel: #1b1b1f;
+        --line: #2d2d34;
+        --text: #ececf1;
+        --muted: #9a9aa6;
+        --accent: #e8203a;
+        --pass: #6cc58a;
+        --miss: #e0b45a;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      [hidden] {
+        display: none !important;
+      }
+      html,
+      body {
+        margin: 0;
+      }
+      body {
+        background: var(--bg);
+        color: var(--text);
+        font: 13px/1.4 system-ui, sans-serif;
+      }
+      header {
+        position: sticky;
+        top: 0;
+        display: flex;
+        align-items: center;
+        gap: 8px 14px;
+        padding: max(8px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) 8px max(12px, env(safe-area-inset-left));
+        background: var(--panel);
+        border-bottom: 1px solid var(--line);
+      }
+      main {
+        max-width: 760px;
+        margin: 0 auto;
+        padding: 12px max(12px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+      }
+      .brand {
+        font-weight: 700;
+        letter-spacing: 0.02em;
+      }
+      .spacer {
+        flex: 1;
+      }
+      .muted,
+      #status {
+        color: var(--muted);
+      }
+      button {
+        font: inherit;
+        color: var(--text);
+        background: #2a2a31;
+        border: 1px solid #3a3a43;
+        border-radius: 6px;
+        padding: 5px 12px;
+        cursor: pointer;
+        touch-action: manipulation; /* no double-tap zoom on controls */
+      }
+      button:disabled {
+        opacity: 0.45;
+        cursor: default;
+      }
+      #run {
+        background: var(--accent);
+        border-color: var(--accent);
+        font-weight: 600;
+      }
+      ol {
+        padding-left: 20px;
+        margin: 8px 0;
+      }
+      #verdict {
+        font-weight: 600;
+        padding: 8px 10px;
+        border-radius: 6px;
+        border: 1px solid currentColor;
+      }
+      .pass {
+        color: var(--pass);
+      }
+      .miss {
+        color: var(--miss);
+      }
+      .scroll {
+        overflow-x: auto;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-variant-numeric: tabular-nums;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 5px 6px;
+        border-bottom: 1px solid var(--line);
+        vertical-align: top;
+      }
+      th {
+        color: var(--muted);
+        font-weight: 500;
+      }
+      .num {
+        text-align: right;
+        white-space: nowrap;
+      }
+      #report {
+        width: 100%;
+        min-height: 13em;
+        margin: 8px 0;
+        padding: 8px;
+        color: var(--text);
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        font: 12px/1.4 ui-monospace, Menlo, monospace;
+      }
+      canvas {
+        display: block;
+        width: 100%;
+        height: auto;
+        margin-top: 12px;
+        background: #000;
+        box-shadow: 0 0 0 1px var(--line);
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <span class="brand">Inkwell</span>
+      <span class="muted">limb bench</span>
+      <span class="spacer"></span>
+      <button id="run" type="button">Run</button>
+    </header>
+    <main>
+      <p>
+        Times the impact's limb drawing on this device: the hero's four limbs with 12 and then 24 arcs, 20 times each, in a worker and on this thread, then
+        this thread's part of a frame: the pinned stamp, the person cutout and the grade. Medians at 1080×608.
+      </p>
+      <ol>
+        <li>Turn Low Power Mode off, and let the phone cool if it's warm.</li>
+        <li>Close other apps, and keep this page in front with the screen on.</li>
+        <li>Tap Run. It takes about 10 seconds.</li>
+      </ol>
+      <p id="status" role="status">Ready.</p>
+      <p id="verdict" hidden></p>
+      <div class="scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>where</th>
+              <th>what</th>
+              <th class="num">median ms</th>
+              <th class="num">range</th>
+              <th>gate</th>
+            </tr>
+          </thead>
+          <tbody id="results"></tbody>
+        </table>
+      </div>
+      <div id="report-box" hidden>
+        <textarea id="report" readonly spellcheck="false"></textarea>
+        <button id="copy" type="button">Copy results</button>
+      </div>
+      <p class="muted">
+        The gate: a 24-arc limb drawing in ≤ 50 ms in the worker, and stamp + cutout + grade in ≤ 14 ms on this thread. A miss means WP12 starts from the phone
+        tier. A limb drawing's time ends with a 1 px readback, so the drawing is finished inside it. A frame job runs 10 times in a row before one readback, and
+        its time is a tenth of the whole. The frame below is the last one drawn.
+      </p>
+      <canvas id="frame" width="1080" height="608"></canvas>
+    </main>
+    <script type="module">
+      import { mountBench } from '/src/bench/limbs.ts';
+      mountBench(document);
+    </script>
+  </body>
+</html>
