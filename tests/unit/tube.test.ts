@@ -1,7 +1,7 @@
 import { createCanvas } from '@napi-rs/canvas';
 import { describe, expect, it } from 'vitest';
 import { syntheticTube, type HeldLimb, type Tube, type Vec2, type Vec3 } from '../../src/impact/contracts.ts';
-import { bandInterval, buildTube, chunks, flatHeld, indexAt, onMask, radiusAt, sectionAt, sectionVectors, silhouette, SNAP_REACH } from '../../src/lift/tube.ts';
+import { bandInterval, buildTube, chunks, CUT_TAPER, flatHeld, indexAt, onMask, radiusAt, sectionAt, sectionVectors, silhouette, SNAP_REACH } from '../../src/lift/tube.ts';
 import type { Mask } from '../../src/track/tracking.ts';
 
 const dot = (a: Vec3, b: Vec3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
@@ -286,8 +286,9 @@ describe('chunks', () => {
     expect(tube.sections[Math.floor(flip)].front).toBe(false);
     expect(tube.sections[Math.ceil(flip)].front).toBe(true);
     expect(flip % 1).toBe(0.5);
-    // The behind run reaches one section past the flip, under the front run.
-    expect(runs[0]).toEqual({ front: false, from: 0, to: flip + 1 });
+    // The behind run reaches CUT_TAPER + 1 sections past the flip, under the
+    // front run's tapered end.
+    expect(runs[0]).toEqual({ front: false, from: 0, to: flip + CUT_TAPER + 1 });
     expect(runs[1].to).toBe(93);
   });
 
@@ -303,7 +304,7 @@ describe('chunks', () => {
         if (Math.abs(raw - snapped) > SNAP_REACH) throw new Error(`moved ${raw} → ${snapped}`);
         const at = sectionAt(tube, snapped).screen;
         expect(Math.abs(at[0] - 650)).toBeLessThan(2);
-        expect(runs[0].to).toBeCloseTo(snapped + 1, 9);
+        expect(runs[0].to).toBeCloseTo(snapped + CUT_TAPER + 1, 9);
         // The front run starts outside him, the behind run is inside him up to there.
         expect(onMask(mask, scale, sectionAt(tube, snapped + 0.5).screen[0], 400)).toBe(false);
         expect(onMask(mask, scale, sectionAt(tube, snapped - 0.5).screen[0], 400)).toBe(true);
@@ -337,8 +338,8 @@ describe('chunks', () => {
     expect(runs.map((c) => c.front)).toEqual([true, false, true]);
     expect(Math.abs(sectionAt(tube, runs[0].to).screen[0] - 380)).toBeLessThan(2);
     expect(Math.abs(sectionAt(tube, runs[2].from).screen[0] - 620)).toBeLessThan(2);
-    expect(runs[1].from).toBeCloseTo(runs[0].to - 1, 9);
-    expect(runs[1].to).toBeCloseTo(runs[2].from + 1, 9);
+    expect(runs[1].from).toBeCloseTo(runs[0].to - CUT_TAPER - 1, 9);
+    expect(runs[1].to).toBeCloseTo(runs[2].from + CUT_TAPER + 1, 9);
   });
 
   it('finds fractional sections and arc fractions both ways', () => {

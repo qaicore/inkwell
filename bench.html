@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>Inkwell limb bench</title>
+    <title>Inkwell impact bench</title>
     <!-- Dev only (WP17, impact design §10's device gate): `npm run dev:phone`, then /bench.html on the phone. -->
     <style>
       :root {
@@ -140,19 +140,20 @@
   <body>
     <header>
       <span class="brand">Inkwell</span>
-      <span class="muted">limb bench</span>
+      <span class="muted">impact bench</span>
       <span class="spacer"></span>
       <button id="run" type="button">Run</button>
     </header>
     <main>
       <p>
-        Times the impact's limb drawing on this device: the hero's four limbs with 12 and then 24 arcs, 20 times each, in a worker and on this thread, then
-        this thread's part of a frame: the pinned stamp, the person cutout and the grade. Medians at 1080×608.
+        Times the impact on this device: the hero's four limbs with 12 and then 24 arcs, 20 times each, in a worker and on this thread; this thread's part of
+        a frame (the pinned stamp, the person cutout and the grade); then a synthetic slam at the full tier and at the phone tier: its whole strike frames
+        (f76–83) and aftermath frames (j 18–28) on this thread, and its aftermath drawings (f93–115) in the worker. At 1080×608.
       </p>
       <ol>
         <li>Turn Low Power Mode off, and let the phone cool if it's warm.</li>
         <li>Close other apps, and keep this page in front with the screen on.</li>
-        <li>Tap Run. It takes about 10 seconds.</li>
+        <li>Tap Run. It takes about 25 seconds, and the page may stall for a few of them while the slam's physics runs.</li>
       </ol>
       <p id="status" role="status">Ready.</p>
       <p id="verdict" hidden></p>
@@ -164,7 +165,7 @@
               <th>what</th>
               <th class="num">median ms</th>
               <th class="num">range</th>
-              <th>gate</th>
+              <th>line</th>
             </tr>
           </thead>
           <tbody id="results"></tbody>
@@ -175,9 +176,12 @@
         <button id="copy" type="button">Copy results</button>
       </div>
       <p class="muted">
-        The gate: a 24-arc limb drawing in ≤ 50 ms in the worker, and stamp + cutout + grade in ≤ 14 ms on this thread. A miss means WP12 starts from the phone
-        tier. A limb drawing's time ends with a 1 px readback, so the drawing is finished inside it. A frame job runs 10 times in a row before one readback, and
-        its time is a tenth of the whole. The frame below is the last one drawn.
+        The limb gate: a 24-arc limb drawing in ≤ 50 ms in the worker, and stamp + cutout + grade in ≤ 14 ms on this thread. The slam's lines are design
+        §10's: a whole strike frame and a whole aftermath frame in ≤ 26 ms each on this thread (the median frame of the window), and the worker busy ≤ 80 % of
+        f93–115 with the drawings due there. Cuts 0 is the full tier, the other count the phone tier's starting step (PHONE_CUTS). A limb drawing's time ends
+        with a 1 px readback, so the drawing is finished inside it; so does each slam frame and each slam drawing. A frame job runs 10 times in a row before one
+        readback, and its time is a tenth of the whole. Nothing is fetched: the slam is synthetic, built on the page. The frame below is the last one drawn,
+        the full tier's f112.
       </p>
       <canvas id="frame" width="1080" height="608"></canvas>
     </main>

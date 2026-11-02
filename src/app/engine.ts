@@ -11,8 +11,9 @@
 // the effect has limbs or a slam, the page draws the whole frame through it,
 // with the other strokes animated here and scaled onto its internal frame.
 // effectOf writes the flow's emerge and slam moments and his turn tap
-// (flow.ts), and the clip's sound is read once into the 10 ms envelope that
-// the impact sheet's cue reads (detect.ts).
+// (flow.ts), with the floor read from him on the slam (withFloor), and the
+// clip's sound is read once into the 10 ms envelope that the impact sheet's
+// cue reads (detect.ts).
 import type { Anchor, BrushId, Effect, Stroke as EffectStroke, Turn, Vec2 } from '../types/effect.ts';
 import { animate } from '../motion/animate.ts';
 import type { BodyAngle } from '../motion/body.ts';
@@ -25,6 +26,7 @@ import { anchorTransform, toTorso, type TorsoTransform } from '../track/torso.ts
 import { maskNear, type Mask, type PointSet, type Pose } from '../track/tracking.ts';
 import { toFrameMask, type SamMask } from '../sam/cache.ts';
 import type { Tier } from '../impact/contracts.ts';
+import type { FloorEstimate } from '../impact/floor-estimate.ts';
 import { createImpactScene, type ImpactClip, type ImpactScene } from '../impact/scene.ts';
 
 // One line as drawn, in clip pixels. Its first point is its root, the end
@@ -252,6 +254,15 @@ function unitNear(units: (number | null)[] | null, f: number): number | null {
 }
 
 // ---- The impact scene --------------------------------------------------------------------------
+
+// The slam's floor (round 3, F8): the floor read from him (impact/floor-
+// estimate.ts) goes on a slam that has none of its own. An estimate that fell
+// back leaves the slam as it is, so the scene draws DEFAULT_FLOOR, as before.
+export function withFloor(moments: Effect['moments'], estimate: FloorEstimate | null): Effect['moments'] {
+  if (!moments || !estimate || estimate.from !== 'person') return moments;
+  const { ratio, majorDeg, up, persp } = estimate.floor;
+  return moments.map((m) => (m.kind === 'slam' && !m.floor ? { ...m, floor: { ratio, majorDeg, up: [up[0], up[1]], persp } } : m));
+}
 
 // The effect has an impact for the scene to draw: limbs, or a slam.
 export const hasImpact = (effect: Effect): boolean => effect.strokes.some((st) => st.brush === 'limb') || (effect.moments ?? []).some((m) => m.kind === 'slam');

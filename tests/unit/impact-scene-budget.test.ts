@@ -18,19 +18,20 @@ const FROM = I - 10;
 const TO = I + 45;
 const PASSES = 3;
 
-// Decision 11: the Node proxy asserts about 1.5 × what it measures today, so
-// it catches a regression without failing on the design's targets, which stay
-// in tiers.ts (the device bench and Qai's iPhone run hold those). Each limit
-// below gives the design number and today's (Oct 31, Node 24, 1080×608,
-// median of 3, under the full suite's load). The handover lists every Node
+// Decision 11: the Node proxy asserts about 1.5 × the worst it measures
+// today, so it catches a regression without failing on the design's targets,
+// which stay in tiers.ts (the device bench and Qai's iPhone run hold those).
+// Each limit below gives the design number and today's (Nov 2, Node 24,
+// 1080×608, median of 3, under the whole unit suite: its serial group, four
+// runs for the jobs and five for the frames). The handover lists every Node
 // number still over the design.
 const NODE_JOB_MS = {
-  limb: 70, // design JOB_MS.limb 42; today 46.6
-  mass: 30, // design JOB_MS.mass 12; today 10.9 (20 at worst under load)
-  poster: 110, // design JOB_MS.poster 8; today 63.9–68.4 (IF1's first light poster)
+  limb: 70, // design JOB_MS.limb 42; today 36.6–47.1 (the worst f103)
+  mass: 37, // design JOB_MS.mass 12; today 11.5–24.8 (the worst the f112 cluster)
+  poster: 132, // design JOB_MS.poster 8; today 76.9–88.1 (IF1's first light poster, which traces him)
 } as const;
-const NODE_MAIN_MEDIAN = 45; // design MAIN_BUDGET 26 a frame; today's median frame 28.0–30.7
-const NODE_MAIN_WORST = 105; // design MAIN_BUDGET 26; today's worst frame 60.9–66.4 (j22–j30, the floods and the lightning)
+const NODE_MAIN_MEDIAN = 44; // design MAIN_BUDGET 26 a frame; today's median frame 27.5–29.4
+const NODE_MAIN_WORST = 92; // design MAIN_BUDGET 26; today's worst frame 52.4–61.5 (j−1, j19, j22: the strike's last drawing, the floods and the lightning)
 
 const median = (xs: number[]) => xs.slice().sort((a, b) => a - b)[Math.floor(xs.length / 2)];
 const ms = (t0: bigint) => Number(process.hrtime.bigint() - t0) / 1e6;
@@ -81,7 +82,7 @@ describe('the budget table', () => {
 });
 
 describe('the Node proxy at 1080×608', () => {
-  it('draws each limb drawing in 70 ms or less, each mass part in 30 and each poster in 110 (median of 3; decision 11)', () => {
+  it('draws each limb drawing in 70 ms or less, each mass part in 37 and each poster in 132 (median of 3; decision 11)', () => {
     const all = timed();
     const over: string[] = [];
     const overDesign: string[] = [];
@@ -94,10 +95,12 @@ describe('the Node proxy at 1080×608', () => {
     }
     // For the handover: the jobs still over the design's table.
     console.log(`jobs over design (limb ${JOB_MS.limb}, mass ${JOB_MS.mass}, poster ${JOB_MS.poster} ms): ${overDesign.join('; ') || 'none'}`);
-    expect(over, `worst: limb ${report.limb.toFixed(1)}, mass ${report.mass.toFixed(1)}, poster ${report.poster.toFixed(1)}`).toEqual([]);
+    const worst = `worst: limb ${report.limb.toFixed(1)}, mass ${report.mass.toFixed(1)}, poster ${report.poster.toFixed(1)}`;
+    console.log(`jobs ${worst} ms (median of ${PASSES})`);
+    expect(over, worst).toEqual([]);
   });
 
-  it('draws the median main-thread frame in 45 ms or less and the worst in 105, with the drawings run ahead (median of 3; decision 11)', () => {
+  it('draws the median main-thread frame in 44 ms or less and the worst in 92, with the drawings run ahead (median of 3; decision 11)', () => {
     const all = timed();
     const overDesign: string[] = [];
     let worst = 0;

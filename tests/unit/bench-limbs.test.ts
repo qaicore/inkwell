@@ -243,6 +243,8 @@ describe('timing and the gate', () => {
       worker: [series('limbs12', [20, 22, 21]), series('limbs24', [30, 31, 29])],
       workerNote: 'OffscreenCanvas 2D',
       main: [series('frame', [15, 16, 15])],
+      slam: [],
+      slamNote: 'OffscreenCanvas 2D in the worker',
       stamped: 'the worker’s bitmaps',
       hidden: false,
       device: 'test',

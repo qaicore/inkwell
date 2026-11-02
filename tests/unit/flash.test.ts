@@ -689,6 +689,9 @@ describe('speed', () => {
     });
   }
 
+  // Design 2 ms a frame; today 0.96–1.34 under the whole unit suite (four
+  // runs, Nov 2), so about 1.5 × the worst is the design line itself, and
+  // the design line is the bound (decision 11).
   const msPerFrame = (frames: CheckFrame[]) => {
     const runs = Array.from({ length: 10 }, () => {
       const t0 = performance.now();
@@ -699,10 +702,14 @@ describe('speed', () => {
   };
 
   it('checks a 160 × 90 frame in 2 ms or less (median of 10 runs)', () => {
-    expect(msPerFrame(busyClip(150))).toBeLessThanOrEqual(2);
+    const ms = msPerFrame(busyClip(150));
+    console.log(`flash check, busy clip: ${ms.toFixed(3)} ms a frame (median of 10 runs, 160×90)`);
+    expect(ms).toBeLessThanOrEqual(2);
   });
 
   it('stays under 2 ms a frame when the whole frame flashes on every frame', () => {
-    expect(msPerFrame(strobe(level(0.1), level(0.9), 1, 150))).toBeLessThanOrEqual(2);
+    const ms = msPerFrame(strobe(level(0.1), level(0.9), 1, 150));
+    console.log(`flash check, strobe: ${ms.toFixed(3)} ms a frame (median of 10 runs, 160×90)`);
+    expect(ms).toBeLessThanOrEqual(2);
   });
 });

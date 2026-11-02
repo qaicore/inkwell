@@ -522,7 +522,11 @@ describe('drawArcs and emitArcs', () => {
     for (const k of [40, 47]) expect(renderLimbs(tubes, k, napiPath).equals(renderLimbs(tubes, k, null))).toBe(true);
   });
 
-  it('draws 24 arcs at 1080×608 in ≤ 11 ms (median of 10), shapes included', () => {
+  // Decision 11: about 1.5 × the worst median under the whole unit suite (its
+  // serial group, four runs, Nov 2). Design 10.8 ms (24 arcs at ≤ 0.45 ms,
+  // design §3 and §10); today 7.5–9.0 ms.
+  const ARCS_MS = 13.5;
+  it('draws 24 arcs at 1080×608 in ≤ 13.5 ms (median of 10; design 10.8 ms), shapes included', () => {
     const tubes = perfLimbs();
     const ks = Array.from({ length: 10 }, (_, i) => 40 + i);
     const count = (k: number) => tubes.reduce((n, tube) => n + arcsIn(sheathArcs(tube, k, phases.strike, tube.id, { S: 608 })), 0);
@@ -542,7 +546,8 @@ describe('drawArcs and emitArcs', () => {
     for (let i = 0; i < 20; i++) time(100 + i); // warm up: the JIT, and the canvas
     const ms = ks.map(time).sort((a, b) => a - b);
     const median = (ms[4] + ms[5]) / 2;
-    expect(median, `ms: ${ms.map((m) => m.toFixed(1)).join(' ')}`).toBeLessThanOrEqual(11);
+    console.log(`arcs: ${median.toFixed(2)} ms for 24 arcs (median of 10, 1080×608)`);
+    expect(median, `ms: ${ms.map((m) => m.toFixed(1)).join(' ')}`).toBeLessThanOrEqual(ARCS_MS);
   });
 
   it('renders the same pixels twice, and different ones on another drawing', () => {

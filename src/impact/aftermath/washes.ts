@@ -15,33 +15,38 @@
 //   - the dust-wash veil of A5–6 (hold group 3): α 0.64 with a 4-step feather
 //     of 0.04–0.055 S, cut to at most 0.35 over the person;
 //   - the A5–6 white flash, on the strict-2s clock: the frame less a hole round
-//     the cluster and dust, 4–5 floor splinters, a window and the person, by
-//     the even-odd rule, at about 0.4 opacity.
-// A flood is layered outside in: an ink line, the blue band (lobed on its
-// outer side), an ink line, a pale fringe, then the cyan field, whose edge is
-// notched in 0.01–0.02 U steps. The A15–17 fields pale with depth, from core
-// at the edge to pale 0.15–0.3 U in; the A10–11 fields run the other way, a
-// paler rim 0.03 U deep over a saturated inside. Floods go behind the person
-// (slot 6); the veil goes in the front FX (slot 10) and the flash above it
-// (slot 11). In gentle mode the veil and the flash stay under +0.10 L: their
-// opacity is capped so no grey background up to L 0.6 moves by 0.08 or more.
+//     the cluster and dust, 4–5 floor splinters and the person, by the
+//     even-odd rule, at about 0.4 opacity.
+// A flood is layered outside in (round 3, reference:15): an ink line
+// (#00017b), the blue band (#2c5cfc, 0.008–0.027 U wide along the edge and
+// lobed on its outer side), an ink line, a pale fringe (#abfdf4), then the
+// cyan field. The field side is torn by midpoint displacement along the
+// edge's normal: teeth 0.01–0.04 U deep every 0.02–0.08 U, slanted, never
+// axis-aligned steps. The A15–17 fields pale with depth, from core at the
+// edge to pale 0.15–0.3 U in; the A10–11 fields keep the saturated core
+// within 0.02–0.03 U of the edge, over a pale inside, mix(core, white,
+// 0.52–0.58) (#95fef6–#a2fef7, which the wash's glow brings to k24–25's
+// #aafffa–#b5fdfe). Floods go behind the person (slot 6); the veil goes in
+// the front FX (slot 10) and the flash above it (slot 11). In gentle mode the
+// veil and the flash stay under +0.10 L: their opacity is capped so no grey
+// background up to L 0.6 moves by 0.08 or more.
 //
 // The kr-clocked things take j (frames since contact); the 2s ones take the
 // output frame f, like the masses. This file also holds what the three energy
 // modules share: the energy frame (n up the floor, t across it toward the
-// strike's side), the kr-step bounds, the 2s group clock, flat fills and the
-// faded paint. They match fire.ts's (WP8) on purpose, kept apart so WP9 needs
-// no WP8 code.
+// strike's side), the measured discharge tones, the kr-step bounds, the 2s
+// group clock, flat fills and the faded paint. They match fire.ts's (WP8) on
+// purpose, kept apart so WP9 needs no WP8 code.
 import type { Vec2 } from '../../types/effect.ts';
-import type { GlowSink, ImpactContext, LayerDraw } from '../contracts.ts';
+import type { GlowSink, ImpactContext, LayerDraw, Palette } from '../contracts.ts';
 import type { Mask } from '../../track/tracking.ts';
 import { drawingIndex } from '../../motion/timing.ts';
 import { rgb } from '../../render/geometry.ts';
 import { scratch, type BrushTarget, type MakeScratch, type Scratch } from '../../render/glow.ts';
 import { decayAlpha, drawingStart, kr, massGroup, zoomAt } from '../clock.ts';
 import { floorFrame } from '../floor.ts';
-import { linear, mixHex, roles } from '../palette.ts';
-import { int, rng, uniform } from '../rng.ts';
+import { DISCHARGE, fromOklch, hueDelta, linear, mixHex, roles, toOklch } from '../palette.ts';
+import { int, rng, uniform, type Rng } from '../rng.ts';
 
 const TAU = 2 * Math.PI;
 export const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
@@ -73,6 +78,33 @@ export function energyFrame(ictx: ImpactContext): EnergyFrame {
 
 // A floor-frame point, n up and t across, in units of `unit` px, to frame px.
 export const onFloor = (fr: EnergyFrame, unit: number, n: number, t: number): Vec2 => [fr.P[0] + unit * (n * fr.n[0] + t * fr.t[0]), fr.P[1] + unit * (n * fr.n[1] + t * fr.t[1])];
+
+// ---- The measured discharge tones -----------------------------------------------------------
+
+// k21–31's flat ribbons and floods (lightning study §3.3, §3.7; breakdown
+// phase 6): the ink edge, the blue band and its deeper shade, the cyan core
+// and the pale. Composited, the core reads #7efefd–#acfcfd. A p0 that turns
+// the discharge set (palette.ts roles) turns these by the same hue.
+export const ENERGY_TONES = { edge: '#00017b', band: '#2c5cfc', deep: '#233cfd', core: '#22fded', pale: '#abfdf4' } as const;
+export type EnergyTones = Record<keyof typeof ENERGY_TONES, string>;
+const toneCache = new Map<string, EnergyTones>();
+
+export function energyTones(palette: Palette): EnergyTones {
+  const key = palette.join('');
+  const hit = toneCache.get(key);
+  if (hit) return hit;
+  const turn = hueDelta(toOklch(DISCHARGE.band).h, toOklch(roles(palette).discharge.band).h);
+  const out = { ...ENERGY_TONES } as EnergyTones;
+  if (Math.abs(turn) > 1e-6) {
+    for (const k of Object.keys(out) as (keyof EnergyTones)[]) {
+      const c = toOklch(out[k]);
+      out[k] = fromOklch({ ...c, h: (c.h + turn + 360) % 360 });
+    }
+  }
+  if (toneCache.size >= 16) toneCache.clear();
+  toneCache.set(key, out);
+  return out;
+}
 
 // The frames of j's kr step: kr holds 2, 1, 1, 1 frames, so first = last on
 // most steps.
@@ -480,8 +512,80 @@ export interface FloodDrawing extends FloodPlan {
   glow: string; // the wash halo's colour
 }
 
+export const FLOOD_BAND = [0.008, 0.027] as const; // U: the band's width along the edge, between its lobes
+// U: a tooth every 0.02–0.08 U, its tip 0.01–0.04 U deeper than its base
+// (under 0.003 U); the tip sits 20–35 % of the way along it, or 65–80 %, the
+// same way on one flood, so the teeth lean like barbs (k24–25).
+export const NOTCH = { spacing: [0.02, 0.08], depth: [0.01, 0.04], shallow: 0.003, lean: [0.2, 0.35] } as const;
+export const RIM_CORE = [0.02, 0.03] as const; // U: an A10–11 field keeps the saturated core this far in
+export const RIM_PALE = [0.52, 0.58] as const; // then mix(core, white, this): #95fef6–#a2fef7 unturned, #aafffa–#b5fdfe under the wash glow
 const STEP = 0.01; // U: the flood edge's sample spacing
 const floods = new Map<string, Pick<FloodDrawing, 'layers' | 'outline' | 'share' | 'glow'>>();
+
+export interface FloodEdge {
+  s: number[]; // along the edge, px, ascending
+  band: number[]; // the band's width at each, px, its outer lobes in
+  notch: number[]; // how far the field side is torn in at each, px
+}
+
+// A flood's edge from s0 to s1 (px along it). The band's width is a slow
+// two-sine wave between FLOOD_BAND's ends, with rounded lobes on its outer
+// side. The field side is torn by midpoint displacement along the edge's
+// normal: the NOTCH teeth (base, tip, base, ...), and between each two
+// knots a midpoint pushed off the straight line by up to a quarter of their
+// difference. Every piece of the tear is slanted: no axis-aligned steps
+// (reference:15, round 2's square stair-step). Sampled every STEP U and at
+// every knot and midpoint, so the tear's corners are exact.
+export function floodEdge(r: Rng, s0: number, s1: number, U: number): FloodEdge {
+  const mid = ((FLOOD_BAND[0] + FLOOD_BAND[1]) / 2) * U;
+  const amp = ((FLOOD_BAND[1] - FLOOD_BAND[0]) / 2) * U;
+  const lam = [uniform(r, 0.25, 0.45) * U, uniform(r, 0.08, 0.15) * U];
+  const ph = [uniform(r, 0, TAU), uniform(r, 0, TAU)];
+  const lobes: { c: number; hw: number; h: number }[] = [];
+  for (let s = s0 + uniform(r, 0, 0.3) * U; s < s1; s += uniform(r, 0.3, 0.5) * U) lobes.push({ c: s, hw: uniform(r, 0.06, 0.12) * U, h: uniform(r, 0.04, 0.1) * U });
+  const lean = r() < 0.5 ? uniform(r, NOTCH.lean[0], NOTCH.lean[1]) : 1 - uniform(r, NOTCH.lean[0], NOTCH.lean[1]);
+  const tear: Vec2[] = []; // (s, depth), ascending in s
+  const knot = (s: number, v: number) => {
+    if (tear.length > 0) {
+      const [sa, va] = tear[tear.length - 1];
+      tear.push([(sa + s) / 2, (va + v) / 2 + uniform(r, -0.25, 0.25) * Math.abs(v - va)]);
+    }
+    tear.push([s, v]);
+  };
+  for (let s = s0 - uniform(r, 0, NOTCH.spacing[1]) * U; ; ) {
+    const base = uniform(r, 0, NOTCH.shallow) * U;
+    knot(s, base);
+    if (s >= s1) break;
+    const p = uniform(r, NOTCH.spacing[0], NOTCH.spacing[1]) * U;
+    knot(s + p * clamp(lean + uniform(r, -0.08, 0.08), 0.1, 0.9), base + uniform(r, NOTCH.depth[0], NOTCH.depth[1]) * U);
+    s += p;
+  }
+  const s: number[] = [];
+  for (let x = s0; x < s1; x += STEP * U) s.push(x);
+  s.push(s1);
+  for (const [x] of tear) if (x > s0 && x < s1) s.push(x);
+  s.sort((a, b) => a - b);
+  const band: number[] = [];
+  const notch: number[] = [];
+  let at = 0;
+  for (const x of s) {
+    let b = mid + amp * (0.6 * Math.sin((TAU * x) / lam[0] + ph[0]) + 0.4 * Math.sin((TAU * x) / lam[1] + ph[1]));
+    const b0 = b;
+    for (const l of lobes) {
+      const u = (x - l.c) / l.hw;
+      if (u > -1 && u < 1) {
+        const c = Math.cos((Math.PI / 2) * u);
+        b = Math.max(b, b0 + l.h * c * c);
+      }
+    }
+    band.push(b);
+    while (at + 2 < tear.length && tear[at + 1][0] <= x) at++;
+    const [sa, va] = tear[at];
+    const [sb, vb] = tear[at + 1];
+    notch.push(va + ((vb - va) * clamp((x - sa) / (sb - sa), 0, 1)));
+  }
+  return { s, band, notch };
+}
 
 export function floodShapes(ictx: ImpactContext, j: number, opts: WashOptions = {}): FloodDrawing | null {
   const plan = floodAt(ictx, j, opts);
@@ -497,7 +601,7 @@ function floodGeometry(ictx: ImpactContext, plan: FloodPlan): Pick<FloodDrawing,
   const fr = energyFrame(ictx);
   const { width: W, height: H } = ictx;
   const { U, S } = fr;
-  const tones = roles(ictx.palette).discharge;
+  const tones = energyTones(ictx.palette);
   const r = rng(ictx.seed, 'flood', ...plan.ints);
   const ang = ((plan.dir + uniform(r, -10, 10)) * Math.PI) / 180;
   const nu: Vec2 = [Math.cos(ang) * fr.n[0] + Math.sin(ang) * fr.t[0], Math.cos(ang) * fr.n[1] + Math.sin(ang) * fr.t[1]];
@@ -510,43 +614,12 @@ function floodGeometry(ictx: ImpactContext, plan: FloodPlan): Pick<FloodDrawing,
   const q0 = Math.min(...across) - 8;
   const q1 = Math.max(...across) + 8;
 
-  // The band: a thin base, with rounded lobes on its outer side.
-  const b0 = uniform(r, 0.008, 0.02) * U;
-  const lobes: { c: number; hw: number; h: number }[] = [];
-  for (let s = s0 + uniform(r, 0, 0.3) * U; s < s1; s += uniform(r, 0.3, 0.5) * U) lobes.push({ c: s, hw: uniform(r, 0.06, 0.12) * U, h: uniform(r, 0.04, 0.1) * U });
-  // The field side's notches: a step every 0.03–0.08 U, up or down 0.01–0.02 U.
-  const notchAt: { s: number; v: number }[] = [];
-  let v = 0;
-  for (let s = s0; s < s1; s += uniform(r, 0.03, 0.08) * U) {
-    notchAt.push({ s, v });
-    const up = v <= 0 ? true : v >= 0.03 * U ? false : r() < 0.5;
-    v = clamp(v + (up ? 1 : -1) * uniform(r, 0.01, 0.02) * U, 0, 0.03 * U);
-  }
-  const samples: number[] = [];
-  for (let s = s0; s < s1; s += STEP * U) samples.push(s);
-  samples.push(s1);
-  for (const n of notchAt.slice(1)) samples.push(n.s - 0.05, n.s + 0.05);
-  samples.sort((a, b) => a - b);
-  const band = new Float64Array(samples.length);
-  const notch = new Float64Array(samples.length);
-  let at = 0;
-  samples.forEach((s, i) => {
-    let b = b0;
-    for (const l of lobes) {
-      const x = (s - l.c) / l.hw;
-      if (x > -1 && x < 1) {
-        const c = Math.cos((Math.PI / 2) * x);
-        b = Math.max(b, b0 + l.h * c * c);
-      }
-    }
-    band[i] = b;
-    while (at + 1 < notchAt.length && notchAt[at + 1].s <= s) at++;
-    notch[i] = notchAt[at].v;
-  });
+  // The band, its lobes and the tear.
+  const { s: samples, band, notch } = floodEdge(r, s0, s1, U);
 
   // The region q ≥ edge(s), closed beyond the frame and cut to it. Runs of
-  // samples on one straight line (the notches' flats, the band between its
-  // lobes) keep their ends only.
+  // samples on one straight line (the tear's slants, where the band runs
+  // straight) keep their ends only.
   const region = (edge: (i: number) => number): Vec2[] => {
     const pts: Vec2[] = straight(
       samples.map((s, i) => {
@@ -613,12 +686,12 @@ function floodGeometry(ictx: ImpactContext, plan: FloodPlan): Pick<FloodDrawing,
           const d = uniform(r, 0.15, 0.3) * U;
           return [[0, tones.core], [0.3 * d, mixHex(tones.core, tones.pale, 0.33)], [0.62 * d, mixHex(tones.core, tones.pale, 0.66)], [d, tones.pale]];
         })()
-      : [[0, mixHex(tones.core, tones.pale, 0.5)], [uniform(r, 0.025, 0.035) * U, tones.core]];
+      : [[0, tones.core], [uniform(r, RIM_CORE[0], RIM_CORE[1]) * U, mixHex(tones.core, '#ffffff', uniform(r, RIM_PALE[0], RIM_PALE[1]))]];
   const all: FloodLayer[] = [
     { role: 'ink', color: tones.edge, points: region((k) => B - band[k] - ink0) },
     { role: 'band', color: tones.band, points: region((k) => B - band[k]) },
     { role: 'ink', color: tones.edge, points: region((k) => B + notch[k]) },
-    { role: 'fringe', color: mixHex(tones.core, tones.pale, 0.6), points: region((k) => B + notch[k] + ink1) },
+    { role: 'fringe', color: tones.pale, points: region((k) => B + notch[k] + ink1) },
     ...steps.map(([depth, color]): FloodLayer => ({ role: 'field', color, points: region((k) => fieldEdge(k) + depth) })),
   ];
   // Reduce flashing leaves out the dark edge (both ink lines and the band): a
@@ -761,8 +834,11 @@ export function veilLayer(ictx: EnergyContext, f: number, make: MakeScratch, opt
 
 // destruction §4.6, §6.8: the frame less a hole round the cluster and dust
 // (t −0.51..+0.50, n −0.13..+0.70 U), 4–5 floor splinters at n −0.42..−0.14,
-// a window at t +0.59..+0.75, n 0.34..0.66, and the person; one light tone,
-// at most 15 % toward p0, at about 0.4 opacity; a hard cut at A7.
+// and the person; one light tone, at most 15 % toward p0, at about 0.4
+// opacity; a hard cut at A7. The reference's flash also spares a window (t
+// +0.59..+0.75, n 0.34..0.66): its own room's, already bright. Over another
+// room's dark wall that hole read as a solid black oval floating beside him
+// (round 2, asks:5), so the flash covers it.
 export const FLASH = { alpha: 0.4, ages: [5, 6], tint: 0.15 } as const;
 export const GENTLE_FLASH_AREA = 0.22; // gentle mode: at most this share of the frame, under the 25 % cap
 const FLASH_SUB = 0xf1a5; // rng(seed, 'wisp', k, FLASH_SUB): apart from the wisps' own draws
@@ -807,9 +883,6 @@ export function flashShapes(ictx: EnergyContext, f: number, opts: WashOptions = 
     const pt = (l: number, w: number) => onFloor(fr, unit, n + l * Math.cos(a) - w * Math.sin(a), t + l * Math.sin(a) + w * Math.cos(a));
     extra.push([pt(len / 2, 0), pt(0, wid / 2), pt(-len / 2, 0), pt(0, -wid / 2)]);
   }
-  const win: Vec2[] = [];
-  for (let i = 0; i < 16; i++) win.push(onFloor(fr, unit, 0.5 + 0.13 * Math.cos((TAU * i) / 16), 0.67 + 0.065 * Math.sin((TAU * i) / 16)));
-  extra.push(win);
   const area = (poly: Vec2[]) => Math.abs(signedArea(clipToFrame(poly, W, H)));
   let scale = 1;
   if (ictx.flash === 'safe') {

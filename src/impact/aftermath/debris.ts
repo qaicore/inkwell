@@ -6,8 +6,10 @@
 //     (g3, g5 and g7, under the flash and the floods, between their measured
 //     neighbours), and g8's count in the hold;
 //   - shards, on g0–1 (A0–2) only: 5–8 slivers in the floor's colour (the
-//     ink role), 0.03 U long at the median and one up to 0.2 U, 3–6 times as
-//     long as wide, at r 0.45–0.72 U and ±80° from n̂, pointing out from P;
+//     ink role), 0.03 U long at the median and none over 0.05 U (judge round
+//     2: the reference's longest, 0.17–0.22 H, read as a paper triangle at
+//     his size), 3–6 times as long as wide, at r 0.45–0.72 U and ±80° from
+//     n̂, pointing out from P;
 //   - big chunks, on their own 2s clock one frame late: chunk drawing
 //     k′ = floor((f−1)·dps/30), with the age of global drawing k′. Four floor
 //     chunks spawn over the drawings of A8–11, on the floor line at r
@@ -22,22 +24,26 @@
 //     it is wholly off the frame. None spawn in the decay; the ones up keep
 //     flying through it.
 //     Shape: 5–8 straight sides and 1–2 notches; from the outside in a
-//     near-black seam, the warm rim line #744045, a dark line, then the
-//     black body. Over the fire (within the fire part's reach of P) the line
-//     is orange (#b05000 / #f86800) and twice as wide.
+//     near-black seam, the warm rim line #744045 0.01 U wide (judge round 2:
+//     the reference's 2 px line read as no rim at all; at most RIM_SHARE of
+//     a small chunk's diameter), a dark line, then the black body. Over the
+//     fire (within the fire part's reach of P) the line is orange (#b05000 /
+//     #f86800) and twice as wide.
+// In the decay the specks drop out in a seeded order (fire.ts's erosion) and
+// the chunks keep flying; only the last frames fade (fire.ts FADE_FRAMES).
 // Chunk tracks and sizes are in k0 framing: no zoom factor. Specks and
 // shards are screen sizes at their age, so they are × the zoom factor about P
 // (fire.ts). The colours are the reference's physical blacks, kept for every
-// palette, except the shards (the ink role). Everything is × the decay.
+// palette, except the shards (the ink role).
 import type { GlowSink, ImpactContext } from '../contracts.ts';
 import type { BrushTarget } from '../../render/glow.ts';
 import { drawingIndex } from '../../motion/timing.ts';
-import { decayAlpha, drawingStart, kr } from '../clock.ts';
+import { drawingStart, kr } from '../clock.ts';
 import { roles } from '../palette.ts';
 import { int, normal, rng, uniform, type Rng } from '../rng.ts';
 import { CLUSTER_AREA, hotShare } from './cluster.ts';
 import {
-  GROUP_AGE, LAST_MEASURED, MASS_DPS, clamp, massClock, massFrame, massKey, memo, paint, polygonArea, toFloor, toFrame,
+  GROUP_AGE, LAST_MEASURED, MASS_DPS, clamp, erodeKeeps, massClock, massFrame, massKey, memo, paint, polygonArea, toFloor, toFrame,
   type FloorPt, type MassContext, type MassDrawing, type MassFrame, type MassShape,
 } from './fire.ts';
 
@@ -48,7 +54,7 @@ const DEG = Math.PI / 180;
 export const SPECKS = [12, 16, 26, 22, 41, 26, 32, 24, 14] as const; // per group, g0..g8
 export const SPECK_D = 0.0125; // U across, the median (p50 0.010–0.015)
 const SPECK_SPREAD = Math.log(2.2); // the smallest and largest are the median ÷ and × 2.2 (0.006–0.028 U)
-export const SHARDS = { count: [5, 8], length: 0.031, longest: [0.1, 0.2], elongation: [3, 6], r: [0.45, 0.72], spread: 80 } as const;
+export const SHARDS = { count: [5, 8], length: 0.031, longest: [0.042, 0.05], max: 0.05, elongation: [3, 6], r: [0.45, 0.72], spread: 80 } as const;
 const SPECK_BLACK = '#000000';
 
 export interface Bit {
@@ -84,7 +90,7 @@ function speck(r: Rng, A: number, q: number): Bit {
 }
 
 function shard(r: Rng, longest: boolean): Bit {
-  const L = longest ? uniform(r, SHARDS.longest[0], SHARDS.longest[1]) : clamp(SHARDS.length * Math.exp(normal(r, 0, 0.35)), 0.015, 0.08);
+  const L = longest ? uniform(r, SHARDS.longest[0], SHARDS.longest[1]) : clamp(SHARDS.length * Math.exp(normal(r, 0, 0.35)), 0.015, SHARDS.max);
   const w = L / uniform(r, SHARDS.elongation[0], SHARDS.elongation[1]);
   const phi = uniform(r, -SHARDS.spread, SHARDS.spread) * DEG;
   const rho = uniform(r, SHARDS.r[0], SHARDS.r[1]);
@@ -142,7 +148,10 @@ const RIM = '#744045';
 const DARK = '#120000';
 const BODY = '#000000';
 const FIRE_LINE = ['#b05000', '#f86800'] as const;
-const EDGE = 0.0032; // U: the seam's and the rim line's width (2 px of the reference's 5 px edge)
+const SEAM_W = 0.0025; // U: the near-black seam outside the rim
+export const RIM_W = 0.01; // U: the rim line …
+const RIM_SHARE = 0.12; // … at most this share of the chunk's diameter
+const DARK_W = 0.003; // U: the dark line inside it
 
 export type ChunkKind = 'floor' | 'late' | 'air';
 export interface ChunkTrack {
@@ -202,9 +211,12 @@ function chunkShape(r: Rng): [number, number][] {
   return verts.map(([th, rr]) => [th, rr * s]);
 }
 
+// A chunk's outline at diameter d (its shape's radii are of a unit
+// diameter, about 0.5: round 3 found them drawn × d/2, so half size), and
+// `inset` U in from it all round.
 function outlineOf(shape: readonly [number, number][], c: FloorPt, d: number, angle: number, inset = 0): FloorPt[] {
   const k = Math.max(0, 1 - inset / (d / 2));
-  return shape.map(([th, rr]): FloorPt => [c[0] + (d / 2) * k * rr * Math.cos(th + angle), c[1] + (d / 2) * k * rr * Math.sin(th + angle)]);
+  return shape.map(([th, rr]): FloorPt => [c[0] + d * k * rr * Math.cos(th + angle), c[1] + d * k * rr * Math.sin(th + angle)]);
 }
 
 // Where a track is `step` steps after its spawn.
@@ -403,7 +415,8 @@ export function shapes(ictx: MassContext, f: number): DebrisDrawing | null {
   const unit = fr.U * clock.zoom;
   const ink = roles(ictx.palette).ink;
   const kp = chunkDrawing(ictx, f);
-  const group = bits(ictx.seed, clock.g);
+  // The specks the erosion keeps (every one until the decay).
+  const group = bits(ictx.seed, clock.g).filter((b, i) => b.role === 'shard' || erodeKeeps(ictx.seed, 'debris', i, clock.erode));
   const chunks = chunksOn(ictx, kp);
   const out: MassShape[] = [];
   for (const b of group) {
@@ -412,20 +425,21 @@ export function shapes(ictx: MassContext, f: number): DebrisDrawing | null {
   const px = (pts: FloorPt[]) => pts.map((p) => toFrame(fr, fr.U, p));
   for (const ch of chunks) {
     const ring = (inset: number) => px(outlineOf(ch.track.shape, ch.c, ch.d, ch.angle, inset));
+    const rim = rimWidth(ch.d);
     out.push({ role: 'chunk', points: px(ch.points), color: SEAM });
     if (ch.overFire) {
-      out.push({ role: 'chunk-line', points: ring(EDGE), color: ch.track.line ?? FIRE_LINE[1] });
-      out.push({ role: 'chunk-body', points: ring(3 * EDGE), color: BODY });
+      out.push({ role: 'chunk-line', points: ring(SEAM_W), color: ch.track.line ?? FIRE_LINE[1] });
+      out.push({ role: 'chunk-body', points: ring(SEAM_W + Math.min(2 * rim, 0.3 * ch.d)), color: BODY });
     } else {
-      out.push({ role: 'chunk-rim', points: ring(EDGE), color: RIM });
-      out.push({ role: 'chunk-dark', points: ring(2 * EDGE), color: DARK });
-      out.push({ role: 'chunk-body', points: ring(2.5 * EDGE), color: BODY });
+      out.push({ role: 'chunk-rim', points: ring(SEAM_W), color: RIM });
+      out.push({ role: 'chunk-dark', points: ring(SEAM_W + rim), color: DARK });
+      out.push({ role: 'chunk-body', points: ring(SEAM_W + rim + DARK_W), color: BODY });
     }
   }
   return {
     layer: 'front',
-    key: `debris:${massKey(ictx)}:${ictx.I}:${ictx.dps ?? MASS_DPS}:${ictx.jEnd}:${clock.g}:${unit.toFixed(3)}:${kp}`,
-    alpha: decayAlpha(clock.j, ictx.jEnd),
+    key: `debris:${massKey(ictx)}:${ictx.I}:${ictx.dps ?? MASS_DPS}:${ictx.jEnd}:${clock.g}:${clock.erode.toFixed(4)}:${unit.toFixed(3)}:${kp}`,
+    alpha: clock.alpha,
     shapes: out,
     g: clock.g,
     kp,
@@ -434,6 +448,9 @@ export function shapes(ictx: MassContext, f: number): DebrisDrawing | null {
     chunks,
   };
 }
+
+// A chunk's rim line, U: RIM_W, at most RIM_SHARE of its diameter.
+export const rimWidth = (d: number): number => Math.min(RIM_W, RIM_SHARE * d);
 
 export function draw(_ctxBehind: BrushTarget, ctxFront: BrushTarget, _sink: GlowSink, ictx: MassContext, f: number, opaque = false) {
   paint(ctxFront, shapes(ictx, f), opaque);

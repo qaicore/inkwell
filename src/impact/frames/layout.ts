@@ -14,7 +14,18 @@
 //   - The physical family (the tint, shards, spray, disc2, the speed lines,
 //     edge spikes, the A6/V6 streaks, the comet, the crater) stays on P. An
 //     element whose whole extent is off the frame is mirrored across P along u
-//     (WP0's mirrorIntoFrame), one element at a time, as it is drawn.
+//     (WP0's mirrorIntoFrame), one element at a time, as it is drawn. Two
+//     anchors move first (round 3):
+//       - IF2's disc must split the frame, as the panel's does (clipped by
+//         its top and right edges): when the disc at disc2, its edge 0.017 S
+//         short of P, is clipped by fewer than two frame edges (the hero's is
+//         a moon inside the frame), disc2 swings round P toward its own side
+//         of the axis (b's, so h picks it) and moves along the line from P
+//         until the disc is clipped by two edges and covers 42–52 % of the
+//         frame, the least swing first (splitDisc);
+//       - IF6's fan meets at V6, 0.17 S down the axis: off the frame (the
+//         hero's is under the floor), A6 and V6 slide back up the axis by the
+//         HUD's Δ, so the fan thrown back up −u from it lands on the frame.
 //   - The HUD is screen-aligned: crosshairs and the star's long, edge-reaching
 //     arms run along the frame's short side, vertical in landscape and
 //     horizontal in portrait.
@@ -27,6 +38,13 @@ const SLIDE_AT = 0.18; // S: the HUD starts sliding when P is nearer the edge th
 const SLIDE_MAX = 0.2; // S: and slides at most this far
 const JITTER = 0.02; // S, on each axis
 const INSET = 0.02; // S: how far inside the frame a clamped HUD anchor lands
+export const SPLIT_SHORT = 0.017; // S: IF2's disc edge stops this far short of P
+export const SPLIT_EDGES = 2; // the frame edges IF2's disc is clipped by, at least
+export const SPLIT_COVER = [0.42, 0.52] as const; // of the frame: a swung disc's coverage
+const SPLIT_AIM = 0.47; // the panel's coverage, which a swung disc aims for
+const SPLIT_SWING = { step: 2.5, max: 120 } as const; // degrees round P
+const SPLIT_REACH = { from: 0.35, to: 1.2, step: 0.025 } as const; // |disc2 − P|, S
+const SPLIT_GRAZE = 0.04; // S: a disc whose edge passes this near a frame edge without a clear cut, or a clear gap, grazes it
 
 // The physical anchors, as (a, b) about P.
 export const PHYSICAL = {
@@ -123,6 +141,10 @@ export function posterLayout(ctx: LayoutContext): PosterLayout {
     const [ja, jb] = jitter(i);
     physical[name] = at(P, PHYSICAL[name][0] + ja, PHYSICAL[name][1] + jb);
   });
+  physical.disc2 = splitDisc(P, u, v, S, width, height, physical.disc2).c;
+  if (!inside(physical.V6, width, height)) {
+    for (const name of ['A6', 'V6'] as const) physical[name] = [physical[name][0] - slide * u[0], physical[name][1] - slide * u[1]];
+  }
   // (a, b) about O, jitter included; S1 and S2 ride on G's.
   const ab = {} as Record<HudAnchor, Vec2>;
   HUD_NAMES.forEach((name, i) => {
@@ -154,6 +176,93 @@ export function placePhysical(L: PosterLayout, points: Vec2[], closed = true): V
   if (!mirrored) return points;
   return closed && points.length > 2 ? placed.slice(0, -1) : placed;
 }
+
+// ---- IF2's split ------------------------------------------------------------------------
+
+export interface SplitDisc {
+  c: Vec2; // the centre, frame px
+  r: number; // |c − P| − 0.017 S, px
+  edges: number; // frame edges the disc is clipped by, 0..4
+  corners: number; // frame corners inside it, 0..4
+  cover: number; // its share of the frame, 0..1
+}
+
+// IF2's disc from the jittered disc2 `at`. It splits the frame when it is
+// clipped by two frame edges and holds a frame corner, as the panel's holds
+// its top right one: its edge then runs edge to edge through P, where a disc
+// that only grazes two edges still reads as a moon. A swung disc must not
+// graze any edge either (a sliver of paper or of ink along it). A split is kept;
+// otherwise disc2 swings round P, toward the side of the axis it is on
+// first, in 2.5° steps, each swing trying every distance from P, until the
+// disc splits the frame and covers 42–52 % of it (the distance whose cover
+// is nearest the panel's 47 % wins). Failing both sides, the best of the
+// rest is taken: most corners, then most edges, then nearest 47 %.
+export function splitDisc(P: Vec2, u: Vec2, v: Vec2, S: number, width: number, height: number, at: Vec2): SplitDisc {
+  const disc = (c: Vec2): SplitDisc => {
+    const r = Math.max(0.05 * S, Math.hypot(c[0] - P[0], c[1] - P[1]) - SPLIT_SHORT * S);
+    return { c, r, edges: clippedEdges(c, r, width, height), corners: cornersIn(c, r, width, height), cover: discCover(c, r, width, height) };
+  };
+  const splits = (s: SplitDisc) => s.edges >= SPLIT_EDGES && s.corners >= 1;
+  const grazes = ({ c, r }: SplitDisc) => [c[0], width - c[0], c[1], height - c[1]].some((gap) => Math.abs(gap - r) < SPLIT_GRAZE * S);
+  const start = disc(at);
+  if (splits(start)) return start;
+  const a0 = ((at[0] - P[0]) * u[0] + (at[1] - P[1]) * u[1]) / S;
+  const b0 = ((at[0] - P[0]) * v[0] + (at[1] - P[1]) * v[1]) / S;
+  const phi0 = Math.atan2(b0, a0);
+  const side = a0 * b0 >= 0 ? 1 : -1; // the turn that takes b further to its own side
+  const score = (s: SplitDisc) => s.corners * 100 + s.edges * 10 - Math.abs(s.cover - SPLIT_AIM);
+  let best = start;
+  for (const turn of [side, -side]) {
+    for (let deg = SPLIT_SWING.step; deg <= SPLIT_SWING.max; deg += SPLIT_SWING.step) {
+      const phi = phi0 + (turn * deg * Math.PI) / 180;
+      let pick: SplitDisc | null = null;
+      for (let rho = SPLIT_REACH.from; rho <= SPLIT_REACH.to + 1e-9; rho += SPLIT_REACH.step) {
+        const a = rho * Math.cos(phi);
+        const b = rho * Math.sin(phi);
+        const s = disc([P[0] + S * (a * u[0] + b * v[0]), P[1] + S * (a * u[1] + b * v[1])]);
+        if (splits(s) && !grazes(s) && s.cover >= SPLIT_COVER[0] && s.cover <= SPLIT_COVER[1] && (!pick || Math.abs(s.cover - SPLIT_AIM) < Math.abs(pick.cover - SPLIT_AIM))) pick = s;
+        if (score(s) > score(best)) best = s;
+      }
+      if (pick) return pick;
+    }
+  }
+  return best;
+}
+
+// The frame corners inside a disc.
+export function cornersIn(c: Vec2, r: number, width: number, height: number): number {
+  let n = 0;
+  for (const [x, y] of [[0, 0], [width, 0], [width, height], [0, height]]) if (Math.hypot(x - c[0], y - c[1]) < r) n++;
+  return n;
+}
+
+// The frame edges a disc is clipped by: those whose segment its chord overlaps.
+export function clippedEdges(c: Vec2, r: number, width: number, height: number): number {
+  const meets = (gap: number, mid: number, span: number) => {
+    if (Math.abs(gap) >= r) return false;
+    const h = Math.sqrt(r * r - gap * gap);
+    return mid - h < span && mid + h > 0;
+  };
+  return Number(meets(c[0], c[1], height)) + Number(meets(width - c[0], c[1], height)) + Number(meets(c[1], c[0], width)) + Number(meets(height - c[1], c[0], width));
+}
+
+// A disc's share of the frame, by 160 columns (midpoint rule).
+export function discCover(c: Vec2, r: number, width: number, height: number): number {
+  const x0 = Math.max(0, c[0] - r);
+  const x1 = Math.min(width, c[0] + r);
+  if (x1 <= x0) return 0;
+  const n = 160;
+  const dx = (x1 - x0) / n;
+  let area = 0;
+  for (let i = 0; i < n; i++) {
+    const x = x0 + (i + 0.5) * dx - c[0];
+    const h = Math.sqrt(Math.max(0, r * r - x * x));
+    area += Math.max(0, Math.min(height, c[1] + h) - Math.max(0, c[1] - h)) * dx;
+  }
+  return area / (width * height);
+}
+
+const inside = ([x, y]: Vec2, w: number, h: number) => x >= 0 && x <= w && y >= 0 && y <= h;
 
 // X(a, b) about P (physical) and about the slid origin (HUD), in frame px.
 export const physicalAt = (L: PosterLayout, a: number, b: number): Vec2 => [L.P[0] + L.S * (a * L.u[0] + b * L.v[0]), L.P[1] + L.S * (a * L.u[1] + b * L.v[1])];

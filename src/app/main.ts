@@ -23,6 +23,7 @@ import {
   LIMB_ROOT,
   PALETTE,
   sceneOwns,
+  withFloor,
   type ClipData,
   type ClipMotion,
   type DrawnStroke,
@@ -69,6 +70,7 @@ import { proxyTransport } from '../plan/request';
 import { drawPlanMarks, PLAN_IMAGE_LONG_SIDE, strokeColor } from '../plan/numbered';
 import type { Tier } from '../impact/contracts';
 import type { Masks } from '../impact/detect';
+import { estimateFloor, type FloorEstimate } from '../impact/floor-estimate';
 import { LADDER } from '../impact/ladder';
 import type { ImpactScene } from '../impact/scene';
 import { serializeEffect, type BrushId, type Effect, type Moment, type Vec2 } from '../types/effect';
@@ -789,12 +791,31 @@ function numberedFrame(request: PlanRequest): string {
 }
 
 // The effect for the current strokes with the taps on them, and the flow's
-// moments and turn tap.
+// moments and turn tap, the slam on the floor read from him.
 const currentEffect = (): Effect => {
   const { moments, turn } = flowMoments(flow);
-  const effect = effectOf(strokes, { ...clipMotion(clip!), moments, turn }, undefined, overrides);
+  const effect = effectOf(strokes, { ...clipMotion(clip!), moments: withFloor(moments, slamFloor(clip!, moments)), turn }, undefined, overrides);
   return auraColor === null ? effect : { ...effect, aura: { color: auraColor } };
 };
+
+// The slam's floor (impact/floor-estimate.ts): read once per P, contact and
+// tracking from the stand-in pose and the detector's masks. Without a pose,
+// or where it can't be read, it falls back and the slam keeps DEFAULT_FLOOR;
+// the console says why.
+let floorRead: { key: string; bodies: unknown; masks: Masks; estimate: FloorEstimate } | null = null;
+function slamFloor(c: Clip, moments: Effect['moments']): FloorEstimate | null {
+  const slam = (moments ?? []).find((m): m is Moment => m.kind === 'slam');
+  if (!slam || slam.floor) return null;
+  const I = frameAt(slam.at);
+  const key = `${slam.xy[0]},${slam.xy[1]},${I}`;
+  const masks = detectorMasks(c);
+  if (floorRead?.key !== key || floorRead.bodies !== standInBodies || floorRead.masks !== masks) {
+    const estimate = estimateFloor({ P: [slam.xy[0], slam.xy[1]], I, width: c.width, height: c.height, masks, bodies: standInBodies });
+    console.info(`Impact floor: ${estimate.from === 'person' ? JSON.stringify(estimate.floor) : 'DEFAULT_FLOOR'} (${estimate.why})`);
+    floorRead = { key, bodies: standInBodies, masks, estimate };
+  }
+  return floorRead.estimate;
+}
 
 // Writes the plan, with the taps on top, into the strokes, then redraws the
 // panel. Fields the plan doesn't set (the brush) keep what the stroke has.

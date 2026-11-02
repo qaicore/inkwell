@@ -34,6 +34,7 @@ export const FLARE_REACH = 0.14; // ... easing off by this arc fraction
 export const TAPER = 0.55; // (1 − t)^taper: limb.taper's default
 export const MIN_RADIUS = 0.8; // px: the tip tapers to this
 export const SNAP_REACH = 6; // sections: how far a front/behind flip moves to the mask's edge
+export const CUT_TAPER = 4; // sections: a front run narrows to nothing over this many at a flip (limb.ts), over the behind run
 const INSIDE = 128; // mask alpha from which a pixel is the person
 const EDGE_STEPS = 12; // bisection steps along a segment for the edge: far below a pixel
 
@@ -271,10 +272,11 @@ export interface Chunk {
 // The tube's front and behind runs, root first. Each flip sits halfway
 // between the two sections whose flags differ, or, with a mask, on the
 // nearest place within SNAP_REACH sections where the projected centreline
-// crosses the mask's edge. A behind run reaches one section past each of its
-// flips: that stretch lies under the front run (the behind layer is drawn
-// under it), so no seam shows where they meet, and the front run never pokes
-// into the person. `scale` is mask px per frame px.
+// crosses the mask's edge. A behind run reaches CUT_TAPER + 1 sections past
+// each of its flips: that stretch lies under the front run (the behind layer
+// is drawn under it), so no seam shows where they meet, the front run's
+// tapered end (limb.ts) is filled from under it where nothing hides it, and
+// the front run never pokes into the person. `scale` is mask px per frame px.
 export function chunks(tube: Tube, mask?: Mask | null, scale = 1): Chunk[] {
   const secs = tube.sections;
   const last = secs.length - 1;
@@ -302,7 +304,8 @@ export function chunks(tube: Tube, mask?: Mask | null, scale = 1): Chunk[] {
     front = f.front;
   }
   runs.push({ front, from, to: last });
-  return runs.map((r) => (r.front ? r : { front: false, from: r.from > 0 ? Math.max(0, r.from - 1) : 0, to: r.to < last ? Math.min(last, r.to + 1) : last }));
+  const reach = CUT_TAPER + 1;
+  return runs.map((r) => (r.front ? r : { front: false, from: r.from > 0 ? Math.max(0, r.from - reach) : 0, to: r.to < last ? Math.min(last, r.to + reach) : last }));
 }
 
 // Is this frame px on the person? Off the mask counts as not.

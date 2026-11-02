@@ -37,8 +37,8 @@ import {
 } from '../../src/app/flow.ts';
 import { audioEnvelope, effectOf, hasImpact, LIMB_ROOT, limbBrushSize, PALETTE, sceneOwns, type ClipMotion, type Stroke } from '../../src/app/engine.ts';
 import { slicedAhead, toTransfer } from '../../src/app/render-worker.ts';
-import { audioPlan, exportSize, isIPhone, outputsOf, spliceAudio, walkFlashLadder, type AudioSegment } from '../../src/export/export.ts';
-import { checkFlashes, FlashCheckError, flashSummary, type CheckFrame, type FlashReport } from '../../src/export/flash.ts';
+import { audioPlan, exportSize, finish, isIPhone, outputsOf, spliceAudio, walkFlashLadder, type AudioSegment } from '../../src/export/export.ts';
+import { checkFlashes, downsampleFrame, FlashCheckError, flashSummary, guardRed, type CheckFrame, type FlashReport } from '../../src/export/flash.ts';
 import type { DrawingJob, DrawnLayer } from '../../src/impact/contracts.ts';
 import { R1_GAP, R1_MESSAGE, SLAM_AFTERMATH, SLAM_FRAMES, suggestImpactFrame } from '../../src/impact/detect.ts';
 import { degradeAt, LADDER_STEPS, outputLength, touchedFrames } from '../../src/impact/ladder.ts';
@@ -534,6 +534,47 @@ describe("the export's flash check", () => {
 
   it('throws at once under Reduce flashing when a clip with no slam flashes on its own', async () => {
     await expect(walkFlashLadder({ frames: FRAMES, I: null, flash: 'safe', first, render: () => [], check: failing(1) })).rejects.toBeInstanceOf(FlashCheckError);
+  });
+});
+
+describe("the export's finished frame (export.ts finish)", () => {
+  // A stubbed 2D context over a 200×2 frame, wider than the 160 px check copy:
+  // saturated red on the left half, grey on the right. A read hands out a copy
+  // and a write lands in the frame, as on a canvas; the writes are counted.
+  const [W, H] = [200, 2];
+  const stubbed = () => {
+    const frame = new Uint8ClampedArray(4 * W * H);
+    for (let i = 0; i < frame.length; i += 4) frame.set((i / 4) % W < W / 2 ? [235, 12, 28, 255] : [128, 128, 128, 255], i);
+    const writes: Uint8ClampedArray[] = [];
+    const ctx = {
+      getImageData: (_x: number, _y: number, w: number, h: number) => ({ data: frame.slice(), width: w, height: h }),
+      putImageData: (img: { data: Uint8ClampedArray }) => {
+        writes.push(img.data.slice());
+        frame.set(img.data);
+      },
+    };
+    return { ctx: ctx as unknown as CanvasRenderingContext2D, frame, writes };
+  };
+
+  it('leaves the pixels alone under full flashing, and checks them as drawn', () => {
+    const s = stubbed();
+    const drawn = s.frame.slice();
+    expect(finish(s.ctx, W, H, 'full', true)).toEqual(downsampleFrame({ data: drawn, width: W, height: H }));
+    expect(finish(s.ctx, W, H, 'full', false)).toBeNull();
+    expect(s.writes).toHaveLength(0);
+    expect(s.frame).toEqual(drawn);
+  });
+
+  it('guards the saturated red under Reduce flashing, writes the frame back once, and checks the guarded pixels', () => {
+    const s = stubbed();
+    const guarded = s.frame.slice();
+    expect(guardRed(guarded)).toBe((W / 2) * H); // every red pixel, and no grey one
+    expect(finish(s.ctx, W, H, 'safe', true)).toEqual(downsampleFrame({ data: guarded, width: W, height: H }));
+    expect(s.writes).toEqual([guarded]);
+    expect(s.frame).toEqual(guarded);
+    // Guarded already: nothing left to change, so nothing is written again.
+    expect(finish(s.ctx, W, H, 'safe', false)).toBeNull();
+    expect(s.writes).toHaveLength(1);
   });
 });
 

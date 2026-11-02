@@ -14,30 +14,40 @@
 //     along one, zigzagging off it with kinks of 40–85° every 2–8 median
 //     widths (the segments head at most 42.5° off the source, so the turns
 //     alternate round it), plus a smooth offset of at most 0.3 of the width.
-//   - Width: 2–4 pools between pinches, max/min 4–8. The pools never overlap,
-//     so each pinch comes down to the narrowest width, and the profile is
+//   - Width: 2–4 pools between pinches, max/min 4.4–6 as planned (the
+//     measured 4–8 with the edge wobble in). The pools never overlap, so
+//     each pinch comes down to the narrowest width, and the profile is
 //     solved on the nodes, so the median and the ratio are exact. A pool
 //     swells to about 2–2.5 × the median (lightning study §6.6 measures 2–3 ×)
 //     where the ribbon is long enough for it; on a short one its shape fills
-//     out so it is no wider than it is long. The ends are 0.2–1.5 × the median,
-//     and each edge wobbles by up to a tenth. A kink's outer corner is round.
+//     out so it is no wider than it is long. The ends are 0.2–1.5 × the median.
+//     Each edge is lumpy (§3.2: the big teeth sit on the wide pools): it
+//     wobbles by up to 0.3 of its half-width on a pool's crest, every
+//     0.012–0.03 S, and not at all at the pinches. A kink's outer corner is
+//     round.
 //   - Core: over 22–80 % of a main ribbon's length, centred on its widest
 //     pools, 13–42 % of the width, off-centre by 0.07–0.24 of the half-width;
 //     none where the ribbon is under 0.009 S. The cross-section reads
-//     edge | band | edge | core | edge | band | edge, with a pale streak in a
-//     wide late core.
+//     edge | band | edge | core | edge | band | edge: the core cyan at its
+//     rims, its middle 60 % hot (mix(core, white, 0.45)) and a pale streak in
+//     a wide late core, so with the glow it composites #7efefd–#acfcfd as
+//     k21–31 do; the light model's cyan halo adds no red, so the white the
+//     reference's glow puts in is painted, and the band glows as hot light
+//     (BAND_GLOW), whose whitened far halo lifts it toward k21–31's lavender.
 //   - Eyes: a strand that splits off and rejoins, about one per 0.72 U of path.
 //   - Thin bolts: U{1..3}, 0.1–0.26 U long, 0.005–0.010 S wide, tortuosity
 //     1.03–1.09, no kinks and no core.
-//   - The area budget (round 1): the ribbons, eyes and bolts cover at most
-//     AREA_BUDGET of the frame (2.6 % to A11, 3.5 % from A12; the reference
-//     measures 1.8–6.2 % with the floods). Over it, every ribbon width comes
-//     down by one factor (plan.fit), so the paths, kinks and pools keep
-//     their planned shape and spacing; the planned medians stay in the
-//     bands, and the thin bolts keep their widths.
-//   - Tones: the discharge set (decision 6), edge, band, core and pale, with
-//     the ribbons' body lavender (#969ef0) and the core cyan (#94fdfd) in the
-//     unrotated set, as measured; a rotated set mixes band toward pale.
+//   - The area budget: the ribbons, eyes and bolts cover at most AREA_BUDGET
+//     of the frame (2.6 % to A11, 3.5 % from A12; the reference measures
+//     1.8–6.2 % with the floods). The widths stay as planned (round 2 thinned
+//     every width to fit, and the wide late ribbons read as pale outlined
+//     leaves: reference:14); over it, the count comes down instead, the
+//     shortest ribbon first, and the last one kept is cut short to what is
+//     left. plan.planned is the count before the cut.
+//   - Tones: k21–31's measured flat set (washes.ts ENERGY_TONES, decision
+//     6's blue and cyan): edge #00017b, band #2c5cfc on the main ribbons and
+//     #233cfd on the thin strands (short ribbons, eyes, bolts), core #22fded,
+//     pale #abfdf4, turned with the discharge set when p0 turns it.
 //   - Gain: linear to 0 at J_end − 5, with one last full-gain kr step on
 //     J_end − 7 (the last flicker), read per kr step at its last frame so a
 //     step never changes mid-step. A wash turned bolt brightening (washes.ts)
@@ -52,9 +62,9 @@ import type { GlowSink, ImpactContext, LayerDraw } from '../contracts.ts';
 import type { BrushTarget, MakeScratch } from '../../render/glow.ts';
 import { kr } from '../clock.ts';
 import { floorCircle } from '../floor.ts';
-import { DISCHARGE, mixHex, roles } from '../palette.ts';
+import { mixHex } from '../palette.ts';
 import { fnv1a32, int, rng, uniform, type Rng } from '../rng.ts';
-import { boltBoost, boxOf, clamp, energyFrame, faded, fillUnion, krSpan, memo, onFloor, sceneKey, type EnergyFrame, type WashOptions } from './washes.ts';
+import { ENERGY_TONES, boltBoost, boxOf, clamp, energyFrame, energyTones, faded, fillUnion, krSpan, memo, onFloor, sceneKey, type EnergyFrame, type WashOptions } from './washes.ts';
 
 const DEG = Math.PI / 180;
 const TAU = 2 * Math.PI;
@@ -81,25 +91,50 @@ export const RIBBON_BANDS: Readonly<Record<RibbonBand['name'], RibbonBand>> = {
 };
 
 export const KINK = { min: 40, max: 85, spacing: [2, 8] } as const; // degrees; × the median width
-export const POOLS = { count: [2, 4], ratio: [4.4, 7.6], least: 4 } as const; // the ratio is drawn inside the measured 4–8, and lowered toward its least only where a pool would swell past POOL_MAX
+export const POOLS = { count: [2, 4], ratio: [4.4, 6], least: 4 } as const; // the ratio is drawn inside the measured 4–8 with room for the edge wobble, and lowered toward its least only where a pool would swell past POOL_MAX
 export const CORE = { coverage: [0.3, 0.7], most: 0.76, share: [0.2, 0.32], wobble: 0.15, shift: [0.07, 0.24], thin: 0.009 } as const; // share × (1 ± wobble) stays in 0.13–0.42; a node's step never takes the coverage past most
 export const BOLTS = { count: [1, 3], length: [0.1, 0.26], width: [0.005, 0.01], tortuosity: [1.035, 1.085] } as const;
 export const MAIN_PATH = 0.25; // U: shorter ribbons are thinner, × SHORT_WIDTH
 export const AREA_BUDGET: Readonly<Record<RibbonBand['name'], number>> = { lead: 0.01, early: 0.026, mid: 0.026, late: 0.035 }; // of the frame
-export const LIGHTNING_TONES = { band: '#969ef0', core: '#94fdfd' } as const; // the measured body and core, for the unrotated set
+export const LIGHTNING_TONES = ENERGY_TONES; // k21–31's flat set, unturned: edge, band, deep, core, pale
+export const CORE_HOT = { mix: 0.45, share: 0.6 } as const; // the core's middle: mix(core, white, mix) over this share of its width
+// × the gain: a core run's glow. The light model's near halo for a cyan core
+// is pure cyan and adds no red, so more of it only spills saturated cyan
+// round the core: at 1.5 the hero's bright cyan read #57–#6a in red against
+// k21–31's #71–#bc; at 0.7 it reads #8b–#92 over grey, beige and fire plates.
+export const CORE_GLOW = 0.7;
+// × the gain: a cored ribbon's band glows as hot light (the light model's
+// 'core', its far halo whitened), so it composites lavender-white over sky and
+// smoke as k21–31's do (lightning study §3.7). Of the hero's blue pixels
+// (f97–130) k21–31 have 20–49 % deep: as a body the band's halo stayed
+// saturated azure and read 36–66 %; as hot light at 0.6 it washed the bands
+// to 6–20 % on most ribbon frames, round 2's complaint; at 0.4 they read
+// 22–41 % on f104–f105, f109–f111, f116 and f122, and 54–60 % where thin
+// early strands or wide pools fill the frame (f102–f103, f108, f113). Over
+// flat plates, without the scene's other glows, 45–58 % (84–100 % with no
+// glow at all). From f117 the fading
+// ribbons sit over the smoke and read under 13 % at any gain. The lead-in's
+// and the thin strands' (short ribbons, eyes, bolts) glow as bodies, with
+// the thin elements' boost.
+export const BAND_GLOW = 0.4;
 export const PHONE_RIBBONS = 4;
 export const PHONE_NODES = 48;
 export const BOLT_FADE = 9; // frames: the gain falls from 1 on J_end − 14 to 0 on J_end − 5
+export const EDGE_WOBBLE = 0.22; // × the half-width, on a pool's crest; 0.3 of it at the narrowest node
 const SHORT_WIDTH = 0.6;
 const HEADING_MAX = 42.5 * DEG; // a segment's heading off its source
 const OFFSET_MAX = 1.6; // × the kink width: the most a ribbon strays off its source
 const WOBBLE = 0.3; // × the median width: the smooth offset's reach
-const EDGE_WOBBLE = 0.1; // × the half-width
 const LEAD_KINK = 0.022; // × S: the lead-in's kinks are spaced as an early ribbon's
 const MIN_PATH = 0.1; // U
 const TORT = [1.12, 1.3] as const; // a ribbon's path / extent, as planned (a zigzag on a gentle source makes 1.1–1.3)
 const POOL_SLOT = 4; // × the median width: the least path per pool beyond the first two
-const POOL_SHAPE = [1.5, 0.5] as const; // a pool's cos^q exponent: q 1.5 swells to 2–2.5 × the median, filled out toward 0.5 on a short ribbon
+const CUT_MIN = 4; // × the median width: the least path the area budget cuts a ribbon to
+const ENOUGH = 1.25; // × the area budget: the ribbons built, longest first, before the rest are let go
+const POOL_SHAPE = [0.9, 0.5] as const; // a pool's cos^q exponent: q 0.9 is a round-shouldered bead (round 2's 1.5 drew pointed leaves), filled out toward 0.5 on a short ribbon
+const POOL_NOISE = 0.3; // a pool's top wanders by this share
+const LUMP_WIDTH = 0.6; // a lump is at least this × the local width long, so a wide pool's lumps stay round
+const ASYM = 0.3; // × the half-width: how far the width leans to one side of the path
 const POOL_ROUND = 1; // the widest pool's width over its length, at most (while the shape can fill out)
 const POOL_MAX = 3; // × the median width: the widest a pool swells (lightning study §6.6: 2–3 ×)
 const JOIN = 15 * DEG; // a turn sharper than this gets a round outer corner and an exact inner miter
@@ -163,8 +198,13 @@ export interface LightningPlan {
   boost: number; // × the glow on a bolt brightening, else 1
   ribbons: Ribbon[];
   bolts: Strand[];
-  fit: number; // the widths' factor that keeps the area budget (1: under it as planned)
-  tones: { edge: string; band: string; core: string; pale: string };
+  planned: number; // the ribbons drawn from the band, before the phone's cap, the cut order and the area budget
+  path: number; // px: the built ribbons' total path, fitted to the band's where the budget leaves room, before the budget's cut
+  area: number; // px²: the ribbons', eyes' and bolts' area, at most budget
+  budget: number; // px²: AREA_BUDGET of the frame
+  // edge, band (main ribbons), deep (thin strands), core (its rims), hot (its
+  // middle), pale (a wide late core's streak)
+  tones: { edge: string; band: string; deep: string; core: string; hot: string; pale: string };
   line: number; // px: the ink line's width
   key: string;
 }
@@ -210,16 +250,21 @@ export function ribbons(ictx: ImpactContext, j: number, sources: readonly (reado
   const main = lengths.map((l) => !band.core || l >= MAIN_PATH * U);
   const medians = lengths.map((_, i) => uniform(r, band.median[0], band.median[1]) * S * (main[i] ? 1 : SHORT_WIDTH));
   const keep = Math.max(0, Math.min(count, phone ? PHONE_RIBBONS : count, opts.maxRibbons ?? count));
+  // Built longest first (the top is the longest: share() keeps the rest under
+  // it), and only until they cover ENOUGH × the area budget: the budget would
+  // leave the rest out.
   const chosen = lengths
     .map((_, i) => i)
     .sort((a, b) => lengths[b] - lengths[a] || a - b)
-    .slice(0, keep)
-    .sort((a, b) => a - b);
+    .slice(0, keep);
+  const budget = AREA_BUDGET[band.name] * ictx.width * ictx.height;
 
   const taken = takenGrid(ictx.width, ictx.height, U);
-  const made: { rb: Ribbon; want: number; build: (length: number) => Ribbon | null }[] = [];
+  const made: { rb: Ribbon; want: number; build: (length: number) => Ribbon | null; i: number }[] = [];
   let longest = 0;
+  let built = 0; // px²: their area
   for (const i of chosen) {
+    if (built >= ENOUGH * budget) break;
     // Where it runs is drawn once; a rebuild only changes how far it goes.
     const place = placeOn(rng(ictx.seed, 'bolt', kp, i + 1, 0), tracks, taken, lengths[i]);
     const build = (length: number) => buildRibbon(rng(ictx.seed, 'bolt', kp, i + 1), place, length, medians[i], main[i], band, fr, phone);
@@ -247,19 +292,22 @@ export function ribbons(ictx: ImpactContext, j: number, sources: readonly (reado
     if (!best) continue;
     if (first) longest = best.rb.extent;
     take(taken, best.rb);
-    made.push({ rb: best.rb, want: best.want, build });
+    made.push({ rb: best.rb, want: best.want, build, i });
+    built += ribbonArea(best.rb);
   }
   // Fit the band's total, with every ribbon there (the phone's cap and the
   // cut order mean to draw less). Short of it: lengthen the longest up to the
-  // band's longest extent, then the others, each still under it. Over it
+  // band's longest extent, then the others, each still under it, unless they
+  // already cover the area budget, which would only cut them back. Over it
   // (each ribbon keeps its planned length only to 4 %): shorten the others.
   const need = band.total[0] * U;
   const room = band.total[1] * U;
+  const full = () => addUp(made.map((m) => ribbonArea(m.rb))) >= budget;
   let sum = made.reduce((s, m) => s + m.rb.length, 0);
-  for (let pass = 0; pass < 3 && keep === count && (sum < need || sum > room); pass++) {
+  for (let pass = 0; pass < 3 && keep === count && (sum > room || (sum < need && !full())); pass++) {
     const grow = sum < need;
     for (let q = grow ? 0 : made.length - 1; grow ? q < made.length : q > 0; q += grow ? 1 : -1) {
-      if (sum >= need && sum <= room) break;
+      if ((sum >= need && sum <= room) || (grow && full())) break;
       const m = made[q];
       const cap = q === 0 ? 0.98 * eHi : 0.97 * longest;
       const f = grow ? Math.min(1.6, (0.99 * cap) / m.rb.extent, 1 + (1.01 * need - sum) / m.rb.length) : Math.max(0.6, 1 - (sum - 0.99 * room) / m.rb.length);
@@ -272,30 +320,63 @@ export function ribbons(ictx: ImpactContext, j: number, sources: readonly (reado
       if (q === 0) longest = m.rb.extent;
     }
   }
-  const out = made.map((m) => m.rb);
   const bolts: Strand[] = [];
   for (let b = 0, n = int(r, BOLTS.count[0], BOLTS.count[1]); b < n; b++) {
     const bolt = buildBolt(rng(ictx.seed, 'bolt', kp, 100 + b), tracks, fr, phone);
     if (bolt) bolts.push(bolt);
   }
 
-  // The area budget: one factor on every ribbon width (the thin bolts keep
-  // theirs, and count against it).
-  const area = addUp(out.map(ribbonArea));
-  const budget = Math.max(0, AREA_BUDGET[band.name] * ictx.width * ictx.height - addUp(bolts.map(strandArea)));
-  const fit = area > budget ? budget / area : 1;
-  const fitted = fit < 1 ? out.map((rb) => thinner(rb, fit)) : out;
+  // The area budget (reference:14: by count and length, never width): the
+  // thin bolts count first; then the ribbons, longest first, each at its
+  // planned widths, while they fit. One that doesn't is cut short to what is
+  // left (the area goes with the length: up to six rebuilds, the longest
+  // that fits and reaches no further than it did kept), unless that leaves
+  // it under CUT_MIN medians of path (a stub with no room for its pools):
+  // then it is left out, and a shorter one may still fit after it, whole or
+  // cut.
+  let area = addUp(bolts.map(strandArea));
+  const kept = new Set<number>();
+  for (const q of made.map((_, q) => q).sort((a, b) => made[b].rb.length - made[a].rb.length || a - b)) {
+    const m = made[q];
+    const a = ribbonArea(m.rb);
+    const left = budget - area;
+    if (a > left) {
+      const least = Math.max(MIN_PATH * U, CUT_MIN * medians[m.i]);
+      let want = m.want;
+      let at = a;
+      let best: { rb: Ribbon; a: number } | null = null;
+      for (let tries = 0; tries < 6 && left > 0; tries++) {
+        want *= (0.97 * left) / at;
+        if (want < least) break;
+        const rb = m.build(want);
+        if (!rb) break;
+        at = ribbonArea(rb);
+        // A rebuild redraws the zigzag: one that reaches further than the
+        // whole ribbon did would break the band's longest extent.
+        const ok = at <= left && rb.extent <= m.rb.extent;
+        if (ok && (!best || at > best.a)) best = { rb, a: at };
+        if (ok && at >= 0.92 * left) break;
+        if (!ok && at <= left) at = left / 0.9; // shorter again
+      }
+      if (!best) continue;
+      m.rb = best.rb;
+      area += best.a;
+    } else area += a;
+    kept.add(q);
+  }
+  const out = made.filter((_, q) => kept.has(q)).map((m) => m.rb);
   // Steady (Reduce flashing) draws no white-hot cores: the body alone.
-  const ribbonsFit = opts.steady ? fitted.map((rb) => ({ ...rb, core: rb.core.map(() => 0) })) : fitted;
+  const drawn = opts.steady ? out.map((rb) => ({ ...rb, core: rb.core.map(() => 0) })) : out;
 
   const boost = boltBoost(ictx, j, opts);
-  const d = roles(ictx.palette).discharge;
-  const unrotated = d.band === DISCHARGE.band;
-  const body = unrotated ? LIGHTNING_TONES.band : mixHex(d.band, d.pale, 0.35);
-  const coreTone = unrotated ? LIGHTNING_TONES.core : d.core;
-  const tones = { edge: d.edge, band: body, core: boost > 1 ? mixHex(coreTone, d.pale, 0.45) : coreTone, pale: d.pale };
-  const key = ['bolt', sceneKey(ictx), k, gain.toFixed(4), boost, opts.maxRibbons ?? '-', opts.floor === false ? 'nf' : 'f', opts.steady ? 's' : '-', sourcesHash(sources)].join(':');
-  return { j, kr: k, A: k - 14, band: band.name, gain, boost, ribbons: ribbonsFit, bolts, fit, tones, line: Math.max(1, 0.0022 * S), key };
+  const et = energyTones(ictx.palette);
+  const hot = mixHex(et.core, '#ffffff', CORE_HOT.mix);
+  // A bolt brightening pales the cores.
+  const tones = { edge: et.edge, band: et.band, deep: et.deep, core: boost > 1 ? mixHex(et.core, et.pale, 0.45) : et.core, hot: boost > 1 ? mixHex(hot, '#ffffff', 0.45) : hot, pale: et.pale };
+  // Keyed by the draw (kp: one for a steady plan's whole life), so a steady
+  // plan keeps one key, and one drawn part, wherever its gain holds.
+  const key = ['bolt', sceneKey(ictx), kp, gain.toFixed(4), boost, opts.maxRibbons ?? '-', opts.floor === false ? 'nf' : 'f', opts.steady ? 's' : '-', sourcesHash(sources)].join(':');
+  return { j, kr: k, A: k - 14, band: band.name, gain, boost, ribbons: drawn, bolts, planned: count, path: sum, area, budget, tones, line: Math.max(1, 0.0022 * S), key };
 }
 
 const addUp = (xs: readonly number[]) => xs.reduce((a, b) => a + b, 0);
@@ -312,12 +393,6 @@ function ribbonArea(rb: Ribbon): number {
   let a = 0;
   for (let i = 1; i < rb.path.length; i++) a += (hyp(rb.path[i][0] - rb.path[i - 1][0], rb.path[i][1] - rb.path[i - 1][1]) * (rb.left[i] + rb.right[i] + rb.left[i - 1] + rb.right[i - 1])) / 2;
   return a + addUp(rb.eyes.map(strandArea));
-}
-
-// A ribbon with every width × k: the same path, kinks and pools.
-function thinner(rb: Ribbon, k: number): Ribbon {
-  const x = (v: readonly number[]) => v.map((w) => w * k);
-  return { ...rb, width: x(rb.width), left: x(rb.left), right: x(rb.right), coreShift: x(rb.coreShift), median: rb.median * k, eyes: rb.eyes.map((e) => ({ path: e.path, width: x(e.width) })) };
 }
 
 // `total` split into `count` random parts, each within [lo, hi]: random
@@ -636,6 +711,13 @@ function buildRibbon(r: Rng, place: Place, length: number, median: number, main:
   const { S, U } = fr;
   const base = band.core ? median : Math.max(median, LEAD_KINK * S);
   const { segs, turns } = zigzag(r, length, base);
+  // The edges' lumps: one every lamE (drawn here: the nodes are spaced for
+  // them), and the width's slow lean from side to side.
+  const lamE = uniform(r, 0.012, 0.03) * S;
+  const phL = uniform(r, 0, TAU);
+  const phR = uniform(r, 0, TAU);
+  const lamA = uniform(r, 4, 8) * median;
+  const phA = uniform(r, 0, TAU);
   const V: [number, number][] = [[0, 0]]; // vertices: (along the track, off it), px
   const Sv = [0]; // their arc length along the path
   for (const sg of segs) {
@@ -660,12 +742,18 @@ function buildRibbon(r: Rng, place: Place, length: number, median: number, main:
   }
   const ends = [uniform(r, 0, 0.3), uniform(r, 0, 0.3)];
   const club = (0.3 * L) / Math.max(1, K);
+  // A pool's top wanders, × 1 ± POOL_NOISE (two sines, 1.2–5 medians long):
+  // k21–31's widths swell and dip inside a pool, not as one clean lens. Only
+  // its top half, faded in from 0.5 to 0.8 of the peak, so the shoulders
+  // fall cleanly and a dip never splits one pool into two.
+  const pn = [uniform(r, 3, 5) * median, uniform(r, 1.2, 2) * median, uniform(r, 0, TAU), uniform(r, 0, TAU)];
   const profile = (s: number, shape: number) => {
     let p = 0;
     for (const q of pools) {
       const x = (s - q.c) / hw;
       if (x > -1 && x < 1) p = Math.max(p, q.h * Math.cos((Math.PI / 2) * x) ** shape);
     }
+    p *= 1 + POOL_NOISE * clamp((p - 0.5) / 0.3, 0, 1) * (0.6 * Math.sin((TAU * s) / pn[0] + pn[2]) + 0.4 * Math.sin((TAU * s) / pn[1] + pn[3]));
     if (s < club) p = Math.max(p, ends[0] * Math.cos(((Math.PI / 2) * s) / club) ** 2);
     if (L - s < club) p = Math.max(p, ends[1] * Math.cos(((Math.PI / 2) * (L - s)) / club) ** 2);
     return p;
@@ -680,7 +768,8 @@ function buildRibbon(r: Rng, place: Place, length: number, median: number, main:
   // Nodes: none inside a kink's clearance, so the inner side of a sharp turn
   // can't fold back over its neighbours.
   const clear = turns.map((t, k) => Math.min(0.45 * Math.min(segs[k].d, segs[k + 1].d), 0.95 * median * Math.tan((t * DEG) / 2)));
-  let spacing = Math.max(3, median / 2);
+  // Three nodes a lump at the most, so the lumps are drawn round, not aliased into teeth.
+  let spacing = Math.max(2, Math.min(median / 2, lamE / 3));
   let nodes = nodePositions(Sv, clear, spacing, specials);
   for (let tries = 0; phone && nodes.s.length > PHONE_NODES && tries < 8; tries++) {
     spacing *= (nodes.s.length / PHONE_NODES) * 1.08;
@@ -775,17 +864,36 @@ function buildRibbon(r: Rng, place: Place, length: number, median: number, main:
     return [p[0] - T[1] * o, p[1] + T[0] * o];
   });
 
-  // Edge wobble, side by side.
-  const lamE = uniform(r, 0.012, 0.03) * S;
-  const phL = uniform(r, 0, TAU);
-  const phR = uniform(r, 0, TAU);
-  const left = width.map((w, i) => (w / 2) * (1 + EDGE_WOBBLE * Math.sin((TAU * sNodes[i]) / lamE + phL)));
-  const right = width.map((w, i) => (w / 2) * (1 + EDGE_WOBBLE * Math.sin((TAU * sNodes[i]) / lamE + phR)));
+  // Edge wobble, side by side: lumps (two sines) at least lamE and
+  // LUMP_WIDTH × the local width long, so they stay round on a wide pool,
+  // their reach a share of the half-width that grows from 0.3 of EDGE_WOBBLE
+  // at the narrowest node to all of it at the widest: the big teeth sit on
+  // the pools' crests and the pinches keep the profile's ratio.
+  let wLo = Infinity;
+  let wHi = 0;
+  for (const w of width) {
+    wLo = Math.min(wLo, w);
+    wHi = Math.max(wHi, w);
+  }
+  const lumpAt = new Array<number>(n).fill(0); // the lumps' phase at each node
+  for (let i = 1; i < n; i++) lumpAt[i] = lumpAt[i - 1] + (TAU * (sNodes[i] - sNodes[i - 1])) / Math.max(lamE, LUMP_WIDTH * 0.5 * (width[i] + width[i - 1]));
+  const lumpy = (i: number, ph: number) => {
+    const x = lumpAt[i] + ph;
+    const crest = wHi > wLo ? (width[i] - wLo) / (wHi - wLo) : 0;
+    return (width[i] / 2) * (1 + EDGE_WOBBLE * (0.3 + 0.7 * crest) * (0.7 * Math.sin(x) + 0.3 * Math.sin(2.3 * x + 1.1)));
+  };
+  // And a slow lean of the width to one side and back (ASYM of the
+  // half-width, every 4–8 medians), so a pool bulges off the path instead of
+  // swelling as a symmetric lens: round 2's pools read as leaves.
+  const lean = sNodes.map((s) => ASYM * Math.sin((TAU * s) / lamA + phA));
+  const left = width.map((_, i) => lumpy(i, phL) * (1 + lean[i]));
+  const right = width.map((_, i) => lumpy(i, phR) * (1 - lean[i]));
 
-  // The core: runs grown out from the widest pools' centres, node by node
-  // toward the wider side, until they cover 30–70 % of the length. No cyan
-  // below 0.009 S, nor where the core and its ink lines wouldn't fit inside
-  // the band.
+  // The core: a run grown out from every pool's centre, the highest pools
+  // first, a node at a time each in turn toward its wider side, until they
+  // cover 30–70 % of the length, so the core swells in each pool (k21–31's
+  // 2–4 core pools). No cyan below 0.009 S, nor where the core and its ink
+  // lines wouldn't fit inside the band's lumpy sides.
   const core = new Array<number>(n).fill(0);
   const coreShift = new Array<number>(n).fill(0);
   const line = Math.max(1, 0.0022 * S);
@@ -795,7 +903,9 @@ function buildRibbon(r: Rng, place: Place, length: number, median: number, main:
     const shift = (r() < 0.5 ? -1 : 1) * uniform(r, CORE.shift[0], CORE.shift[1]);
     const phase = uniform(r, 0, TAU);
     const sh = sNodes.map((s) => shareBase * (1 + CORE.wobble * Math.sin((TAU * s) / (6 * median) + phase)));
-    const fits = (i: number) => core[i] === 0 && width[i] >= CORE.thin * S && (Math.abs(shift) + sh[i]) * (width[i] / 2) + 2 * line <= width[i] / 2;
+    // Off the middle of the band as drawn: the path plus the width's lean.
+    const coreOff = (i: number) => lean[i] + shift;
+    const fits = (i: number) => core[i] === 0 && width[i] >= CORE.thin * S && (coreOff(i) + sh[i]) * (width[i] / 2) + 2 * line <= left[i] && (sh[i] - coreOff(i)) * (width[i] / 2) + 2 * line <= right[i];
     const gap = (i: number) => hyp(path[i + 1][0] - path[i][0], path[i + 1][1] - path[i][1]); // node i to i + 1, as drawn
     // The drawn length a node adds to the core: its links to cored neighbours.
     const gain = (i: number) => (i > 0 && core[i - 1] > 0 ? gap(i - 1) : 0) + (i < n - 1 && core[i + 1] > 0 ? gap(i) : 0);
@@ -803,26 +913,29 @@ function buildRibbon(r: Rng, place: Place, length: number, median: number, main:
     const take = (i: number) => {
       covered += gain(i);
       core[i] = sh[i];
-      coreShift[i] = shift * (width[i] / 2);
+      coreShift[i] = coreOff(i) * (width[i] / 2);
     };
     let all = 0;
     for (let i = 0; i < n - 1; i++) all += gap(i);
     const goal = (target / L) * all;
-    const byHeight = pools.map((q, k) => ({ q, k })).sort((x, y) => y.q.h - x.q.h || x.k - y.k);
-    for (const { q } of byHeight) {
-      if (covered >= goal) break;
+    const runs: { a: number; b: number }[] = [];
+    for (const { q } of pools.map((q, k) => ({ q, k })).sort((x, y) => y.q.h - x.q.h || x.k - y.k)) {
       let c = 0;
       for (let i = 1; i < n; i++) if (Math.abs(sNodes[i] - q.c) < Math.abs(sNodes[c] - q.c)) c = i;
       if (!fits(c) || covered + gain(c) > CORE.most * all) continue;
       take(c);
-      let a = c;
-      let b = c;
-      while (covered < goal) {
-        const left = a > 0 && fits(a - 1) && covered + gain(a - 1) <= CORE.most * all;
-        const right = b < n - 1 && fits(b + 1) && covered + gain(b + 1) <= CORE.most * all;
-        if (!left && !right) break;
-        if (left && (!right || width[a - 1] >= width[b + 1])) take(--a);
-        else take(++b);
+      runs.push({ a: c, b: c });
+    }
+    for (let grew = true; grew && covered < goal; ) {
+      grew = false;
+      for (const run of runs) {
+        if (covered >= goal) break;
+        const toA = run.a > 0 && fits(run.a - 1) && covered + gain(run.a - 1) <= CORE.most * all;
+        const toB = run.b < n - 1 && fits(run.b + 1) && covered + gain(run.b + 1) <= CORE.most * all;
+        if (!toA && !toB) continue;
+        if (toA && (!toB || width[run.a - 1] >= width[run.b + 1])) take(--run.a);
+        else take(++run.b);
+        grew = true;
       }
     }
   }
@@ -1015,9 +1128,11 @@ function buildBolt(r: Rng, tracks: Track[], fr: EnergyFrame, phone: boolean): St
 
 export interface LightningShapes {
   edge: Vec2[][]; // the ink, everything's full width
-  band: Vec2[][];
+  band: Vec2[][]; // the main ribbons'
+  deep: Vec2[][]; // the thin strands': short ribbons, eyes and bolts
   coreEdge: Vec2[][]; // the ink lines round the cores
   core: Vec2[][];
+  hot: Vec2[][]; // the cores' middles
   pale: Vec2[][];
 }
 
@@ -1029,11 +1144,15 @@ export function lightningShapes(plan: LightningPlan): LightningShapes {
   const hit = shapeCache.get(plan);
   if (hit) return hit;
   const e = plan.line;
-  const out: LightningShapes = { edge: [], band: [], coreEdge: [], core: [], pale: [] };
+  const out: LightningShapes = { edge: [], band: [], deep: [], coreEdge: [], core: [], hot: [], pale: [] };
   const paleMin = plan.band === 'late' || plan.band === 'mid' ? 0.012 : Infinity; // × S: a wide late core gets a pale streak
+  const strand = (st: Strand) => {
+    out.edge.push(strip(st.path, st.width.map((w) => w / 2), st.width.map((w) => -w / 2), true));
+    out.deep.push(strip(st.path, st.width.map((w) => Math.max(0.25, w / 2 - e)), st.width.map((w) => -Math.max(0.25, w / 2 - e)), true));
+  };
   for (const rb of plan.ribbons) {
     out.edge.push(strip(rb.path, rb.left, rb.right.map((v) => -v), true));
-    out.band.push(strip(rb.path, rb.left.map((v) => Math.max(0.25, v - e)), rb.right.map((v) => -Math.max(0.25, v - e)), true));
+    (rb.main ? out.band : out.deep).push(strip(rb.path, rb.left.map((v) => Math.max(0.25, v - e)), rb.right.map((v) => -Math.max(0.25, v - e)), true));
     for (const [i0, i1] of runsOf(rb.core)) {
       const idx = Array.from({ length: i1 - i0 + 1 }, (_, k) => i0 + k);
       const P = idx.map((i) => rb.path[i]);
@@ -1041,21 +1160,16 @@ export function lightningShapes(plan: LightningPlan): LightningShapes {
       const sh = idx.map((i) => rb.coreShift[i]);
       out.coreEdge.push(strip(P, c.map((v, k) => sh[k] + v + e), c.map((v, k) => sh[k] - v - e), false));
       out.core.push(strip(P, c.map((v, k) => sh[k] + v), c.map((v, k) => sh[k] - v), false));
+      out.hot.push(strip(P, c.map((v, k) => sh[k] + CORE_HOT.share * v), c.map((v, k) => sh[k] - CORE_HOT.share * v), false));
       const wide = c.map((v) => 2 * v >= paleMin * (plan.line / 0.0022 >= 1 ? plan.line / 0.0022 : 1));
       for (const [k0, k1] of runsOf(wide.map((b) => (b ? 1 : 0)))) {
         const ks = Array.from({ length: k1 - k0 + 1 }, (_, k) => k0 + k);
         out.pale.push(strip(ks.map((k) => P[k]), ks.map((k) => sh[k] + 0.25 * c[k]), ks.map((k) => sh[k] - 0.25 * c[k]), false));
       }
     }
-    for (const eye of rb.eyes) {
-      out.edge.push(strip(eye.path, eye.width.map((w) => w / 2), eye.width.map((w) => -w / 2), true));
-      out.band.push(strip(eye.path, eye.width.map((w) => Math.max(0.25, w / 2 - e)), eye.width.map((w) => -Math.max(0.25, w / 2 - e)), true));
-    }
+    for (const eye of rb.eyes) strand(eye);
   }
-  for (const b of plan.bolts) {
-    out.edge.push(strip(b.path, b.width.map((w) => w / 2), b.width.map((w) => -w / 2), true));
-    out.band.push(strip(b.path, b.width.map((w) => Math.max(0.25, w / 2 - e)), b.width.map((w) => -Math.max(0.25, w / 2 - e)), true));
-  }
+  for (const b of plan.bolts) strand(b);
   shapeCache.set(plan, out);
   return out;
 }
@@ -1247,27 +1361,33 @@ function runsOf(v: readonly number[]): [number, number][] {
   return out;
 }
 
-// Paints the plan at its gain, as one layer: ink, band, the cores' ink, the
-// cores, the pale streaks.
+// Paints the plan at its gain, as one layer: ink, the bands (main, then the
+// thin strands' deeper one), the cores' ink, the cores, their hot middles,
+// the pale streaks.
 export function paintLightning(ctx: BrushTarget, make: MakeScratch, plan: LightningPlan | null, width: number, height: number) {
   if (!plan) return;
   const sh = lightningShapes(plan);
   faded(ctx, make, plan.gain, boxOf(sh.edge, 2, width, height), (c) => {
     fillUnion(c, sh.edge, plan.tones.edge);
     fillUnion(c, sh.band, plan.tones.band);
+    fillUnion(c, sh.deep, plan.tones.deep);
     fillUnion(c, sh.coreEdge, plan.tones.edge);
     fillUnion(c, sh.core, plan.tones.core);
+    fillUnion(c, sh.hot, plan.tones.hot);
     fillUnion(c, sh.pale, plan.tones.pale);
   });
 }
 
-// The glow: each ribbon's band as a body, each core run as a core, the eyes
-// and bolts as bodies, at gain × boost.
+// The glow: a cored ribbon's band as hot light at BAND_GLOW ×, a lead-in or
+// short one's as a body, each core run as a core at CORE_GLOW × (its near
+// halo is the hot edge the core lights; the painted hot middle carries the
+// white), the eyes and bolts as bodies, at gain × boost.
 export function emitLightning(sink: GlowSink, plan: LightningPlan | null) {
   if (!plan) return;
   const gain = plan.gain * plan.boost;
   for (const rb of plan.ribbons) {
-    sink.stroke(rb.path, rb.median, plan.tones.band, 'body', gain);
+    if (rb.main && rb.pools > 0) sink.stroke(rb.path, rb.median, plan.tones.band, 'core', gain * BAND_GLOW);
+    else sink.stroke(rb.path, rb.median, rb.main ? plan.tones.band : plan.tones.deep, 'body', gain);
     for (const [i0, i1] of runsOf(rb.core)) {
       const idx = Array.from({ length: i1 - i0 + 1 }, (_, k) => i0 + k);
       const path = idx.map((i): Vec2 => {
@@ -1275,11 +1395,11 @@ export function emitLightning(sink: GlowSink, plan: LightningPlan | null) {
         return [rb.path[i][0] + N[0] * rb.coreShift[i], rb.path[i][1] + N[1] * rb.coreShift[i]];
       });
       const widths = idx.map((i) => rb.core[i] * rb.width[i]).sort((a, b) => a - b);
-      sink.stroke(path, widths[widths.length >> 1], plan.tones.core, 'core', gain);
+      sink.stroke(path, widths[widths.length >> 1], plan.tones.core, 'core', gain * CORE_GLOW);
     }
-    for (const eye of rb.eyes) sink.stroke(eye.path, eye.width[0], plan.tones.band, 'body', gain);
+    for (const eye of rb.eyes) sink.stroke(eye.path, eye.width[0], plan.tones.deep, 'body', gain);
   }
-  for (const b of plan.bolts) sink.stroke(b.path, Math.max(...b.width), plan.tones.band, 'body', gain);
+  for (const b of plan.bolts) sink.stroke(b.path, Math.max(...b.width), plan.tones.deep, 'body', gain);
 }
 
 export function lightningLayer(ictx: ImpactContext, j: number, sources: readonly (readonly Vec2[])[], make: MakeScratch, opts: LightningOptions = {}): LayerDraw | null {

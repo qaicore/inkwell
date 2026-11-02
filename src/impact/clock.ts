@@ -50,16 +50,37 @@ export function phaseAt(j: number, end: number): Phase {
 
 // kr 14..31 → the measured hold groups g0..g8.
 const GROUP_OF_KR = [0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 5, 6, 6, 6, 7, 7, 8];
+// The longest a measured group holds, frames: the reference's longest groups
+// are 3 drawings at 24 a second, 3.75 frames (judge round 2: g6 held 5).
+export const GROUP_HOLD = 4;
 
 // The hold group of the 2s mass layers on frame f, or null before j 9. A
 // drawing takes its group from kr at its first frame, so a group never changes
-// mid-drawing. j 9 always starts a drawing, even mid-grid, so the fire burst
-// never loses a frame. Once kr has passed 31 (a drawing starting at j 32 or
-// later), each new drawing takes the next number: 9, 10, … On the hero (I 84,
-// 12 dps): g0 f93, g1 f95, g2 f98, g3 f100, g4 f103, g5 f105, g6 f108 and f110,
-// g7 f113, g8 f115–117, g9 f118.
+// mid-drawing, with two exceptions: j 9 always starts a drawing, even
+// mid-grid, so the fire burst never loses a frame; and a measured group that
+// has held GROUP_HOLD frames gives way on the frame kr reaches the next one.
+// Once kr has passed 31 (a drawing starting at j 32 or later), each new
+// drawing takes the next number: 9, 10, … On the hero (I 84, 12 dps): g0 f93,
+// g1 f95, g2 f98, g3 f100, g4 f103, g5 f105, g6 f108–111, g7 f112–114, g8
+// f115–117, g9 f118.
 export function massGroup(f: number, I: number, dps: number): number | null {
   if (f - I < 9) return null;
+  let g = -1;
+  let first = I + 9;
+  for (let x = I + 9; x <= f; x++) {
+    let next = Math.max(g, gridGroup(x, I, dps));
+    const r = kr(x - I);
+    if (next === g && x - first >= GROUP_HOLD && r <= 31) next = Math.max(g, GROUP_OF_KR[r - 14]);
+    if (next !== g) {
+      g = next;
+      first = x;
+    }
+  }
+  return g;
+}
+
+// The group of the drawing holding frame f (j ≥ 9), from kr at its first frame.
+function gridGroup(f: number, I: number, dps: number): number {
   const start = Math.max(drawingStart(drawingIndex(f, dps), dps), I + 9);
   const r = kr(start - I);
   if (r <= 31) return GROUP_OF_KR[r - 14];

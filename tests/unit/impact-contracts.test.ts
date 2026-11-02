@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { fnv1a32, int, mulberry32, normal, pick, rng, uniform } from '../../src/impact/rng.ts';
-import { c1, decayAlpha, drawingStart, freezeMap, jEnd, k24, kr, limbDrawingAt, massGroup, phaseAt, posterHolds, zoomAt } from '../../src/impact/clock.ts';
+import { GROUP_HOLD, c1, decayAlpha, drawingStart, freezeMap, jEnd, k24, kr, limbDrawingAt, massGroup, phaseAt, posterHolds, zoomAt } from '../../src/impact/clock.ts';
 import { DISCHARGE, contrast, deltaE, deltaE2000, fromOklch, hueDelta, isSaturatedRed, luminance, mixHex, roles, toOklch } from '../../src/impact/palette.ts';
 import { DEFAULT_FLOOR, floorCircle, floorFrame, mirrorIntoFrame, sigmaOf, strikeAt, strikeFrame } from '../../src/impact/floor.ts';
 import { nullSink, recordingSink, syntheticTube } from '../../src/impact/contracts.ts';
@@ -108,24 +108,45 @@ describe('clocks', () => {
 
 describe('mass hold groups', () => {
   it('match the hero schedule at I = 84', () => {
-    const want: [number, number][] = [[93, 0], [94, 0], [95, 1], [97, 1], [98, 2], [100, 3], [103, 4], [105, 5], [108, 6], [110, 6], [113, 7], [115, 8], [116, 8], [117, 8], [118, 9], [120, 10]];
+    const want: [number, number][] = [[93, 0], [94, 0], [95, 1], [97, 1], [98, 2], [100, 3], [103, 4], [105, 5], [107, 5], [108, 6], [110, 6], [111, 6], [112, 7], [113, 7], [114, 7], [115, 8], [116, 8], [117, 8], [118, 9], [120, 10]];
     for (const [f, g] of want) expect(massGroup(f, I, 12), `f${f}`).toBe(g);
     expect(massGroup(92, I, 12)).toBeNull();
   });
 
-  it('never change inside a global drawing, except where j 9 forces one', () => {
+  it('never change inside a global drawing, except where j 9 or the 4-frame hold forces one', () => {
     for (const dps of [12, 8]) {
       for (let at = 80; at <= 90; at++) {
         for (let f = at + 10; f <= at + 120; f++) {
           const g = massGroup(f, at, dps)!;
           const before = massGroup(f - 1, at, dps)!;
           expect(g).toBeGreaterThanOrEqual(before);
-          if (drawingIndex(f, dps) === drawingIndex(f - 1, dps)) expect(g, `I ${at} f ${f} dps ${dps}`).toBe(before);
+          if (drawingIndex(f, dps) !== drawingIndex(f - 1, dps) || g === before) continue;
+          // Mid-drawing: only on the frame after a measured group's GROUP_HOLD frames, onto the next group.
+          const at_ = `I ${at} f ${f} dps ${dps}`;
+          expect(f - at, at_).toBeLessThanOrEqual(31);
+          expect(massGroup(f - GROUP_HOLD, at, dps), at_).toBe(before);
+          expect(g, at_).toBe(before + 1);
         }
         expect(massGroup(at + 9, at, dps)).toBe(0);
         expect(massGroup(at + 8, at, dps)).toBeNull();
       }
     }
+  });
+
+  it('hold no measured group longer than GROUP_HOLD (4) frames over j 9..31 (judge round 2: g6 held 5)', () => {
+    expect(GROUP_HOLD).toBe(4);
+    for (const dps of [12, 8]) {
+      for (let at = 80; at <= 90; at++) {
+        const run = new Map<number, number>();
+        for (let f = at + 9; f <= at + 31; f++) {
+          const g = massGroup(f, at, dps)!;
+          run.set(g, (run.get(g) ?? 0) + 1);
+        }
+        for (const [g, n] of run) expect(n, `I ${at} dps ${dps} g${g}`).toBeLessThanOrEqual(GROUP_HOLD);
+      }
+    }
+    // The hero's g6: f108–111.
+    expect([107, 108, 111, 112].map((f) => massGroup(f, I, 12))).toEqual([5, 6, 6, 7]);
   });
 });
 

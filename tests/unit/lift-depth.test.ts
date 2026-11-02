@@ -1,7 +1,12 @@
 // WP2: the 3D lift's per-point depth, chain start and strike hook (impact
 // design §2 and §4; src/lift/lift.ts and src/lift/strand3d.ts). Synthetic
 // bodies and strokes only. The no-slam hashes were recorded from the lift as
-// it was before WP2 (HEAD 4bef2d4), on these same generators.
+// it was before WP2 (HEAD 4bef2d4), on these same generators, and recorded
+// again for decision 15 (round 3): the 3D rope has its own parameters now
+// (strand3d.ts ROPE3D), curls back toward its drawn bends, and the lift
+// drives a bend wave and a bow down it, so no step is what WP2 gave; and
+// again for the F1 fix (round 3, pass 2): a bend past the limit eases back
+// a little a step (strand3d.ts BEND_STEP) instead of all at once.
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import type { LimbControl, StrikeController, StrikeStep, Vec3 } from '../../src/impact/contracts.ts';
@@ -139,7 +144,22 @@ describe('chain start', () => {
     }
     for (const [f, j] of [[20, 0], [20, 1], [40, 2]]) {
       const sim = frames[f].sim.find((s) => s.id === strokes[j].id)!;
-      expect(sim.points).toEqual(strokes[j].points.map((q) => toCamera(bodies[f], q)));
+      const drawn = strokes[j].points.map((q) => toCamera(bodies[f], q));
+      if (strokes[j].kind === 'rigid') {
+        expect(sim.points).toEqual(drawn);
+        continue;
+      }
+      // A strand rests on the rope's target (lift.ts): the drawing from its
+      // anchor, every segment as drawn, bent by the wave and the bow.
+      expect(sim.points[0]).toEqual(drawn[0]);
+      let length = 0;
+      for (let i = 1; i < drawn.length; i++) {
+        expect(dist3(sim.points[i], sim.points[i - 1])).toBeCloseTo(dist3(drawn[i], drawn[i - 1]), 9);
+        length += dist3(drawn[i], drawn[i - 1]);
+      }
+      const off = Math.max(...sim.points.map((q, i) => dist3(q, drawn[i])));
+      expect(off).toBeGreaterThan(0.01 * length);
+      expect(off).toBeLessThan(0.3 * length);
     }
     expect(captured(frames, 20) && captured(frames, 40)).toBe(true);
   });
@@ -191,7 +211,13 @@ describe('the strike hook', () => {
     expect(seen.map((s) => [s.f, s.sub, s.steps])).toEqual([[1, 1, 4], [1, 2, 4], [1, 3, 4], [1, 4, 4], [2, 1, 4], [2, 2, 4], [2, 3, 4], [2, 4, 4]]);
     expect(seen[1].body).toEqual(lerpBody(bodies[0], bodies[1], 2 / 4));
     expect(seen[1].limbs.map((l) => [l.id, l.stiffness])).toEqual([[1, 0.1], [2, 0.45], [3, 1]]);
-    expect(seen[1].limbs[0].target).toEqual(strokes[0].points.map((q) => toCamera(seen[1].body, q)));
+    // A strand's target is the rope's (lift.ts): from its anchor, every
+    // segment as drawn. A rigid stroke's is the drawing.
+    const drawnOn = (j: number) => strokes[j].points.map((q) => toCamera(seen[1].body, q));
+    const rope = seen[1].limbs[0].target;
+    expect(rope[0]).toEqual(drawnOn(0)[0]);
+    rope.slice(1).forEach((q, i) => expect(dist3(q, rope[i])).toBeCloseTo(dist3(drawnOn(0)[i + 1], drawnOn(0)[i]), 9));
+    expect(seen[1].limbs[2].target).toEqual(drawnOn(2));
     // The frame ends, and the placed tips: pinned, so no boil.
     for (const fr of frames.slice(1)) {
       fr.sim.forEach((s, i) => {
@@ -257,9 +283,9 @@ describe('captures under a strike', () => {
     return { land, release, P, frames: run({ control, slam: { I, posters: true } }, false, 130).frames };
   }
 
-  it('captures every frame f76–93 for land 77 and release 93 (I = 84), and keeps the grid elsewhere', () => {
+  it('captures every frame f75–93 for land 77 and release 93 (I = 84: from the whip`s first), and keeps the grid elsewhere', () => {
     const { frames, P } = strike(84);
-    for (let f = 0; f < 130; f++) expect(captured(frames, f), `f${f}`).toBe(f >= 76 && f <= 93 ? true : onGrid(f));
+    for (let f = 0; f < 130; f++) expect(captured(frames, f), `f${f}`).toBe(f >= 75 && f <= 93 ? true : onGrid(f));
     const want = (f: number) => {
       if ([76, 77, 79, 81, 83, 93].includes(f)) return 'tube';
       if ([78, 80, 82].includes(f)) return 'stamp';
@@ -276,7 +302,7 @@ describe('captures under a strike', () => {
     const { frames, land, release } = strike(60);
     expect([land, release]).toEqual([53, 69]);
     expect(drawingIndex(69, 12)).toBe(drawingIndex(68, 12)); // f69 is mid-drawing on the grid
-    for (let f = 0; f < 130; f++) expect(captured(frames, f), `f${f}`).toBe(f >= 52 && f <= 69 ? true : onGrid(f));
+    for (let f = 0; f < 130; f++) expect(captured(frames, f), `f${f}`).toBe(f >= 51 && f <= 69 ? true : onGrid(f));
     expect([52, 53, 55, 57, 59, 69].map((f) => frames[f].drawing)).toEqual(['tube', 'tube', 'tube', 'tube', 'tube', 'tube']);
     expect([54, 56, 58].map((f) => frames[f].drawing)).toEqual(['stamp', 'stamp', 'stamp']);
     expect(frames.slice(60, 69).every((fr) => fr.drawing === 'silhouette')).toBe(true);
@@ -308,9 +334,11 @@ describe('determinism and the no-slam output', () => {
     expect(sha(a)).toBe(sha(b));
   });
 
-  it('matches the output recorded before WP2, with no controller, no emergence and no slam', () => {
-    expect(noSlamHash(false)).toBe('ed58c3d4de57769194cfa6784a09ff06c66d72889bb27ae52e2d8d6b483417b1');
-    expect(noSlamHash(true)).toBe('14eb5dfa1f0ff714bace3fa71049c7ea6ee203cbd7100fd389becbf39dd3ea93');
+  it('matches the output recorded for decision 15, with no controller, no emergence and no slam', () => {
+    // Re-recorded in round 3 (F1): the rope's damping (ROPE3D) and the drawn
+    // joints eased on screen (easeJoints).
+    expect(noSlamHash(false)).toBe('017e9e9566c930da3ca9185955468305ed808c302a718f6eaf0148dca4bed895');
+    expect(noSlamHash(true)).toBe('3a6f96eb14d8e0da4b0a6703c7e619ca61558a2d4d22717e44845354da0e3044');
   });
 
   it('projects the placed root where the chain root projects on every capture', () => {

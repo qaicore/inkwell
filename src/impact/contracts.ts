@@ -96,7 +96,8 @@ export interface LimbControl {
 export interface StrikeController {
   land: number; // the output frame the tips land on P
   release: number; // the output frame they let go: it forces a new drawing
-  // From land − 1 to release − 1 the lift captures a held pose on every frame.
+  // From the whip's first frame (lift/strike.ts whipFrom: land − 2) to the
+  // release the lift captures a held pose on every frame.
   step(at: StrikeStep): (LimbControl | null)[]; // per limb, in at.limbs' order; null = leave it alone
 }
 
@@ -162,8 +163,9 @@ export interface DrawingJob {
 
 // Design §7's stack, bottom to top: the plate (graded video), the flame aura,
 // cracks, fire and cluster, dust over the cluster's base, floods, limbs behind,
-// the person cutout, limbs in front, front FX, the A5–6 flash, then the glow.
-export type StackSlot = 'plate' | 'aura' | 'cracks' | 'fire' | 'dust' | 'floods' | 'limbsBehind' | 'person' | 'limbsFront' | 'fx' | 'flash' | 'glow';
+// the person cutout, limbs in front, the masses in front of him (the burst, the
+// cluster, the dust; uncut), front FX, the A5–6 flash, then the glow.
+export type StackSlot = 'plate' | 'aura' | 'cracks' | 'fire' | 'dust' | 'floods' | 'limbsBehind' | 'person' | 'limbsFront' | 'masses' | 'fx' | 'flash' | 'glow';
 
 export interface LayerDraw {
   key: string | null; // equal keys draw equal pixels, so the stack may reuse a cached copy; null = every frame

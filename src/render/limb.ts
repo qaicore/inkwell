@@ -55,7 +55,7 @@
 import { decayAlpha } from '../impact/clock.ts';
 import type { GlowSink, Palette, PulseSpan, Tube, TubeSection, Vec2, Vec3 } from '../impact/contracts.ts';
 import { contrast, roles } from '../impact/palette.ts';
-import { bandInterval, chunks as tubeChunks, indexAt, onMask, sectionAt, sectionVectors, type Chunk } from '../lift/tube.ts';
+import { bandInterval, chunks as tubeChunks, CUT_TAPER, indexAt, onMask, sectionAt, sectionVectors, type Chunk } from '../lift/tube.ts';
 import type { Mask } from '../track/tracking.ts';
 import type { LimbSettings } from '../types/effect.ts';
 // brushes.ts will import this file once WP12 points 'limb' here: LIMB and
@@ -257,7 +257,11 @@ export function drawLimb(ctxBehind: LimbTarget, ctxFront: LimbTarget, tube: Tube
     for (let i = Math.floor(from) + 1; i < to; i++) xs.push(i);
     for (const h of head) if (h > from && h < to) xs.push(h);
     xs.sort((p, q) => p - q);
-    const run = xs.filter((x, i) => i === 0 || x - xs[i - 1] > 1e-4).map((x) => shade(x, chunk.front));
+    const at = xs.filter((x, i) => i === 0 || x - xs[i - 1] > 1e-4);
+    const run = at.map((x) => shade(x, chunk.front));
+    // A front run cut at a flip narrows to nothing there, over the behind
+    // run, so no flat end shows where his body doesn't hide the cut.
+    if (chunk.front) taperCut(run, at, from > 0 ? from : null, to < xEnd - 1e-6 && to < last ? to : null);
     markFolds(run, from === 0, to >= xEnd - 1e-6);
     (chunk.front ? front : behind).push(run);
   }
@@ -412,6 +416,25 @@ function strip(ctx: LimbTarget, run: Shaded[], span: (sh: Shaded) => Span | null
   for (let i = n - 1; i >= 0; i--) ctx.lineTo(run[i].x + run[i].nx * hi[i], run[i].y + run[i].ny * hi[i]);
   ctx.closePath();
   return true;
+}
+
+// Each section within CUT_TAPER of a cut end (`from` or `to`, sections)
+// scaled toward nothing: the radius, the outline and every band.
+function taperCut(run: Shaded[], at: readonly number[], from: number | null, to: number | null) {
+  run.forEach((sh, i) => {
+    let k = 1;
+    if (from !== null) k = Math.min(k, smoothstep(0, CUT_TAPER, at[i] - from));
+    if (to !== null) k = Math.min(k, smoothstep(0, CUT_TAPER, to - at[i]));
+    if (k >= 1) return;
+    sh.r *= k;
+    sh.plus *= k;
+    sh.minus *= k;
+    const scaled = (sp: Span | null): Span | null => (sp ? [sp[0] * k, sp[1] * k] : null);
+    sh.body = scaled(sh.body);
+    sh.lit = scaled(sh.lit);
+    sh.core = scaled(sh.core);
+    sh.rim = scaled(sh.rim);
+  });
 }
 
 // Which sections get a disc: the caps, sharp turns, and both ends of any

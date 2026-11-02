@@ -33,14 +33,18 @@
 // Past g8 (the hold) the groups keep g8's parameters, its extents among them
 // (design §6): the refinement and the choice also hold the visible union's
 // t02, t98 and top to g8's, or the carry-over walks them off (0.1 U by g14).
-// Paint order (judge round 1: one contour, cel-shaded lumps): every lobe and
-// ball in the line colour, so the ink shows only on the union's edge; each
-// lobe's crescent cel steps over that (the deep tone in a crescent away from
-// P, a lit crescent toward it, then the body); the fire part (its dark red
-// line, three nested tones and the hot spots near the base); last the fills
-// of the scalloping edge balls and of the warm balls round the fire part.
-// Tones are the composite's (design §6, "In the composite"); balls near the
-// fire warm toward #e5721b.
+// Paint order (judge rounds 1–2: one contour, opaque cel-shaded lumps):
+// every lobe and ball in the ink, so the ink shows only on the union's edge;
+// each lobe a big lump under the balls; the fire part, so it shows as veins
+// between the balls (its dark red line, #fc6207 and #fd8d01 nested, and the
+// #fff884 hot spots near the base); last every ball, the farthest from P
+// first, as a lump. A lump is opaque: its body in the measured browns with a
+// filled shadow crescent away from P, 30–45 % of it, in a tone 1.5 steps
+// down the ramp toward the deepest, #1b0301 (see TONES).
+// In the decay the cluster erodes (fire.ts): the lumps stay opaque, shrink to
+// √erode in radius where they stand and drop out in a seeded order; the lobe
+// on P shrinks toward P instead, and stays, so the fire part, shrinking
+// toward P, stays inside what is left.
 import type { Vec2 } from '../../types/effect.ts';
 import type { GlowSink, Tier } from '../contracts.ts';
 import type { BrushTarget } from '../../render/glow.ts';
@@ -48,7 +52,7 @@ import { SMOKE, mixHex } from '../palette.ts';
 import { int, rng, uniform, type Rng } from '../rng.ts';
 import { dustState } from './dust.ts';
 import {
-  CARRY_FROM, GROUP_AGE, LAST_MEASURED, clamp, discCount, discGain, ellipsePts, gridIoU, gridOr, gridStats, inGrid, jitter, massClock, massFrame, massKey, memo,
+  CARRY_FROM, GROUP_AGE, LAST_MEASURED, clamp, discCount, discGain, ellipsePts, erodeKeeps, gridIoU, gridOr, gridStats, inGrid, jitter, massClock, massFrame, massKey, memo,
   newGrid, paint, polygonCount, rayExit, rayReach, shuffled, stampDisc, stampPolygon, toFrame, fireStar, forDiscRows, cellN, cellT, ROWS, COLS, CELL, VISIBLE_REACH,
   type FloorPt, type Grid, type MassContext, type MassDrawing, type MassFrame, type MassShape,
 } from './fire.ts';
@@ -62,9 +66,7 @@ export const PHONE_BALLS = 30;
 const T_SHIFT = 0.06; // U: the most the lean moves the centroid across (±0.08 measured)
 const PAD: Record<Tier, number> = { full: 0.008, phone: 0.012 }; // U: how far the scalloping balls push the outline out, on average
 const LATTICE = 2.4; // the ball lattice's spacing in mean radii: about a fifth of the smoke shows deep between balls
-const OUTLINE = 0.16; // a ball's deep outline, in radii
-const CREST_LINE = 0.006; // U: the union's ink line on a lobe
-const LIT_MIX = 0.45; // the lit crescent: the body tone this far toward the rim light
+const CREST_LINE = 0.006; // U: the union's one ink line, inside every lobe's and ball's rim
 const LOBE_JITTER = 0.02; // U: a carried lobe's move (≤ 0.05)
 export const BALL_JITTER = 0.006; // U: a carried ball's move (≤ 0.05)
 const HOLE_SHIFT = [0.45, 0.75]; // a new ball in a dropped ball's hole sits this far off its centre, in the old ball's radii
@@ -87,21 +89,39 @@ const HELD_W = 0.5; // the refinement's weight on the hold's extents, per U off 
 
 export const hotShare = (A: number) => 0.65 * 0.91 ** (A - 3);
 
-// The composite smoke tones over the loop (destruction §4.4 "Comp"), by A.
-const PAINT: readonly (readonly [number, string])[] = [[3, '#b14b15'], [7, '#a1442f'], [12, '#a64029'], [15, '#953c34'], [17, '#883733']];
-const DEEP: readonly (readonly [number, string])[] = [[3, '#701f03'], [17, '#3a1221']];
+// The measured browns (judge round 2, k23–31's flats; hue 15–35°): the ball
+// tones #642c13, #552912, #442413 and #351d13, then the deepest, #1b0301. A
+// lump's body is a place on that ramp: lighter by P and early, darker out
+// toward the rim and late (AGE_STEP over A3..A17, SPREAD over 0.8 U from P),
+// a step either way by its own level, the warm balls by the fire lightest and
+// the lobes under the balls a little darker. Its shadow is SHADE_STEP further
+// down. The ink is the deepest toward black.
+const TONES = [...SMOKE.tones, SMOKE.deep] as const;
+const AGE_STEP = 1; // ramp steps from A3 to A17
+const SPREAD = 1.5; // ramp steps from P out to SPREAD_REACH
+const SPREAD_REACH = 0.8; // U
+const SHADE_STEP = 1.5;
+const BODY_MAX = TONES.length - 1 - SHADE_STEP;
+export const CRESCENT = [0.3, 0.45] as const; // the shadow crescent's share of a lump
+export const INK = mixHex(SMOKE.deep, '#000000', 0.35);
 const VEIN_DARK = '#660800';
 const VEIN_ORANGE = SMOKE.veins[0]; // #fc6207
 const VEIN_LIGHT = SMOKE.veins[1]; // #fd8d01
 const VEIN_RED = SMOKE.veins[2]; // #fd5d0b
 
-function ramp(stops: readonly (readonly [number, string])[], A: number): string {
-  if (A <= stops[0][0]) return stops[0][1];
-  for (let i = 1; i < stops.length; i++) {
-    if (A <= stops[i][0]) return mixHex(stops[i - 1][1], stops[i][1], (A - stops[i - 1][0]) / (stops[i][0] - stops[i - 1][0]));
-  }
-  return stops[stops.length - 1][1];
+// A place on TONES (0..4) as a colour.
+export function brown(at: number): string {
+  const x = clamp(at, 0, TONES.length - 1);
+  const i = Math.min(TONES.length - 2, Math.floor(x));
+  return mixHex(TONES[i], TONES[i + 1], x - i);
 }
+// A lump's body tone on the ramp, at distance d from P (U).
+const bodyAt = (A: number, d: number, step: number) => clamp((AGE_STEP * clamp(A - 3, 0, 14)) / 14 + SPREAD * Math.min(1, d / SPREAD_REACH) + step, 0, BODY_MAX);
+export const shadeOf = (body: number) => body + SHADE_STEP;
+
+// A ball's crescent share: 0.30–0.45 by its own shade spot's size; a lobe's by its radius.
+export const crescentShare = (b: Ball) => CRESCENT[0] + (CRESCENT[1] - CRESCENT[0]) * clamp((b.spotR / b.r - 0.5) / 0.12, 0, 1);
+const lobeShare = (l: Lobe) => CRESCENT[0] + (CRESCENT[1] - CRESCENT[0]) * clamp((l.r - LOBE_R[0]) / (LOBE_R[1] - LOBE_R[0]), 0, 1);
 
 interface Envelope {
   top: number; // U
@@ -684,61 +704,90 @@ export interface ClusterDrawing extends MassDrawing {
 
 const SHAPES = new Map<string, MassShape[]>();
 
-// The shapes of one group's cluster at `unit` px per U (held while the group
-// shows: every frame of it gets the same list).
-export function clusterShapes(ictx: MassContext, g: number, unit: number, alpha = 1): ClusterDrawing {
+// The shapes of one group's cluster at `unit` px per U, eroded to `erode`
+// (held while the group shows: every frame of it gets the same list).
+export function clusterShapes(ictx: MassContext, g: number, unit: number, alpha = 1, erode = 1): ClusterDrawing {
   const fr = massFrame(ictx, true);
   const state = clusterState(ictx.seed, g, ictx.tier, fr.beta);
-  const key = `cluster:${massKey(ictx)}:${g}:${unit.toFixed(3)}`;
-  const shapes = memo(SHAPES, key, () => buildShapes(ictx, fr, state, g, unit), 8);
+  const key = `cluster:${massKey(ictx)}:${g}:${unit.toFixed(3)}:${erode.toFixed(4)}`;
+  const shapes = memo(SHAPES, key, () => buildShapes(ictx, fr, state, g, unit, erode), 8);
   return { layer: 'behind', key, alpha, shapes, g, A: state.A, unit, state };
 }
 
-function buildShapes(ictx: MassContext, fr: MassFrame, state: ClusterState, g: number, unit: number): MassShape[] {
+// The cluster eroded to `erode` (1: whole), in U: the lobes and balls kept,
+// at √erode of their radii where they stand (a lobe on P toward P, and kept),
+// and the fire part's extent per ray inside what is left.
+export function eroded(seed: number, state: ClusterState, erode: number): { lobes: Lobe[]; balls: Ball[]; exits: number[]; k: number } {
+  if (erode >= 1) return { lobes: state.lobes, balls: state.balls, exits: state.exits, k: 1 };
+  const k = Math.sqrt(Math.max(0, erode));
+  const holdsP = (l: Lobe) => FOOT.every(([n, t]) => Math.hypot(l.c[0] - n, l.c[1] - t) < l.r);
+  const lobes: Lobe[] = [];
+  state.lobes.forEach((l, i) => {
+    if (holdsP(l)) lobes.push({ c: [l.c[0] * k, l.c[1] * k], r: l.r * k });
+    else if (erodeKeeps(seed, 'cluster', 1000 + i, erode)) lobes.push({ ...l, r: l.r * k });
+  });
+  const balls = state.balls.filter((_, i) => erodeKeeps(seed, 'cluster', i, erode)).map((b) => ({ ...b, r: b.r * k }));
+  const left = newGrid();
+  for (const l of lobes) stampDisc(left, l.c[0], l.c[1], l.r);
+  for (const b of balls) stampDisc(left, b.c[0], b.c[1], b.r);
+  const exits = state.exits.map((e, i) => Math.min(e * k, rayExit(left, rayAngle(i))));
+  return { lobes, balls, exits, k };
+}
+
+function buildShapes(ictx: MassContext, fr: MassFrame, state: ClusterState, g: number, unit: number, erode: number): MassShape[] {
   const px = (pts: readonly FloorPt[]) => pts.map((p) => toFrame(fr, unit, p));
   const disc = (c: FloorPt, r: number) => px(ellipsePts(c, r, discCount(r * unit)));
-  const deep = ramp(DEEP, state.A);
-  const tone = ramp(PAINT, state.A);
-  const line = mixHex(deep, '#000000', 0.35);
-  const lit = mixHex(tone, SMOKE.rim, LIT_MIX);
+  const { lobes, balls, exits, k } = eroded(ictx.seed, state, erode);
   const out: MassShape[] = [];
+  // A lump at c of radius R: the shadow tone over all of it, then the body
+  // as a disc inside it tangent on the side toward `toward`, which leaves the
+  // shadow a crescent of `share` of it on the other side.
+  const lump = (role: string, c: FloorPt, R: number, toward: FloorPt, share: number, body: number) => {
+    const rl = R * Math.sqrt(1 - share);
+    const len = Math.hypot(toward[0], toward[1]) || 1;
+    const at: FloorPt = [c[0] + ((R - rl) * toward[0]) / len, c[1] + ((R - rl) * toward[1]) / len];
+    out.push({ role: `${role}-shade`, points: disc(c, R), color: brown(shadeOf(body)), round: true });
+    out.push({ role, points: disc(at, rl), color: brown(body), round: true });
+  };
   // One ink contour, on the union's edge only (judge round 1: no polka dots):
-  // every lobe and ball in the line's colour, then the fills over them a line
-  // in, so the line shows only where nothing else covers it. The balls are
-  // the scallops along it; inside, the lobes' cel steps cover them, and only
-  // the scallops and the warm balls round the fire part are filled, last.
-  for (const l of state.lobes) out.push({ role: 'lobe', points: disc(l.c, l.r), color: line, round: true });
-  for (const b of state.balls) out.push({ role: 'ball-line', points: disc(b.c, b.r), color: line, round: true });
-  // Each lobe a lump in crescent cel steps: the deep tone in a crescent away
-  // from P, a lit crescent toward it, offset 0.15–0.2 of its radius.
-  for (const l of state.lobes) {
-    const r = l.r - CREST_LINE;
-    const len = Math.hypot(l.c[0], l.c[1]) || 1;
-    const u: FloorPt = [-l.c[0] / len, -l.c[1] / len]; // toward P
-    const at = (k: number): FloorPt => [l.c[0] + k * r * u[0], l.c[1] + k * r * u[1]];
-    out.push({ role: 'lobe-shade', points: disc(l.c, r), color: deep, round: true });
-    out.push({ role: 'lobe-lit', points: disc(at(0.15), 0.85 * r), color: lit, round: true });
-    out.push({ role: 'lobe-body', points: disc(at(-0.05), 0.72 * r), color: tone, round: true });
+  // every lobe and ball in the ink, then every fill over them a line in, so
+  // the ink shows only where nothing else covers it.
+  for (const l of lobes) out.push({ role: 'lobe', points: disc(l.c, l.r), color: INK, round: true });
+  for (const b of balls) out.push({ role: 'ball-line', points: disc(b.c, b.r), color: INK, round: true });
+  // The lobes, big lumps under the balls, the farthest from P first.
+  const far = <T extends { c: FloorPt }>(list: T[]) => list.map((_, i) => i).sort((i, q) => Math.hypot(list[q].c[0], list[q].c[1]) - Math.hypot(list[i].c[0], list[i].c[1]) || i - q);
+  for (const i of far(lobes)) {
+    const l = lobes[i];
+    if (l.r > CREST_LINE) lump('lobe-fill', l.c, l.r - CREST_LINE, [-l.c[0], -l.c[1]], lobeShare(l), bodyAt(state.A, Math.hypot(l.c[0], l.c[1]), 0.4));
   }
-  const { rho, weights, exits } = state;
-  out.push({ role: 'vein-line', points: px(corePolygon(rho, weights, exits, VEIN_LINE)), color: VEIN_DARK });
+  // The fire part over the lobes and under the balls: its dark red line,
+  // three nested tones and the hot spots near the base, all toward P with
+  // the erosion.
+  const rho = state.rho * k;
+  const { weights } = state;
+  out.push({ role: 'vein-line', points: px(corePolygon(rho, weights, exits, VEIN_LINE * k)), color: VEIN_DARK });
   out.push({ role: 'core', points: px(corePolygon(rho, weights, exits)), color: VEIN_RED });
   out.push({ role: 'core-mid', points: px(corePolygon(rho, weights, exits, 0, 0.8)), color: VEIN_ORANGE });
   out.push({ role: 'core-inner', points: px(corePolygon(rho, weights, exits, 0, 0.5)), color: VEIN_LIGHT });
-  // Hot spots: pale yellow, orange-rimmed, in the fire part near the base.
   const rs = rng(ictx.seed, 'cluster', g, 2);
   for (let i = int(rs, 3, 6); i > 0; i--) {
-    const k = int(rs, 8, CORE_RAYS - 9);
-    const phi = rayAngle(k);
-    const reach = Math.min(rho * weights[k], exits[k]) * uniform(rs, 0.25, 0.65);
+    const ray = int(rs, 8, CORE_RAYS - 9);
+    const phi = rayAngle(ray);
+    const reach = Math.min(rho * weights[ray], exits[ray]) * uniform(rs, 0.25, 0.65);
     const c: FloorPt = [reach * Math.cos(phi), reach * Math.sin(phi)];
+    const size = uniform(rs, 0.012, 0.026) * k;
     if (c[0] > 0.3) continue;
-    const size = uniform(rs, 0.012, 0.026);
     out.push({ role: 'spot-rim', points: disc(c, size * 1.35), color: VEIN_LIGHT, round: true });
     out.push({ role: 'spot', points: disc(c, size), color: SMOKE.spots, round: true });
   }
-  for (const b of state.balls) {
-    if (b.edge || b.warm) out.push({ role: 'ball', points: disc(b.c, b.r * (1 - OUTLINE)), color: b.warm ? mixHex(tone, SMOKE.rim, 0.35) : tone, round: true });
+  // Every ball a lump, the farthest from P first, its body toward P (away
+  // from its own shade spot).
+  for (const i of far(balls)) {
+    const b = balls[i];
+    const R = b.r - CREST_LINE;
+    if (!(R > 0)) continue;
+    const body = bodyAt(state.A, Math.hypot(b.c[0], b.c[1]), (b.level - 1) * 3 - (b.warm ? 0.7 : 0));
+    lump('ball', b.c, R, [b.c[0] - b.spot[0], b.c[1] - b.spot[1]], crescentShare(b), body);
   }
   return out;
 }
@@ -747,7 +796,7 @@ function buildShapes(ictx: MassContext, fr: MassFrame, state: ClusterState, g: n
 export function shapes(ictx: MassContext, f: number): ClusterDrawing | null {
   const clock = massClock(ictx, f);
   if (!clock || clock.g < 2) return null;
-  return clusterShapes(ictx, clock.g, massFrame(ictx, true).U * clock.zoom, clock.alpha);
+  return clusterShapes(ictx, clock.g, massFrame(ictx, true).U * clock.zoom, clock.alpha, clock.erode);
 }
 
 export function draw(ctxBehind: BrushTarget, _ctxFront: BrushTarget, _sink: GlowSink, ictx: MassContext, f: number, opaque = false) {

@@ -30,6 +30,8 @@ export const AT_P = 0.08; // S: a stroke end this near P draws on from there
 export const RIM_IF1 = 0.012; // S
 export const RIM_IF7 = 0.006; // S
 export const CONTOUR = 0.006; // S
+export const EDGE = 0.006; // S: in the light comp, ink this near paper is thin ink (the edge tone); deeper is core (p2)
+const THIN = 0.01; // S: a mark thinner than this (twice its area over its outline) is thin ink throughout
 export const RECOIL = { copies: 3, step: 0.03 } as const; // IF6: copies stepped this far (S) along −u
 const TRACE_TOLERANCE = 0.6; // mask px
 const MARK_TOLERANCE = 0.5; // frame px
@@ -516,6 +518,38 @@ export function offsetLoop(loop: readonly Vec2[], d: number): Vec2[] {
 
 export const offsetLoops = (loops: readonly (readonly Vec2[])[], d: number): Vec2[][] => loops.map((l) => offsetLoop(l, d));
 
+// The band between `grown` and `shrunk` (a contour's line once its inside is
+// filled) in `color`, over whatever lies on the inside by now: one nonzero
+// path, the grown loops and the shrunk ones reversed, clipped (even-odd) off
+// the inside of the shrunk ones, so that a limb's line can't show inside his
+// body: the same union contour() leaves. The clip is only his box.
+function band(ctx: PosterTarget, grown: readonly Vec2[][], shrunk: readonly Vec2[][], color: string, width: number, height: number) {
+  const box = pixelBox(grown, 0, 0, width, height);
+  if (!box) return;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(box[0], box[1], box[2], box[3]);
+  addLoops(ctx, shrunk);
+  ctx.clip('evenodd');
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  addLoops(ctx, grown);
+  addLoops(ctx, shrunk.map((l) => l.slice().reverse()));
+  ctx.fill('nonzero');
+  ctx.restore();
+}
+
+// f, once: later calls do nothing.
+function once(f: (() => void) | null | undefined): (() => void) | null {
+  if (!f) return null;
+  let done = false;
+  return () => {
+    if (done) return;
+    done = true;
+    f();
+  };
+}
+
 // A contour `line` px wide on the loops, centred on their edge: `edge` on the
 // line, `inside` within it, the whole moved by (dx, dy).
 function contour(ctx: PosterTarget, loops: readonly Vec2[][], line: number, edge: string, inside: string, dx = 0, dy = 0) {
@@ -562,29 +596,41 @@ export interface FigurePaint {
   emit: string | null; // the colour paper parts glow in (the dark posters' comp), or null
   fringe?: { color: string; width: number } | null; // a fringe this wide (px) round ink fills, under them (the light comp, where it shows)
   scratch?: MakeScratch | null; // a scratch canvas maker: IF6 draws its recoil copy once and blits it
+  edge?: string | null; // the light comp's thin ink: his contour, thin marks and the EDGE band round his solid ink (null: ink throughout)
+  over?: (() => void) | null; // paints what lies over him (draw.ts's Z.over): IF3 and IF6 call it between his paper fill and his contour, the rest after him
 }
 
-// His mark and the figure, in that order (the mark is under him). On IF2's
-// ink split both XOR with the disc in one pass, since they take the same
-// tone on either side of its edge.
+// His mark and the figure, in that order (the mark is under him), then what
+// lies over him if the figure didn't paint it. On IF2's ink split both XOR
+// with the disc in one pass, since they take the same tone on either side of
+// its edge.
 export function paintMarksAndFigure(ctx: PosterTarget, sink: GlowSink, fig: PosterFigure, p: FigurePaint) {
-  if (p.si === 1 && p.spec.disc === 'ink' && p.disc) {
-    xorFill(ctx, [...fig.person, ...fig.limbs, ...fig.marks], p.disc, p.paper, p.ink);
-    return;
+  const q: FigurePaint = { ...p, over: once(p.over) };
+  if (q.si === 1 && q.spec.disc === 'ink' && q.disc) xorFill(ctx, [...fig.person, ...fig.limbs, ...fig.marks], q.disc, q.paper, q.ink);
+  else {
+    paintMarks(ctx, sink, fig.marks, q);
+    paintFigure(ctx, sink, fig, q);
   }
-  paintMarks(ctx, sink, fig.marks, p);
-  paintFigure(ctx, sink, fig, p);
+  q.over?.();
 }
 
 // The figure as poster si draws it (the table at the top of this file).
 export function paintFigure(ctx: PosterTarget, sink: GlowSink, fig: PosterFigure, p: FigurePaint) {
   const { person, limbs } = fig;
-  if (person.length === 0 && limbs.length === 0) return;
+  const over = once(p.over);
+  if (person.length === 0 && limbs.length === 0) {
+    over?.();
+    return;
+  }
   const light = p.spec.field === 'light';
   const fg = light ? p.ink : p.paper;
   const bg = light ? p.paper : p.ink;
   const all = [...person, ...limbs];
   const line = CONTOUR * p.S;
+  // The light comp grades ink by thickness: his contour is thin ink (the edge
+  // tone), and a solid ink body gets an EDGE band in it round a p2 core.
+  const graded = light && !!p.edge && p.edge !== p.ink;
+  const thinInk = graded && p.edge ? p.edge : fg;
   const glow = (loops: readonly Vec2[][]) => {
     if (p.emit) for (const l of loops) if (signedArea(l) > 0) sink.fill(l, p.emit, 'body', 1);
   };
@@ -593,9 +639,15 @@ export function paintFigure(ctx: PosterTarget, sink: GlowSink, fig: PosterFigure
   };
   const silhouette = (tone: string) => {
     fringe(all);
-    if (p.contour) contour(ctx, person, line, fg, bg);
-    else fillLoops(ctx, person, tone);
-    fillLoops(ctx, limbs, tone, true);
+    const cored = graded && tone === p.ink;
+    const rim = cored ? thinInk : tone;
+    if (p.contour) contour(ctx, person, line, thinInk, bg);
+    else fillLoops(ctx, person, rim);
+    fillLoops(ctx, limbs, rim, true);
+    if (!cored) return;
+    const inset = EDGE * p.S;
+    if (!p.contour) fillLoops(ctx, offsetLoops(person, -inset), tone);
+    fillLoops(ctx, offsetLoops(limbs, -inset), tone, true);
   };
   switch (p.si) {
     case 0: {
@@ -613,13 +665,19 @@ export function paintFigure(ctx: PosterTarget, sink: GlowSink, fig: PosterFigure
       if (p.spec.disc === 'ink' && p.disc) xorFill(ctx, all, p.disc, p.paper, p.ink);
       else silhouette(fg);
       break;
-    case 2: // IF3: paper, with an ink contour
-      contour(ctx, all, line, fg, bg);
+    case 2: {
+      // IF3: paper, with an ink contour; the speed lines (over) lie on his
+      // paper fill, under the contour.
+      const grown = offsetLoops(all, line / 2);
+      fillLoops(ctx, grown, bg);
+      over?.();
+      band(ctx, grown, offsetLoops(all, -line / 2), thinInk, p.width, p.height);
       break;
+    }
     case 5: {
-      // IF6: a contour, and behind it the limbs' recoil trail (impact.md
-      // §7.7): 3 accent copies of their contour stepped along −u, each hiding
-      // the ones further back, the figure hiding them all.
+      // IF6: his paper fill; on it the limbs' recoil trail (impact.md §7.7):
+      // 3 accent copies of their contour stepped along −u, each hiding the
+      // ones further back; then the fan (over), and his own contour on top.
       // The copies step whole pixels, so one copy drawn on a scratch canvas
       // blits to each without resampling: two fills and three blits instead
       // of six fills, the same pixels.
@@ -627,6 +685,9 @@ export function paintFigure(ctx: PosterTarget, sink: GlowSink, fig: PosterFigure
       const tone = light ? p.accent : p.ring;
       const grown = offsetLoops(limbs, line / 2);
       const shrunk = offsetLoops(limbs, -line / 2);
+      const body = [...offsetLoops(person, line / 2), ...grown];
+      const inner = [...offsetLoops(person, -line / 2), ...shrunk];
+      fillLoops(ctx, body, bg);
       const shift = (k: number): Vec2 => [Math.round(-k * step * p.u[0]), Math.round(-k * step * p.u[1])];
       const reach = Math.ceil(RECOIL.copies * step) + 2;
       const box = pixelBox(grown, -reach, -reach, p.width + reach, p.height + reach);
@@ -647,9 +708,9 @@ export function paintFigure(ctx: PosterTarget, sink: GlowSink, fig: PosterFigure
           fillLoops(ctx, shrunk, bg, false, dx, dy);
         }
       }
+      over?.();
       // The figure's own contour, the limbs' offsets reused.
-      fillLoops(ctx, [...offsetLoops(person, line / 2), ...grown], fg);
-      fillLoops(ctx, [...offsetLoops(person, -line / 2), ...shrunk], bg);
+      band(ctx, body, inner, thinInk, p.width, p.height);
       if (p.emit) for (const l of all) sink.stroke([...l, l[0]], line, p.emit, 'body', 1);
       break;
     }
@@ -665,6 +726,7 @@ export function paintFigure(ctx: PosterTarget, sink: GlowSink, fig: PosterFigure
       silhouette(fg);
       if (!light) glow(all);
   }
+  over?.();
 }
 
 // The whole-pixel box round the loops, grown 2 px for the edges' anti-aliasing
@@ -714,7 +776,12 @@ export function paintMarks(ctx: PosterTarget, sink: GlowSink, marks: readonly Ve
     return;
   }
   if (light && p.fringe) fillLoops(ctx, offsetLoops(marks, p.fringe.width), p.fringe.color);
-  fillLoops(ctx, marks, light ? p.ink : p.paper, true);
+  if (light && p.edge && p.edge !== p.ink) {
+    // The light comp: a mark thinner than 0.01 S is thin ink, the edge tone.
+    const thin = (m: Vec2[]) => (2 * Math.abs(signedArea(m))) / Math.max(1e-9, perimeter(m)) < THIN * p.S;
+    fillLoops(ctx, marks.filter(thin), p.edge, true);
+    fillLoops(ctx, marks.filter((m) => !thin(m)), p.ink, true);
+  } else fillLoops(ctx, marks, light ? p.ink : p.paper, true);
   if (p.emit && !light) for (const m of marks) sink.fill(m, p.emit, 'body', 1);
 }
 

@@ -5,7 +5,9 @@
 // seed 84, 1.5 s), on a grey floor (#585858) with faint floor circles and the
 // hero's six cracks. Rows, for the full tier and then the phone tier:
 //   1. hold groups g0..g8, each at its first frame (A0..A17);
-//   2. six drawings of the decay (f116..f128), fading to 0 at J_end (f129);
+//   2. six drawings of the decay (f116..f128), eroding (the lumps, plumes and
+//      specks shrink and drop out in a seeded order) and fading only on the
+//      last 2 frames, to 0 at J_end (f129);
 //   3. 1:1 crops round P of g1, g2, g4, g6 and g8.
 // Stack order as the compositor will lay it (design §7): cracks, fire and
 // cluster, dust over the cluster's base, then the front FX (wisps, debris).
@@ -187,7 +189,7 @@ for (const tier of ['full', 'phone'] as const) {
   );
   all.push(
     ...rows(
-      `${name}: the decay, linear to 0 at J_end (f129); the scars stay`,
+      `${name}: the decay, eroding, then fading on its last 2 frames to 0 at J_end (f129); the scars stay`,
       DECAY.map((f) => {
         const { canvas, info } = frame(ictx, f);
         return scaled(canvas, HALF, info);
@@ -219,7 +221,7 @@ const U = fire.massFrame(full).U;
 const BANNER = [
   'Aftermath masses (impact WP8, design §6): aftermath/fire.ts, cluster.ts, dust.ts, wisps.ts, debris.ts, cracks.ts. No person, no energy (WP9) and no glow (WP10).',
   `The hero at 1080×608 (S 608, U ${U.toFixed(0)} px), P (${P[0].toFixed(0)}, ${P[1].toFixed(0)}) on the bottom edge, d (${HERO.d.join(', ')}), seed ${HERO.seed}, 1.5 s; cells at ½ scale. Faint grey lines: floor circles at 0.45, 0.75 and 1.05 U.`,
-  'Stack: cracks, fire and cluster, dust over the cluster’s base, then wisps and debris. Fire, smoke and dust keep the measured physical ramps (decision 6); the wisps are p1, the cracks cool from p1 to ink.',
+  'Stack: cracks, fire and cluster, dust over the cluster’s base, then wisps and debris. Fire, smoke and dust keep the measured physical ramps (decision 6); the wisps are white (p1 lifted toward #ffffff) with a soft edge and streaks, the cracks cool from p1 to ink.',
 ];
 function text(ctx: Ctx, s: string, x: number, y: number, color = INK, font = '15px sans-serif') {
   ctx.font = font;

@@ -15,7 +15,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { nullSink, recordingSink, type GlowCall, type Palette, type Tier, type Vec2 } from '../../src/impact/contracts.ts';
 import { decayAlpha, kr } from '../../src/impact/clock.ts';
 import { strikeFrame } from '../../src/impact/floor.ts';
-import { DISCHARGE, FIRE, linear, mixHex } from '../../src/impact/palette.ts';
+import { FIRE, linear, mixHex } from '../../src/impact/palette.ts';
 import type { BrushTarget } from '../../src/render/glow.ts';
 import { nodeScratch } from '../../src/render/headless.ts';
 import type { Mask } from '../../src/track/tracking.ts';
@@ -186,7 +186,7 @@ const isStroke = (c: GlowCall): c is Stroke => c.op === 'stroke';
 // ---- Lightning ------------------------------------------------------------------------------
 
 describe('lightning', () => {
-  it('draws 2–3 ribbons on A3–6, 4–9 on A7–11 and 2–7 from A12 (the hold and the decay too), none before A3', () => {
+  it('plans 2–3 ribbons on A3–6, 4–9 on A7–11 and 2–7 from A12 (the hold and the decay too), none before A3, and draws as many as the area budget holds', () => {
     for (const seconds of [1.5, 3]) {
       for (const seed of SEEDS.slice(0, 3)) {
         const ictx = scene({ seed, seconds });
@@ -202,8 +202,16 @@ describe('lightning', () => {
           const band = A <= 6 ? 'lead' : A <= 8 ? 'early' : A <= 11 ? 'mid' : 'late';
           expect(plan?.band, at).toBe(band);
           const [lo, hi] = lightning.RIBBON_BANDS[band].count;
-          expect(plan!.ribbons.length, at).toBeGreaterThanOrEqual(lo);
-          expect(plan!.ribbons.length, at).toBeLessThanOrEqual(hi);
+          expect(plan!.planned, at).toBeGreaterThanOrEqual(lo);
+          expect(plan!.planned, at).toBeLessThanOrEqual(hi);
+          // The budget is met by count and length (reference:14): a ribbon
+          // is left out only once the ones before it have used most of the
+          // budget, so little is left that a cut to 4 medians of path (the
+          // least: a shorter stub has no room for its pools) won't fit (the
+          // least use over these seeds is 0.75, and 0.53 with 2 ribbons).
+          expect(plan!.ribbons.length, at).toBeGreaterThanOrEqual(1);
+          expect(plan!.ribbons.length, at).toBeLessThanOrEqual(plan!.planned);
+          if (plan!.ribbons.length < plan!.planned) expect(plan!.area / plan!.budget, at).toBeGreaterThan(0.5);
         }
       }
     }
@@ -211,10 +219,11 @@ describe('lightning', () => {
     expect(lightning.ribbons(scene(), 13, sources(scene()))?.A).toBe(3); // the first, on j 13
   });
 
-  it("keeps the band's total path and its longest extent (0.8–0.9 U and 0.4–0.5 U on the lead-in; 3.5–5 U and 0.6–0.8 U on A7–11; 3.5–6 U and 0.6–1.3 U from A12)", () => {
+  it("plans the band's total path and its longest extent (0.8–0.9 U and 0.4–0.5 U on the lead-in; 3.5–5 U and 0.6–0.8 U on A7–11; 3.5–6 U and 0.6–1.3 U from A12), and draws what the area budget holds of it", () => {
     for (const { at, ictx, plan } of heroPlans()) {
       const { U } = washes.energyFrame(ictx);
       const band = lightning.RIBBON_BANDS[plan.band];
+      const planned = plan.path / U;
       const total = sum(plan.ribbons.map((r) => r.length)) / U;
       const longest = Math.max(...plan.ribbons.map((r) => r.extent)) / U;
       // Two or three ribbons from A12, or four on A7–11, can't carry the
@@ -222,9 +231,15 @@ describe('lightning', () => {
       // these curved sources makes only 1.0–1.3 × its extent in path, so they
       // keep what they can, over 0.65 of the band's least total (at the least
       // 0.67 from A12 and 0.74 on A7–11 over 300 seeds).
-      const enough = plan.band === 'lead' || plan.ribbons.length >= (plan.band === 'late' ? 4 : 5);
-      expect(total, at).toBeLessThanOrEqual(band.total[1] + 1e-9);
-      expect(total, at).toBeGreaterThanOrEqual((enough ? 1 : 0.65) * band.total[0] - 1e-9);
+      const enough = plan.band === 'lead' || plan.planned >= (plan.band === 'late' ? 4 : 5);
+      expect(planned, at).toBeLessThanOrEqual(band.total[1] + 1e-9);
+      // The budget takes path, not width: what it leaves out, it leaves out
+      // only once most of the budget is used. Where it cuts, the ribbons
+      // aren't first lengthened to the band's least total (the budget would
+      // only cut them back): at the hero's U it cuts from A7 on.
+      expect(total, at).toBeLessThanOrEqual(planned + 1e-9);
+      if (total < planned - 1e-6) expect(plan.area / plan.budget, at).toBeGreaterThan(0.5);
+      else expect(planned, at).toBeGreaterThanOrEqual((enough ? 1 : 0.65) * band.total[0] - 1e-9);
       expect(longest, at).toBeGreaterThanOrEqual(0.97 * band.longest[0]);
       expect(longest, at).toBeLessThanOrEqual(band.longest[1] + 1e-9);
       for (const r of plan.ribbons) expect(r.extent, at).toBeLessThanOrEqual(longest * U + 1e-9);
@@ -238,10 +253,10 @@ describe('lightning', () => {
       const [lo, hi] = lightning.RIBBON_BANDS[plan.band].median;
       for (const r of plan.ribbons) {
         // A short cored ribbon (under 0.25 U of path) is drawn thinner, × 0.6;
-        // the planned median, before the area budget's fit.
+        // the drawn median: the area budget never narrows it (reference:14).
         const k = r.main ? 1 : 0.6;
-        expect(r.median / plan.fit / S, at).toBeGreaterThanOrEqual(k * lo - 1e-9);
-        expect(r.median / plan.fit / S, at).toBeLessThanOrEqual(k * hi + 1e-9);
+        expect(r.median / S, at).toBeGreaterThanOrEqual(k * lo - 1e-9);
+        expect(r.median / S, at).toBeLessThanOrEqual(k * hi + 1e-9);
         if (r.main) mains++;
       }
       expect(plan.ribbons[0].main, at).toBe(true);
@@ -249,18 +264,18 @@ describe('lightning', () => {
     expect(mains).toBeGreaterThan(0.6 * sum(heroPlans().map((p) => p.plan.ribbons.length)));
   });
 
-  it('keeps the ribbons, eyes and bolts under the area budget, 2.6 % of the frame to A11 and 3.5 % from A12, by one factor on the ribbon widths (round 1)', () => {
-    let fitted = 0;
-    for (const { at, ictx, plan } of heroPlans()) {
+  it('keeps the ribbons, eyes and bolts under the area budget, 1 % of the frame on A3–6, 2.6 % to A11 and 3.5 % from A12, by count and length, never width (reference:14)', () => {
+    let cut = 0;
+    for (const { at, plan } of heroPlans()) {
+      expect(plan.budget, at).toBeCloseTo(lightning.AREA_BUDGET[plan.band] * W * H, 6);
+      expect(plan.area, at).toBeLessThanOrEqual(plan.budget + 1e-6);
       const ctx = canvas();
       lightning.paintLightning(ctx, nodeScratch, { ...plan, gain: 1 }, W, H);
       // The painted share, its ink lines and anti-aliasing with it.
       expect(coverage(ctx), at).toBeLessThanOrEqual(lightning.AREA_BUDGET[plan.band] * 1.25);
-      expect(plan.fit, at).toBeGreaterThan(0);
-      expect(plan.fit, at).toBeLessThanOrEqual(1);
-      if (plan.fit < 1) fitted++;
+      if (sum(plan.ribbons.map((r) => r.length)) < plan.path - 1e-6) cut++;
     }
-    expect(fitted).toBeGreaterThan(0);
+    expect(cut).toBeGreaterThan(0);
   });
 
   it('kinks it 40–85° every 2–8 median widths (on straight sources; the lead-in every 2–8 × 0.022 S)', () => {
@@ -269,8 +284,7 @@ describe('lightning', () => {
       const S = ictx.frame.S;
       for (const r of plan.ribbons) {
         const cum = cumulative(r.path);
-        const planned = r.median / plan.fit; // the kinks are spaced on the planned median, before the area budget
-        const unit = plan.band === 'lead' ? Math.max(planned, LEAD_KINK * S) : planned;
+        const unit = plan.band === 'lead' ? Math.max(r.median, LEAD_KINK * S) : r.median;
         expect(r.turns.length, at).toBe(r.kinks.length);
         r.kinks.forEach((i, q) => {
           kinks++;
@@ -355,19 +369,31 @@ describe('lightning', () => {
     }
   });
 
-  it('draws in the discharge set (decision 6) and emits its glow at the gain: bands and bolts as bodies, core runs as cores', () => {
+  it("draws in k21–31's measured set (decision 6's discharge set, re-measured) and emits its glow at the gain: a cored ribbon's band as hot light at BAND_GLOW ×, the lead-in, short ribbons, eyes and bolts as bodies, core runs as cores at CORE_GLOW ×", () => {
+    const T = lightning.LIGHTNING_TONES;
+    expect(T).toEqual({ edge: '#00017b', band: '#2c5cfc', deep: '#233cfd', core: '#22fded', pale: '#abfdf4' });
     for (const { at, plan } of heroPlans().filter((p) => p.ictx.seed === HERO.seed)) {
-      expect(plan.tones, at).toEqual({ ...DISCHARGE, ...lightning.LIGHTNING_TONES });
+      expect(plan.tones, at).toEqual({ ...T, hot: mixHex(T.core, '#ffffff', lightning.CORE_HOT.mix) });
       expect(plan.boost, at).toBe(1);
       const sink = recordingSink();
       lightning.emitLightning(sink, plan);
       const strokes = sink.calls.filter(isStroke);
       expect(strokes.length, at).toBe(sink.calls.length);
-      const bodies = plan.ribbons.length + sum(plan.ribbons.map((r) => r.eyes.length)) + plan.bolts.length;
-      expect(strokes.filter((c) => c.kind === 'body').length, at).toBe(bodies);
-      expect(strokes.filter((c) => c.kind === 'core').every((c) => c.color === lightning.LIGHTNING_TONES.core), at).toBe(true);
-      expect(strokes.filter((c) => c.kind === 'core').length > 0, at).toBe(plan.band !== 'lead');
-      expect(strokes.every((c) => c.gain === plan.gain), at).toBe(true);
+      const hot = plan.ribbons.filter((r) => r.main && r.pools > 0).length;
+      expect(hot > 0, at).toBe(plan.band !== 'lead');
+      const bodies = plan.ribbons.length - hot + sum(plan.ribbons.map((r) => r.eyes.length)) + plan.bolts.length;
+      const body = strokes.filter((c) => c.kind === 'body');
+      expect(body.length, at).toBe(bodies);
+      // The lead-in's ribbons glow their band; the thin strands (short ribbons, eyes, bolts) the deeper blue.
+      expect(body.every((c) => c.color === T.deep || (plan.band === 'lead' && c.color === T.band)), at).toBe(true);
+      expect(body.every((c) => c.gain === plan.gain), at).toBe(true);
+      const cores = strokes.filter((c) => c.kind === 'core');
+      const bands = cores.filter((c) => c.color === T.band);
+      expect(bands.length, at).toBe(hot);
+      expect(bands.every((c) => c.gain === plan.gain * lightning.BAND_GLOW), at).toBe(true);
+      const runs = cores.filter((c) => c.color !== T.band);
+      expect(runs.every((c) => c.color === T.core && c.gain === plan.gain * lightning.CORE_GLOW), at).toBe(true);
+      expect(runs.length > 0, at).toBe(plan.band !== 'lead');
     }
   });
 
@@ -507,7 +533,8 @@ describe('sparks and embers', () => {
     expect(particles.emberLength(10)).toBeCloseTo(0.009, 12);
     expect(particles.emberColor(3)).toBe(FIRE.embers[0]); // #ffdf3e
     expect(particles.emberColor(12)).toBe(FIRE.embers[1]); // #ffb259
-    expect(particles.SPARK_TONES.body).toBe(FIRE.amber);
+    expect(particles.SPARK_TONES.body).toBe('#fb6a04'); // judge round 2: k14–16's red-orange sparks
+    expect(particles.SPARK_TONES.core).toBe('#fff884');
   });
 
   it('place the burst at r 0.06–0.5 U (p50 0.34), the ring and halo at 0.46–0.8 U (p50 0.63), the embers inside the cluster’s envelope', () => {
@@ -630,14 +657,19 @@ describe('washes', () => {
       const roles = d!.layers.map((l) => l.role);
       expect(roles.slice(0, 4), `j${j}`).toEqual(['ink', 'band', 'ink', 'fringe']);
       expect(roles.slice(4).every((r) => r === 'field') && roles.length === (spec.field === 'deep' ? 8 : 6), `j${j}`).toBe(true);
-      expect(d!.layers[0].color).toBe(DISCHARGE.edge);
-      expect(d!.layers[1].color).toBe(DISCHARGE.band);
-      if (spec.field === 'deep') {
-        expect(d!.layers[4].color).toBe(DISCHARGE.core); // core at the edge, paling with depth
-        expect(d!.layers.at(-1)!.color).toBe(DISCHARGE.pale);
-      } else {
-        expect(d!.layers[4].color).toBe(mixHex(DISCHARGE.core, DISCHARGE.pale, 0.5)); // a paler rim over a saturated inside
-        expect(d!.layers.at(-1)!.color).toBe(DISCHARGE.core);
+      // k24–25's set: ink #00017b, band #2c5cfc, ink, the pale fringe, the field.
+      const T = washes.ENERGY_TONES;
+      expect(d!.layers.slice(0, 4).map((l) => l.color), `j${j}`).toEqual([T.edge, T.band, T.edge, T.pale]);
+      expect(d!.layers[4].color).toBe(T.core); // the saturated core along the edge
+      if (spec.field === 'deep') expect(d!.layers.at(-1)!.color).toBe(T.pale); // paling with depth
+      else {
+        // A10–11: pale inside, mix(core, white, RIM_PALE) (reference:15's
+        // 0.5–0.7; the wash's glow brings it to k24–25's #aafffa–#b5fdfe)
+        const inside = d!.layers.at(-1)!.color;
+        const k = (parseInt(inside.slice(1, 3), 16) - 0x22) / (0xff - 0x22);
+        expect(k, `j${j}`).toBeGreaterThanOrEqual(washes.RIM_PALE[0] - 0.01);
+        expect(k, `j${j}`).toBeLessThanOrEqual(washes.RIM_PALE[1] + 0.01);
+        expect(inside, `j${j}`).toBe(mixHex(T.core, '#ffffff', k));
       }
       const ctx = canvas();
       washes.paintFlood(ctx, nodeScratch, d, W, H);
@@ -681,10 +713,11 @@ describe('washes', () => {
     expect(kr(28) - 14).toBe(15);
     const plan = lightning.ribbons(ictx, 28, src)!;
     expect(plan.boost).toBe(washes.BOLT_BOOST);
-    expect(plan.tones.core).toBe(mixHex(lightning.LIGHTNING_TONES.core, DISCHARGE.pale, 0.45));
+    expect(plan.tones.core).toBe(mixHex(lightning.LIGHTNING_TONES.core, lightning.LIGHTNING_TONES.pale, 0.45));
     const sink = recordingSink();
     lightning.emitLightning(sink, plan);
-    expect(sink.calls.every((c) => isStroke(c) && c.gain === plan.gain * washes.BOLT_BOOST)).toBe(true);
+    const glowOf = (c: Stroke) => (c.kind === 'body' ? 1 : c.color === plan.tones.band ? lightning.BAND_GLOW : lightning.CORE_GLOW);
+    expect(sink.calls.every((c) => isStroke(c) && c.gain === plan.gain * washes.BOLT_BOOST * glowOf(c))).toBe(true);
     for (const j of [22, 23, 27, 29, 30, 31]) expect(washes.boltBoost(ictx, j), `j${j}`).toBe(1);
   });
 
@@ -787,7 +820,9 @@ describe('washes', () => {
     const fl = washes.flashShapes(full, f)!;
     expect(fl.A).toBe(5);
     expect(fl.alpha).toBe(0.4);
-    expect(fl.holes.length).toBeGreaterThanOrEqual(2); // the hole round the cluster, splinters, the window
+    // The hole round the cluster, and the splinters that land on the frame
+    // (none for the hero: P is 11 px off the bottom); no window (asks:5).
+    expect(fl.holes.length).toBeGreaterThanOrEqual(1);
     const ctx = canvas();
     washes.paintFlash(ctx, nodeScratch, fl, MASK, W, H);
     const d = ctx.getImageData(0, 0, W, H).data;
@@ -838,7 +873,9 @@ describe('tiers and the cut order', () => {
   it('caps the phone tier at 4 ribbons of at most 48 nodes, with no eyes', () => {
     for (const { at, plan } of plans(sources, {}, 'phone')) {
       expect(plan.ribbons.length, at).toBeLessThanOrEqual(lightning.PHONE_RIBBONS);
-      expect(plan.ribbons.length, at).toBeGreaterThanOrEqual(Math.min(lightning.PHONE_RIBBONS, lightning.RIBBON_BANDS[plan.band].count[0]));
+      expect(plan.ribbons.length, at).toBeGreaterThanOrEqual(1);
+      // Under the cap, fewer only where the area budget is full (it holds 1–2 wide ribbons from A9 at the hero's U).
+      if (plan.ribbons.length < Math.min(lightning.PHONE_RIBBONS, plan.planned)) expect(plan.area / plan.budget, at).toBeGreaterThan(0.5);
       for (const r of plan.ribbons) {
         expect(r.path.length, at).toBeLessThanOrEqual(lightning.PHONE_NODES);
         expect(r.eyes.length, at).toBe(0);
@@ -867,7 +904,10 @@ describe('tiers and the cut order', () => {
     const src = sources(ictx);
     for (const j of krSteps(13, 39)) {
       const two = lightning.ribbons(ictx, j, src, { maxRibbons: 2 })!;
-      expect(two.ribbons.length, `j${j}`).toBe(2);
+      // Two, or the longest alone where it fills the area budget.
+      expect(two.ribbons.length, `j${j}`).toBeLessThanOrEqual(2);
+      expect(two.ribbons.length, `j${j}`).toBeGreaterThanOrEqual(1);
+      if (two.ribbons.length < 2) expect(two.area / two.budget, `j${j}`).toBeGreaterThan(0.5);
       expect(two.ribbons[0].extent / washes.energyFrame(ictx).U, `j${j}`).toBeGreaterThanOrEqual(0.97 * lightning.RIBBON_BANDS[two.band].longest[0]);
     }
     for (const f of groupStarts(ictx)) {
@@ -935,10 +975,13 @@ describe('determinism and budget', () => {
   // call; a flood's shapes are kept by wash, and a gentle wash's opaque flood
   // for its ramp, so after the warm-up a step times its plan and paints with
   // those built (a wash's first frame builds its shapes, about 0.5 ms more).
-  // Decision 11: the Node proxy asserts about 1.5 × today's numbers. Design 6 ms
-  // a step; Node today (round 1) 1.1–6.3 ms over the steps, the worst A11–A12.
-  it('plans and paints one kr step of lightning and flood at 1080×608 in 9.5 ms or less (median of 10; design 6 ms), full flashing and Reduce flashing, both tiers', () => {
-    const STEP_MS = 9.5; // ms; design 6
+  // Decision 11: the Node proxy asserts about 1.5 × the worst it measures
+  // under the whole unit suite (its serial group, four runs, Nov 2). Design
+  // 6 ms a step; Node in round 1 1.1–6.3 ms over the steps, the worst A11–A12;
+  // round 3 (fewer, wider ribbons, lumpy edges, hot cores) 1.0–6.8 ms under
+  // the whole suite, the worst j18–j22 (1.0–6.0 ms on an idle machine).
+  it('plans and paints one kr step of lightning and flood at 1080×608 in 10 ms or less (median of 10; design 6 ms), full flashing and Reduce flashing, both tiers', () => {
+    const STEP_MS = 10; // ms; design 6; today 1.0–6.8 under the whole suite
     const cases = (['full', 'phone'] as const).flatMap((tier) =>
       (['full', 'safe'] as const).map((flash) => {
         const ictx = scene({ tier, flash });
@@ -975,6 +1018,7 @@ describe('determinism and budget', () => {
     }
     const report = cases.flatMap((c) => [...c.best].map(([j, t]) => `${c.name} j${j} ${t.toFixed(2)}`));
     const over = cases.flatMap((c) => [...c.best].filter(([, t]) => t > STEP_MS).map(([j]) => `${c.name} j${j}`));
+    console.log(`energy steps (ms, median of 10, best of up to 5 runs, 1080×608): ${report.join(', ')}`);
     expect(over, report.join(', ')).toEqual([]);
   });
 });

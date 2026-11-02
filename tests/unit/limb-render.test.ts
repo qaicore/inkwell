@@ -6,7 +6,7 @@ import { createCanvas, type SKRSContext2D } from '@napi-rs/canvas';
 import { describe, expect, it } from 'vitest';
 import { nullSink, recordingSink, type HeldLimb, type Palette, type PulseSpan, type Vec2 } from '../../src/impact/contracts.ts';
 import { contrast, deltaE } from '../../src/impact/palette.ts';
-import { buildTube, chunks, onMask, sectionAt } from '../../src/lift/tube.ts';
+import { buildTube, chunks, CUT_TAPER, onMask, sectionAt } from '../../src/lift/tube.ts';
 import { LIMB } from '../../src/render/brushes.ts';
 import {
   drawLimb,
@@ -258,8 +258,35 @@ describe('drawLimb', () => {
     expect(Math.max(...xs(behind.fills))).toBeCloseTo(sectionAt(tube, runs[0].to).screen[0], 6);
     expect(Math.min(...xs(front.fills))).toBeCloseTo(flipX, 6);
     expect(Math.max(...xs(front.fills))).toBeCloseTo(500, 6);
-    // The behind run reaches one section under the front one, so no seam shows.
+    // The behind run reaches under the front one's tapered end, so no seam shows.
     expect(Math.max(...xs(behind.fills))).toBeGreaterThan(flipX);
+  });
+
+  it('narrows a front run to nothing where it is cut at a flip, and is the uncut limb CUT_TAPER sections on', () => {
+    const width = (front: boolean[] | null) => {
+      const layer = recorder();
+      const tube = buildTube(straight(2, 100, 500, 300, front ? (i) => front[i] : undefined), 18);
+      drawLimb(recorder().ctx, layer.ctx, tube, OPTS);
+      const { lo, hi } = edges(strips(layer.fills[0])[0]); // the line: the outline's full width
+      return { tube, at: lo.map((p, k): [number, number] => [p[0], Math.hypot(p[0] - hi[k][0], p[1] - hi[k][1])]) };
+    };
+    const cut = width(Array.from({ length: 32 }, (_, i) => i >= 16));
+    const whole = width(null);
+    const from = chunks(cut.tube)[1].from;
+    const clear = sectionAt(cut.tube, from + CUT_TAPER).screen[0];
+    const widest = Math.max(...whole.at.map(([, w]) => w));
+    expect(cut.at[0][1]).toBeLessThan(0.05 * widest); // the cut end: nothing left of it
+    for (let k = 1; k < cut.at.length && cut.at[k][0] <= clear; k++) expect(cut.at[k][1]).toBeGreaterThanOrEqual(cut.at[k - 1][1] - 1e-9);
+    let matched = 0;
+    for (const [x, w] of cut.at.filter(([x]) => x > clear + 1e-6)) {
+      const same = whole.at.find(([y]) => Math.abs(y - x) < 1e-6);
+      if (!same) continue;
+      expect(w).toBeCloseTo(same[1], 6);
+      matched++;
+    }
+    expect(matched).toBeGreaterThan(20);
+    // The root's and the tip's own ends are no cuts.
+    expect(whole.at[0][1]).toBeGreaterThan(0.5 * widest);
   });
 
   it('emits glow only where it can be seen: front sections, and behind ones off the person', () => {
@@ -420,6 +447,10 @@ describe('drawLimb', () => {
     expect(f.fills.slice(-3).map((x) => x.color)).toEqual([TONES.body, TONES.lit, TONES.core]);
   });
 
+  // Design 24.6 ms for the 4 tubes (§10's limb drawing line); today 10.0–11.0
+  // under the whole unit suite (its serial group, four runs, Nov 2). About
+  // 1.5 × the worst is under the design line, so the design line is the bound
+  // (decision 11).
   it('draws 4 hero-length limbs at 1080×608 in ≤ 25 ms (median of 10)', () => {
     const behind = createCanvas(1080, 608).getContext('2d');
     const front = createCanvas(1080, 608).getContext('2d');
@@ -436,6 +467,7 @@ describe('drawLimb', () => {
     };
     for (let i = 0; i < 3; i++) time(100 + i); // warm up
     const ms = Array.from({ length: 10 }, (_, i) => time(40 + i)).sort((a, b) => a - b);
+    console.log(`limbs: ${((ms[4] + ms[5]) / 2).toFixed(2)} ms for 4 hero-length limbs (median of 10, 1080×608)`);
     expect((ms[4] + ms[5]) / 2).toBeLessThanOrEqual(25);
   });
 });

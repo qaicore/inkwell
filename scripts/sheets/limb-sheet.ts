@@ -14,29 +14,44 @@
 //   7. the hero's four test limbs at 1080×608: over the clip's f22 under his
 //      cached person mask when --clip is given, otherwise over a plate with
 //      the lumas heroclip measured round them.
+// `motion` draws limb-motion.png instead (decisions 15, 17 and 18): the hero's
+// limbs as the impact scene's physics moves them, each limb's centreline on
+// every drawing of the spin, the coil and whip, the pin and the release as an
+// onion skin over the body they collide with (needs --clip and --drawings).
 // The synthetic rows are drawn at S 1080, the 1080p export's scale; the hero
 // row at S 608, the app's internal 1080×608. No glow (the compositor, WP10,
 // lays the emission down) and no arcs (WP4). Reads only local files: no
 // network, no paid calls.
-// Usage: node scripts/sheets/limb-sheet.ts --out <dir> [--drawings test-drawings.json] [--clip clip.mp4]
+// Usage: node scripts/sheets/limb-sheet.ts [motion] --out <dir> [--drawings test-drawings.json] [--clip clip.mp4] [--scale 0.5]
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createCanvas, loadImage, type Canvas, type SKRSContext2D } from '@napi-rs/canvas';
+import { frameMasks } from '../../src/app/pipeline.ts';
 import { nullSink, type HeldLimb, type Palette, type PulseSpan, type Tube, type Vec2 } from '../../src/impact/contracts.ts';
+import { momentsFromDrawings } from '../../src/impact/detect.ts';
 import { deltaE } from '../../src/impact/palette.ts';
+import { liftBodies, project, toCamera, TORSO, type Body3D, type Vec3 } from '../../src/lift/body.ts';
+import { dummyBodies } from '../../src/lift/collide.ts';
+import { animate3d, liftStroke } from '../../src/lift/lift.ts';
+import { bulgeSide, limbsFirst, strikeController } from '../../src/lift/strike.ts';
 import { buildTube, chunks, sectionAt, type Chunk } from '../../src/lift/tube.ts';
+import { checkedTurn, turnKeys } from '../../src/lift/turn.ts';
 import { resampleStroke } from '../../src/render/brush.ts';
 import { LIMB } from '../../src/render/brushes.ts';
 import { drawLimb, limbGrown, limbR0, limbTones, outlineClasses, outlineContrast, outlineLuma, plateLuma, type LimbOptions, type LimbTarget, type OutlineClass, type PlateLuma } from '../../src/render/limb.ts';
 import { celTones, luma709 } from '../../src/render/tones.ts';
 import { cachedFrames, masksFromCache, toFrameMask } from '../../src/sam/cache.ts';
+import { trackPoses } from '../../src/track/anchor.ts';
+import { goodStandIns, torsoBend } from '../../src/track/bend.ts';
+import { anchorTransform, toPixels, toTorso, torsoHeights } from '../../src/track/torso.ts';
 import type { Mask } from '../../src/track/tracking.ts';
+import { HAND_KEYS, internalSize, readDrawings, skeletonPoints, standInPoints, TURN_CHECK } from '../impact-render.ts';
 import { assertOutsideRepo, parseArgs } from '../lib/out-dir.ts';
 
-const USAGE = 'usage: node scripts/sheets/limb-sheet.ts --out <dir> [--drawings test-drawings.json] [--clip clip.mp4]';
+const USAGE = 'usage: node scripts/sheets/limb-sheet.ts [motion] --out <dir> [--drawings test-drawings.json] [--clip clip.mp4] [--scale 0.5]';
 const REPO = resolve(fileURLToPath(new URL('../..', import.meta.url)));
 const args = parseArgs(process.argv.slice(2));
 if (!args.out) throw new Error(USAGE);
@@ -608,19 +623,248 @@ function onPerson(mask: Mask, [x, y]: Vec2): boolean {
   return col >= 0 && row >= 0 && col < mask.width && row < mask.height && mask.alpha[row * mask.width + col] >= 128;
 }
 
+// ---- The motion sheet (decisions 15, 17 and 18) ------------------------------------------------
+
+// `motion`: how the hero's limbs move, as the impact scene moves them. The
+// rig is scene.ts's liftOf rebuilt from impact-render.ts's inputs: his cached
+// person masks (cut at the internal size: --scale's, else the app's 1080),
+// the stand-in pose (samples/hero/pose.json), the turn read from it and held
+// to the hand keys, the bend, his crash-test dummy (the capsules and the mask
+// scan), and the limbs-first strike on the contact, P and d that
+// momentsFromDrawings derives from the two drawings. No boil, so only the
+// motion shows. One cell per stretch: each limb's centreline on every drawing
+// in it, an onion skin coloured by time (blue first, red last; dashed where
+// its front flags put it behind him), over the body it collides with on the
+// stretch's middle frame: his person mask (grey), the egg and the capsules
+// (outlined), and P (a cross) round the strike.
+const STRETCHES: readonly (readonly [string, number, number])[] = [
+  ['the spin', 50, 74],
+  ['the coil and the whip', 68, 78],
+  ['the pin', 77, 92],
+  ['the release', 93, 130],
+];
+const MOTION_CELL = { width: 620, height: 700 };
+const MOTION_FIELD = 1080; // the app's internal long side (scene.ts's FIELD)
+
+// The convex hull of points (Andrew's monotone chain).
+function hull(points: readonly Vec2[]): Vec2[] {
+  const p = [...points].sort((u, v) => u[0] - v[0] || u[1] - v[1]);
+  const right = (o: Vec2, a: Vec2, b: Vec2) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]) <= 0;
+  const half = (list: readonly Vec2[]) => {
+    const out: Vec2[] = [];
+    for (const q of list) {
+      while (out.length >= 2 && right(out[out.length - 2], out[out.length - 1], q)) out.pop();
+      out.push(q);
+    }
+    return out.slice(0, -1);
+  };
+  return [...half(p), ...half([...p].reverse())];
+}
+
+// His torso egg's outline on screen: the hull of its surface, projected.
+function eggOutline(b: Body3D): Vec2[] {
+  const pts: Vec2[] = [];
+  for (let i = 0; i <= 16; i++) {
+    const v = (Math.PI * i) / 16;
+    for (let j = 0; j < 32; j++) {
+      const u = (2 * Math.PI * j) / 32;
+      const q: Vec3 = [TORSO.a * Math.sin(v) * Math.cos(u), TORSO.cy + TORSO.b * Math.cos(v), TORSO.c * Math.sin(v) * Math.sin(u)];
+      pts.push(project(b, toCamera(b, q)).xy);
+    }
+  }
+  return hull(pts);
+}
+
+async function motionRows(): Promise<{ rows: Row[]; notes: string[] }> {
+  if (!args.clip || !args.drawings) throw new Error(`the motion sheet needs --clip and --drawings\n${USAGE}`);
+  const [CW, CH, FPS] = [HERO.clipWidth, HERO.clipHeight, 30];
+  const cachePath = join(REPO, 'fixtures', 'probe', 'sam-person.json');
+  const json = JSON.parse(readFileSync(cachePath, 'utf8')) as { clipSha256: string };
+  if (createHash('sha256').update(readFileSync(args.clip)).digest('hex') !== json.clipSha256) throw new Error(`${cachePath} holds another clip's person masks`);
+  const n = cachedFrames(json);
+  const person = await masksFromCache(json, n);
+  const posePath = join(REPO, 'samples', 'hero', 'pose.json');
+  if (!existsSync(posePath)) throw new Error(`the motion sheet needs the stand-in pose at ${posePath}`);
+  const raw = JSON.parse(readFileSync(posePath, 'utf8')) as unknown[];
+  const stand = Array.from({ length: n }, (_, f) => standInPoints(raw[f]));
+  const skeleton = Array.from({ length: n }, (_, f) => skeletonPoints(raw[f]));
+  const drawings = readDrawings(JSON.parse(readFileSync(args.drawings, 'utf8')));
+  const drawn = drawings.start.frame;
+  // The contact, P, d and the seed, as impact-render derives them.
+  const moments = momentsFromDrawings({
+    limbs: drawings.start.strokes.map((s) => ({ id: s.id, points: s.points })),
+    f1: drawn,
+    cracks: drawings.end.strokes.map((s) => ({ id: s.id, points: s.points })),
+    fDrawn: drawings.end.frame,
+    masks: person,
+    S: Math.min(CW, CH),
+    seed: drawings.seed,
+  });
+  const I = moments.snap.frame;
+  const P: Vec2 = [moments.slam.xy[0], moments.slam.xy[1]];
+  const d: Vec2 = moments.slam.dir ? [moments.slam.dir[0], moments.slam.dir[1]] : [0, 1];
+  // The internal frame: the person masks are cut at its size, and the limb's
+  // root radius is the tube's R0 there, in clip px.
+  const { W, H } = internalSize(CW, CH, args.scale ? Math.round(Math.max(CW, CH) * args.scale) : MOTION_FIELD, 1);
+  const s = W / CW;
+  const radius = limbR0(Math.min(W, H)) / s;
+  const step = Math.max(CW / W, Math.max(CW, CH) / MOTION_FIELD);
+  const cut = new Map<number, Mask | null>();
+  const maskOn = (f: number): Mask | null => {
+    if (!cut.has(f)) {
+      const m = person[f];
+      cut.set(f, m ? toFrameMask(m, CW, CH, step) : null);
+    }
+    return cut.get(f) ?? null;
+  };
+  // The anchor track, the torso unit, the turn, the bend and the bodies, as liftOf has them.
+  const units = torsoHeights(frameMasks(person, CW, CH), CW, CH);
+  const unitNear = (f: number): number => {
+    for (let k = 0; k < units.length; k++) {
+      const u = units[f - k] ?? units[f + k];
+      if (u != null) return u;
+    }
+    return 0.25 * CH;
+  };
+  const b1 = stand[drawn];
+  const hips: Vec2 | null = drawings.start.hips ?? (b1 ? [(b1.x[13] + b1.x[14]) / 2, (b1.y[13] + b1.y[14]) / 2] : null);
+  const track = hips ? trackPoses(person, { frame: drawn, xy: hips }, FPS) : null;
+  if (!track || track.length === 0) throw new Error(`no anchor track from f${drawn}`);
+  const poses = Array.from({ length: n }, (_, f) => track[Math.min(f, track.length - 1)]);
+  const good = goodStandIns(stand, { mask: maskOn, width: CW, height: CH });
+  const read = turnKeys(undefined, stand, FPS, good);
+  const keys = read.from === 'pose' ? checkedTurn(read.keys, HAND_KEYS, TURN_CHECK.from, TURN_CHECK.to, TURN_CHECK.maxDeg).keys : read.keys;
+  const unit0 = unitNear(drawn);
+  const bodies = liftBodies(poses, unit0, drawn, keys, torsoBend(stand, drawn, FPS, good));
+  // The limbs as the app stores them (32 points by arc length, through torso space), lifted on the drawn frame.
+  const at = anchorTransform(poses[drawn], unit0);
+  const px = new Map<number, Vec2[]>();
+  const lifted = drawings.start.strokes.map((l) => {
+    const even = resampleStroke(l.points.map((p, i): [number, number, number] => [p[0], p[1], l.pressure[i]]));
+    const points = even.points.map((p) => toPixels(at, toTorso(at, [p[0], p[1]])));
+    px.set(l.id, points);
+    return liftStroke(l.id, points, [...even.pressure], bodies[drawn], 'strand', l.stiffness, 1);
+  });
+  const dummies = dummyBodies({ bodies, joints: skeleton, mask: maskOn, width: CW, height: CH });
+  const ids = moments.slam.limbs ?? lifted.map((l) => l.id);
+  const control = strikeController({
+    ...limbsFirst(I),
+    P,
+    d,
+    limbs: ids.map((id) => ({ id, side: bulgeSide(px.get(id) ?? []) })),
+    unit: bodies[I].unit,
+    seed: moments.slam.seed ?? I,
+    dps: 12,
+    dummies,
+    radius,
+  });
+  const frames = animate3d({ strokes: lifted, bodies, frames: n, dps: 12, boil: { maxPx: 0, cycle: 3 }, width: CW, emerge: new Map(lifted.map((l) => [l.id, drawn])), control, slam: { I, posters: true }, dummies, radius });
+
+  const cells = STRETCHES.map(([name, a, b]) => {
+    const mid = Math.round((a + b) / 2);
+    const body = dummies[mid].body;
+    const shown = Array.from({ length: b - a + 1 }, (_, k) => a + k).filter((f) => f === a || frames[f].capture !== frames[f - 1].capture);
+    const egg = eggOutline(body);
+    const capsules = dummies[mid].capsules.map((c) => ({ A: project(body, c.a), B: project(body, c.b), r: c.r }));
+    const strike = a <= I + 9 && b >= I - 8;
+    // The box round every drawn point of the stretch and his middle body, fitted to the cell.
+    const all: Vec2[] = [...egg, ...capsules.flatMap((c) => [c.A.xy, c.B.xy]), ...shown.flatMap((f) => frames[f].placed.flatMap((p) => p.points)), ...(strike ? [P] : [])];
+    const [x0, x1] = [Math.min(...all.map((q) => q[0])) - 40, Math.max(...all.map((q) => q[0])) + 40];
+    const [y0, y1] = [Math.min(...all.map((q) => q[1])) - 40, Math.max(...all.map((q) => q[1])) + 40];
+    const K = Math.min(MOTION_CELL.width / (x1 - x0), MOTION_CELL.height / (y1 - y0));
+    const ox = (MOTION_CELL.width - K * (x1 - x0)) / 2 - K * x0;
+    const oy = (MOTION_CELL.height - K * (y1 - y0)) / 2 - K * y0;
+    const to = (q: Vec2): Vec2 => [ox + K * q[0], oy + K * q[1]];
+    const label = [`${name}, f${a}–${b}: ${shown.length} drawings, blue first, red last`, `his mask, the egg and the capsules on f${mid}; ${K.toFixed(2)}× clip px`];
+    return cell(
+      MOTION_CELL.width,
+      MOTION_CELL.height,
+      label,
+      (ctx) => {
+        // His person mask, grey.
+        const m = maskOn(mid);
+        if (m) {
+          const layer = createCanvas(m.width, m.height);
+          const lc = layer.getContext('2d');
+          const img = lc.createImageData(m.width, m.height);
+          for (let i = 0; i < m.alpha.length; i++) [img.data[4 * i], img.data[4 * i + 1], img.data[4 * i + 2], img.data[4 * i + 3]] = [125, 125, 135, m.alpha[i] >= 128 ? 110 : 0];
+          lc.putImageData(img, 0, 0);
+          ctx.drawImage(layer, ox, oy, K * CW, K * CH);
+        }
+        // The egg and the capsules, outlined.
+        ctx.strokeStyle = 'rgba(235, 235, 240, 0.6)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        egg.forEach((q, i) => (i === 0 ? ctx.moveTo(...to(q)) : ctx.lineTo(...to(q))));
+        ctx.closePath();
+        ctx.stroke();
+        for (const c of capsules) {
+          const [pa, pb] = [to(c.A.xy), to(c.B.xy)];
+          const [ra, rb] = [K * c.r * c.A.near, K * c.r * c.B.near];
+          const ang = Math.atan2(pb[1] - pa[1], pb[0] - pa[0]);
+          ctx.beginPath();
+          ctx.arc(pb[0], pb[1], rb, ang - Math.PI / 2, ang + Math.PI / 2);
+          ctx.arc(pa[0], pa[1], ra, ang + Math.PI / 2, ang + (3 * Math.PI) / 2);
+          ctx.closePath();
+          ctx.stroke();
+        }
+        // The onion skin: every limb on every drawing, coloured by time, dashed where behind him.
+        shown.forEach((f, k) => {
+          const hue = 240 - (240 * k) / Math.max(1, shown.length - 1);
+          for (const p of frames[f].placed) {
+            ctx.strokeStyle = `hsl(${hue}, 90%, 60%)`;
+            ctx.lineWidth = 1.6;
+            for (let j = 0; j + 1 < p.points.length; ) {
+              const front = p.front[j] && p.front[j + 1];
+              ctx.setLineDash(front ? [] : [4, 3]);
+              ctx.beginPath();
+              ctx.moveTo(...to(p.points[j]));
+              while (j + 1 < p.points.length && (p.front[j] && p.front[j + 1]) === front) ctx.lineTo(...to(p.points[++j]));
+              ctx.stroke();
+            }
+            ctx.setLineDash([]);
+            const tip = to(p.points[p.points.length - 1]);
+            ctx.fillStyle = `hsl(${hue}, 90%, 60%)`;
+            ctx.fillRect(tip[0] - 2.5, tip[1] - 2.5, 5, 5);
+          }
+        });
+        if (strike) cross(ctx, to(P), '#ffffff');
+      },
+      '#16141a',
+    );
+  });
+  const scanned = dummies.filter((q) => q.scan).length;
+  const turn = read.from === 'pose' ? 'read from the pose and held to the hand keys over f50–74' : `from ${read.from}`;
+  const notes = [
+    `The turn ${turn}; contact I f${I}, P (${P[0].toFixed(1)}, ${P[1].toFixed(1)}), d (${d[0].toFixed(3)}, ${d[1].toFixed(3)}); the limbs drawn on f${drawn}.`,
+    `Internal frame ${W}×${H}: person masks cut every ${step.toFixed(2)} clip px, ${scanned} of ${n} frames scanned; root radius ${radius.toFixed(1)} clip px.`,
+  ];
+  return { rows: [{ title: 'The hero’s limbs as the scene moves them: onion skins over the body they collide with', cells }], notes };
+}
+
 // ---- The sheet ----------------------------------------------------------------------------------
 
-const hero = await heroRow();
-const rows: Row[] = [tonesRow(), bandsRow(), growthRow(), detailsRow(), occlusionRow(), outlineRow(), hero.row];
+const MOTION = args.positional[0] === 'motion';
+if (args.positional.length > (MOTION ? 1 : 0)) throw new Error(`unexpected ${args.positional.join(' ')}\n${USAGE}`);
+const motion = MOTION ? await motionRows() : null;
+const hero = motion ? null : await heroRow();
+const rows: Row[] = motion ? motion.rows : [tonesRow(), bandsRow(), growthRow(), detailsRow(), occlusionRow(), outlineRow(), hero!.row];
 const PAD = 16;
 const GAP = 8;
 const TITLE = 34;
 const LINE = 18;
-const BANNER = [
-  'Limb brush (impact WP3, design §2): lift/tube.ts, render/limb.ts, render/tones.ts. Test scenes and the stand-in test drawings, not Qai’s.',
-  'Synthetic rows at S 1080 (the 1080p export’s scale, 1:1); the hero row at S 608 (the app’s 1080×608). No glow (WP10’s compositor) and no arcs (WP4).',
-  `Palette p0 ${PALETTE[0]}, p1 ${PALETTE[1]}, p2 ${PALETTE[2]}. Limb radius R0 = ${LIMB.radius} S × size/28; outline ${LIMB.linePx} S; bands ${LIMB.bands.join(' / ')}.`,
-];
+const BANNER = motion
+  ? [
+      'Limb motion (decisions 15, 17 and 18): lift/lift.ts, lift/strand3d.ts, lift/strike.ts and lift/collide.ts on the hero’s stand-in drawings, not Qai’s.',
+      'Each limb’s drawn centreline on every drawing of a stretch, blue first and red last, over his person mask (grey), the egg and the capsules.',
+      ...motion.notes,
+    ]
+  : [
+      'Limb brush (impact WP3, design §2): lift/tube.ts, render/limb.ts, render/tones.ts. Test scenes and the stand-in test drawings, not Qai’s.',
+      'Synthetic rows at S 1080 (the 1080p export’s scale, 1:1); the hero row at S 608 (the app’s 1080×608). No glow (WP10’s compositor) and no arcs (WP4).',
+      `Palette p0 ${PALETTE[0]}, p1 ${PALETTE[1]}, p2 ${PALETTE[2]}. Limb radius R0 = ${LIMB.radius} S × size/28; outline ${LIMB.linePx} S; bands ${LIMB.bands.join(' / ')}.`,
+    ];
 const rowWidth = (r: Row) => r.cells.reduce((w, c) => w + c.canvas.width, 0) + GAP * (r.cells.length - 1);
 const rowHeight = (r: Row) => TITLE + Math.max(...r.cells.map((c) => c.canvas.height)) + 8 + LINE * Math.max(...r.cells.map((c) => c.label.length)) + PAD;
 const width = Math.max(...rows.map(rowWidth)) + 2 * PAD;
@@ -644,6 +888,7 @@ for (const row of rows) {
   y += rowHeight(row);
 }
 mkdirSync(outDir, { recursive: true });
-const file = join(outDir, 'limb-sheet.png');
+const file = join(outDir, motion ? 'limb-motion.png' : 'limb-sheet.png');
 writeFileSync(file, sheet.toBuffer('image/png'));
-process.stdout.write(`limb sheet: ${file} (${sheet.width}×${sheet.height})\n4 hero limbs at 1080×608: ${hero.ms.toFixed(1)} ms (median of 10)\n${hero.classes.join('\n')}\n`);
+if (motion) process.stdout.write(`limb motion: ${file} (${sheet.width}×${sheet.height})\n${motion.notes.join('\n')}\n`);
+else process.stdout.write(`limb sheet: ${file} (${sheet.width}×${sheet.height})\n4 hero limbs at 1080×608: ${hero!.ms.toFixed(1)} ms (median of 10)\n${hero!.classes.join('\n')}\n`);

@@ -5,7 +5,7 @@
 import { createHash } from 'node:crypto';
 import { createCanvas } from '@napi-rs/canvas';
 import { describe, expect, it } from 'vitest';
-import { drawingStart, jEnd, kr, limbDrawingAt } from '../../src/impact/clock.ts';
+import { GROUP_HOLD, drawingStart, jEnd, kr, limbDrawingAt, massGroup } from '../../src/impact/clock.ts';
 import { posterLayout } from '../../src/impact/frames/layout.ts';
 import type { Matrix } from '../../src/render/limb.ts';
 import { limbsFirst } from '../../src/lift/strike.ts';
@@ -111,9 +111,11 @@ describe('the limbs', () => {
 });
 
 describe('the clocks', () => {
-  it('changes the mass layers only on 2s drawings, and on j 9', () => {
+  it('changes the mass layers only on 2s drawings, on j 9, and where a group has held its 4 frames', () => {
     const s = scene();
     const start = (c: number) => drawingStart(drawingIndex(c, DPS), DPS) === c;
+    // The hold cap (clock.ts GROUP_HOLD): a group that has held 4 frames gives way mid-drawing.
+    const capped = (c: number) => massGroup(c, I, DPS) !== massGroup(c - 1, I, DPS) && massGroup(c - GROUP_HOLD, I, DPS) === massGroup(c - 1, I, DPS);
     const changed: number[] = [];
     let prev = s.frameLayers(I + 9);
     for (let o = I + 10; o <= I + 45; o++) {
@@ -124,7 +126,7 @@ describe('the clocks', () => {
         if (!a || !b || a.key === b.key) continue;
         changed.push(o);
         // Debris chunks swap on the frame after a drawing starts (chunkDrawing).
-        const ok = start(o) || (name === 'debris' && start(o - 1));
+        const ok = start(o) || capped(o) || (name === 'debris' && (start(o - 1) || capped(o - 1)));
         expect(ok, `${name} changed on f${o}`).toBe(true);
       }
       prev = L;
@@ -285,6 +287,10 @@ describe('render-ahead', () => {
     const s = sceneOf();
     const layer = s.runJob(`limb:${s.sceneId}:100`);
     expect(layer.parts.map((p) => p.name)).toEqual(['limbsBehind', 'limbsFront']);
-    expect(layer.parts[1].glow?.map((g) => g.id)).toEqual([null, ...LIMB_IDS.filter((id) => layer.parts[1].glow!.some((g) => g.id === id))]);
+    // The steady light first, then each limb's arcs once, in the tubes' depth order (far first).
+    const ids = layer.parts[1].glow!.map((g) => g.id);
+    expect(ids[0]).toBeNull();
+    expect([...ids.slice(1)].sort()).toEqual(LIMB_IDS.filter((id) => ids.includes(id)));
+    expect(ids.slice(1)).toEqual(s.tubesAt(100).map((t) => t.id).filter((id) => ids.includes(id)));
   });
 });

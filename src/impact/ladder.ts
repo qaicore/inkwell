@@ -16,12 +16,18 @@
 //      after I+9.
 //   5. Polarity lock: every poster light (frames/gentle.ts).
 //   6. Glint only: G6's IF4 glint held 8 frames, with no washes, no
-//      brightenings, no veil and no A5–6 flash.
+//      brightenings, no veil and no A5–6 flash; the masses at 0.6.
 //   7. No flash elements: no posters (the frames.count 0 plan), and still no
-//      washes, veil or flash.
+//      washes, veil or flash; no lightning, and the masses at 0.3.
 // Steps 6 and 7 keep the freeze of step 4, since the steps add up: under them
 // the clip still holds at frame I for output I..I+34, under the glint and
 // after it, and the export stays 26 frames longer.
+// The masses (the burst, the cluster and the dust) stay opaque through step
+// 5: Reduce flashing lays them at the luminance of what's under them
+// (scene.ts), so they show the destruction without moving a field's light,
+// and only the last two steps fade them as well (judge round 2: fixed at 0.3,
+// the destruction was gone). The debris and the sparks keep scene.ts's own
+// gentle opacity.
 import type { FlashReport } from '../export/flash.ts';
 import type { WashMode } from './aftermath/washes.ts';
 import { FREEZE_EXTRA, FREEZE_HOLD, POSTER_COUNT, freezeMap } from './clock.ts';
@@ -48,9 +54,12 @@ export const LADDER: readonly LadderStep[] = [
   { step: 3, name: 'strike-calm', what: 'strike calm: beams ×0.7–1.0, the S6 swell 1.0·w_b, the plate lift at 1 through the strike' },
   { step: 4, name: 'freeze', what: 'the slow replay as a freeze: each poster holds 5 frames over the held clip, 26 frames longer' },
   { step: 5, name: 'polarity-lock', what: 'polarity lock: every poster light' },
-  { step: 6, name: 'glint', what: "glint only: G6's IF4 held 8 frames, no washes, brightenings, veil or A5–6 flash" },
-  { step: 7, name: 'no-flash', what: 'no flash elements: no posters, no washes, no veil, no flash' },
+  { step: 6, name: 'glint', what: "glint only: G6's IF4 held 8 frames, no washes, brightenings, veil or A5–6 flash; the masses at 0.6" },
+  { step: 7, name: 'no-flash', what: 'no flash elements: no posters, no washes, no veil, no flash, no lightning; the masses at 0.3' },
 ];
+
+// The masses' opacity under Reduce flashing at each step, 0..7.
+export const MASS_ALPHA: readonly number[] = [1, 1, 1, 1, 1, 1, 0.6, 0.3];
 
 // What one step asks of the layers: every step up to it, at once.
 export interface Degrade {
@@ -60,6 +69,7 @@ export interface Degrade {
   freeze: boolean; // step 4: the clip holds at I under the posters (freezeMap)
   noFlash: boolean; // step 6: no washes, brightenings, veil, A5–6 flash or charge white-out
   posters: 'seven' | 'glint' | 'none'; // what the poster plan shows (posterPlan with ladder = step); 'none' from step 7
+  masses: number; // the masses' opacity (MASS_ALPHA): 1 under full flashing
 }
 
 export function degradeAt(step: number, flash: 'safe' | 'full'): Degrade {
@@ -72,6 +82,7 @@ export function degradeAt(step: number, flash: 'safe' | 'full'): Degrade {
     freeze: s >= FREEZE_STEP,
     noFlash: s >= GLINT_STEP,
     posters: s >= NO_POSTERS_STEP ? 'none' : s >= GLINT_STEP ? 'glint' : 'seven',
+    masses: MASS_ALPHA[s],
   };
 }
 

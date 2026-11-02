@@ -1,11 +1,19 @@
 // The impact's layer stack (impact design §7), bottom to top:
-//    1 plate: the video, graded        7 limbsBehind, with the far arcs
-//    2 aura: the flame aura            8 person: the cutout, graded at 0.5
-//    3 cracks                          9 limbsFront, with the near arcs
-//    4 fire, and the cluster          10 fx: front FX and the dust veil, face-cut from j 9
-//    5 dust: the band and wall, over  11 flash: the A5–6 flash, with its person-shaped hole
-//      the cluster's base             12 glow: far by 'screen' and a tint, near by 'lighter'
-//    6 floods
+//    1 plate: the video, graded        8 person: the cutout, graded at 0.5
+//    2 aura: the flame aura            9 limbsFront, with the near arcs
+//    3 cracks                         10 masses: the burst, then the cluster,
+//    4 fire  } masses behind him:        then the dust over the cluster's base
+//    5 dust  } none since round 3     11 fx: the thin front FX and the dust
+//    6 floods, each with its wash's      veil, face-cut from j 9
+//      glow                           12 flash: the A5–6 flash, with its person-shaped hole
+//    7 limbsBehind, with the far arcs 13 glow: far by 'screen' and a tint, near by 'lighter'
+// The masses stand in front of him uncut (judge round 2: he crouches over P,
+// and a cut left holes in the smoke); fire and dust stay empty for a layer
+// that ever has to go behind him again. The glow lights only what can be
+// seen (scene.ts): a limb part behind him glows off his mask only, a flood's
+// wash glows in 6, and from j 9 the limbs' glow goes in 9, under the masses
+// that stand in front of them, so the smoke keeps its colours; the strike's
+// and the lightning's glow, and the limbs' before j 9, go in 13.
 // The camera applies to all of it, on top of whatever transform the canvas
 // already has (the preview's view). On a poster frame the poster replaces the
 // whole stack and ignores the camera.
@@ -30,12 +38,12 @@
 // canvas first, the face is cut out of that ('destination-out', with the mask
 // at the frame's size, frameMask), and the rest goes on. A layer in fx that
 // blends with the frame (anything but source-over) blends with the fx canvas
-// instead.
+// instead. Only fx is cut: the masses slot never is.
 import type { FrameLayers, LayerDraw, StackSlot } from '../impact/contracts.ts';
 import type { Mask } from '../track/tracking.ts';
 import type { BrushTarget, MakeScratch, Pixels, Scratch } from './glow.ts';
 
-export const STACK_ORDER: readonly StackSlot[] = ['plate', 'aura', 'cracks', 'fire', 'dust', 'floods', 'limbsBehind', 'person', 'limbsFront', 'fx', 'flash', 'glow'];
+export const STACK_ORDER: readonly StackSlot[] = ['plate', 'aura', 'cracks', 'fire', 'dust', 'floods', 'limbsBehind', 'person', 'limbsFront', 'masses', 'fx', 'flash', 'glow'];
 export const CACHE_LAYERS = 6;
 const BOX_PAD = 2; // px round a bitmap's content: a smoothed draw reads one past its edge
 
@@ -112,7 +120,7 @@ export function createLayerCache(make: MakeScratch, width: number, height: numbe
 }
 
 // Draws one output frame's layers onto ctx: the poster alone when there is
-// one, or else the 12 slots in order under the camera.
+// one, or else the 13 slots in order under the camera.
 export function drawStack(ctx: BrushTarget, layers: FrameLayers, camera: Affine | null, cache: LayerCache) {
   const t = ctx as StackTarget;
   const state = cache as CacheState;

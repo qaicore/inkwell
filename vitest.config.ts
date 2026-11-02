@@ -8,7 +8,12 @@ import { defineConfig } from 'vitest/config';
 // with performance.now. While every other file runs on all cores at once,
 // those timings rise 2-3x and fail on load alone, so these files run one at
 // a time in a second group, after the rest is done: two projects ordered by
-// sequence.groupOrder. Their thresholds are as their packages wrote them.
+// sequence.groupOrder. A few small timed checks stay in the first group
+// (stack, light, grade and flash) and measure a batch over its bound again.
+// Decision 11: every timed bound, in either group, is about 1.5 × the worst
+// it measured under this whole suite (npm run check:fast, Nov 2), or the
+// design's own line where that is higher, and each says "design X; today Y"
+// beside it. impact-determinism's long test sets its own timeout.
 const TIMED = [
   'tests/unit/limb-render.test.ts',
   'tests/unit/arcs3d.test.ts',

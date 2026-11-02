@@ -24,13 +24,30 @@
 //     impact stroke. From j 9 the masses (WP8) and the energy (WP9): the
 //     lightning crawls along the cluster's outline, the cracks, his mask's
 //     edge within 0.3 U of P and the limbs.
+//   - The masses (the burst, then the cluster, with the dust over its base)
+//     stand in front of him, uncut, in both flash modes (judge round 2: the
+//     face cut left holes in the smoke). Their decay is the cluster's own
+//     erosion (aftermath/), so they aren't faded again here, but for its
+//     last frames (fire.ts FADE_FRAMES).
 //   - Finishing: the camera (WP7), the grade (the strike calm keeps its lift
-//     at 1), the glow, and from j 9 the face cut on the front FX: his face
-//     mask dilated 0.03 S with a 0.02 S feather, or the top 20 % of his box
-//     when there's no face mask.
+//     at 1), the glow, and from j 9 the face cut on the thin front FX: his
+//     face mask dilated 0.03 S, hard-edged; nothing is cut on a frame with no
+//     face mask.
+//   - The glow (decision 8's look) lights only what can be seen: a limb's
+//     arcs, pulses and pops behind him glow off his mask only, as the limb
+//     itself does (render/limb.ts), and while the burst shows (A0–2) nothing
+//     of the limbs glows within 0.6 U of P. Over j 9–31 the limbs' arcs glow
+//     at most half as bright as the lightning's ribbons. The masses keep their
+//     own colours: each flood's wash glows right over the flood, under him,
+//     and from j 9 the limbs' glow goes on under the masses; only the
+//     lightning's glow lies over them, as its ribbons do.
 //   - The flash ladder (ladder.ts) only runs under Reduce flashing (decision
 //     5): opts.degrade picks the step, and degraded(step) is the same scene at
-//     another step, sharing the physics and the drawn parts.
+//     another step, sharing the physics and the drawn parts. Reduce flashing
+//     lays the burst, the cluster and the dust opaque, at the luminance of
+//     what's under them averaged over 0.03 S cells (lumaPart, lumaBlit):
+//     their hue over it with the 'color' blend, their ink and shadows as a
+//     slight 'soft-light', at the ladder's mass opacity.
 // Render-ahead (design §10). Each 2s layer is drawn once per drawing into a
 // canvas the size of its box, a part, kept by what it shows: the two limb
 // layers (their glow kept as recorded calls), each mass, each poster (its
@@ -50,16 +67,17 @@ import type { Mask, PointSet, Pose } from '../track/tracking.ts';
 import { goodStandIns, torsoBend } from '../track/bend.ts';
 import { anchorTransform, toPixels, type TorsoTransform } from '../track/torso.ts';
 import { liftBodies, type Body3D } from '../lift/body.ts';
+import { dummyBodies } from '../lift/collide.ts';
 import { animate3d, liftStroke, type Frame3D, type Lifted } from '../lift/lift.ts';
 import { bulgeSide, limbsFirst, strikeController } from '../lift/strike.ts';
-import { buildTube, silhouette } from '../lift/tube.ts';
+import { buildTube, onMask, silhouette } from '../lift/tube.ts';
 import { checkedTurn, turnKeys, type TurnSource } from '../lift/turn.ts';
 import type { BoilParams } from '../motion/boil.ts';
 import { drawingIndex, EXAMPLE_TIMING, frameAt } from '../motion/timing.ts';
 import { arcFlicker, arcPhase, arcTones, drawArcs, emitArcs, nativePath, sectionAt, sheathArcs, type ArcRun, type ArcTarget, type LinePath } from '../render/arcs3d.ts';
 import { brushSettings, LIMB } from '../render/brushes.ts';
 import { renderFrame, type ComposeDeps, type ImpactFrame, type Scene } from '../render/compose.ts';
-import type { BrushTarget, MakeScratch } from '../render/glow.ts';
+import { scratch, type BrushTarget, type MakeScratch, type Pixels, type Scratch } from '../render/glow.ts';
 import { gradeAt, type Grade } from '../render/grade.ts';
 import { compositeGlows, createGlow, type Glow } from '../render/light.ts';
 import { drawLimb, keySwing, limbR0, limbTones, outlineClasses, pinnedSimilarity, type LimbTarget, type Matrix, type PlateLuma } from '../render/limb.ts';
@@ -90,7 +108,7 @@ import { posterLayout, type PosterLayout } from './frames/layout.ts';
 
 const FPS = 30;
 const FIELD = 1080; // the internal frame's long side (design §10)
-const CUT = { reach: 0.03, feather: 0.02, head: 0.2, quarter: 4 } as const; // × S; the fallback's share of his box; buffer px per frame px
+const CUT = { reach: 0.03, quarter: 4 } as const; // × S; buffer px per frame px
 const EDGE_REACH = 0.3; // × U round P: the mask edge the lightning crawls along
 const EDGE_CROP = 1.2; // the crop traced for it, × that reach
 const SIGMA_REACH = 15; // frames either side of I to find his mask for σ
@@ -115,20 +133,33 @@ const GENTLE_LIMB_GLOW = 0.25; // the limbs' own steady glow (the root bursts an
 // steady), its glow at this share and its ribbons at GENTLE_BOLT.
 const GENTLE_BOLT_GLOW = 0.35;
 const GENTLE_BOLT = 0.6; // the ribbons' own opacity
-// ... and the 2s masses lie at these opacities, the cap on their swing: the
-// smoke cluster, the dust, the debris and the sparks at GENTLE_MASS, the fire's
-// flare at GENTLE_FIRE. Over a mid-grey plate the smoke's darkest line then
-// moves L by about 0.10, and what a field gathers after the return at j 9 (the
-// flare leaving, the smoke standing up, the limbs settling) stays under 25 %
-// until the washes. The grade holds still from the return (grade.ts, still)
-// and the floods have no dark edge (washes.ts), so neither tips it late.
-const GENTLE_MASS = 0.3;
-const GENTLE_FIRE = 0.6;
-// The ladder's last step (no flash elements) also stills what is left: no
-// lightning, and every mass, the fire and the sparks at this opacity.
-const STILL_MASS = 0.25;
+// ... and the burst, the cluster and the dust stand opaque at the plate's
+// luminance (judge round 2: faded to 0.3 and 0.6 they hid the destruction).
+// Each covers what's under it with that averaged over LUMA_CELL cells, so no
+// detail of the plate shows through, and shows its hue and chroma there by
+// the 'color' blend, which keeps the luma (W3C compositing's SetLum), and its
+// ink and shadows as a 'soft-light' shade under that, darkest on its ink. On
+// a flat plate of any grey, L then moves by under 0.1 (lumaBlit): a soft
+// light darkens the midtones most and black and white not at all, where a
+// multiply darkened a light plate by as much as 0.2; and a saturated yellow,
+// which the 'color' blend lifts by up to 0.15 at a light plate's luma (SetLum
+// keeps the luma in gamma, where L is linear), is shaded down by that lift
+// beforehand (lumaPart's pull). Their reds are raised first so the blend's
+// result keeps G ≥ 0.55·R on 8 bits (G4, see lumaPart), so no red field
+// turns. The grade holds still from the return (grade.ts, still) and the
+// floods have no dark edge (washes.ts), so neither tips a field late. The
+// ladder's mass opacity (Degrade.masses) fades them only at its last two
+// steps. The debris and the sparks, thin and moving every frame, stay at
+// GENTLE_FX, and at STILL_FX on the ladder's last step.
+const LUMA_SHADE = 0.1; // the shade's grey on the darkest ink: 0.5 − this (0.5 leaves the plate as it is)
+const LUMA_LIFT = 0.06; // the 'color' blend's lift of L a tint keeps unshaded (see liftPull)
+const LUMA_CELL = 0.03; // × S: the plate under a mass is averaged over cells this wide (his shirt's print is gone at that)
+const GENTLE_FX = 0.3;
+const STILL_FX = 0.25;
+const LUMA_RED = 0.55; // G4: G at least this × R
 const QUIET: Pulses = { spans: [], pops: [] };
-const FIRE_CLEAR = 0.6; // U round P: no arc glow there while the burst shows
+const FIRE_CLEAR = 0.6; // U round P: none of the limbs glows there while the burst shows
+const ARC_AFTER = 0.5; // over j 9–31 the limbs' arcs glow at most this × the ribbons (judge round 2)
 
 // ---- Types ---------------------------------------------------------------------------
 
@@ -141,6 +172,7 @@ export interface ImpactClip {
   faceMask(f: number): Mask | null;
   poses: readonly Pose[]; // the anchor track, a pose per frame: where the strokes' torso space sits (track/tracking.ts)
   bodies?: readonly (PointSet | null)[] | null; // the stand-in's landmarks, for the turn and the bend; missing = none
+  skeleton?: readonly (PointSet | null)[] | null; // the stand-in's 33 landmarks, for the limbs' crash-test dummy (lift/collide.ts); missing = bodies' (head and neck alone)
   units?: readonly (number | null)[] | null; // his torso height per frame, clip px (torsoHeights); missing = 0.25 × the clip's height
   luma?(f: number): PlateLuma | null; // the plate's luma on frame f, clip px, for the limbs' outline classes; missing = the line tone all along
   audio?: unknown; // carried for the export: the freeze adds 26 frames of silence after I + 9 (WP13)
@@ -150,7 +182,7 @@ export interface SceneOptions {
   tier: Tier;
   make: MakeScratch;
   degrade?: number; // 0..7: the flash ladder's step; it only applies under Reduce flashing
-  cuts?: number; // 0..7: the cut order's steps taken (tiers.ts); missing = tierCuts(tier)
+  cuts?: number; // 0..6: the cut order's steps taken (tiers.ts); missing = tierCuts(tier)
   size?: number; // the internal frame's long side before the resolution cut; missing = 1080
   newPath?: (() => LinePath) | null; // drawArcs' path maker; missing = Path2D where there is one
   boil?: BoilParams; // missing = EXAMPLE_TIMING.boil
@@ -183,7 +215,7 @@ export interface SceneLayers extends FrameLayers {
   limbs: LimbView | null;
   posterSpec: PosterSpec | null;
   parts: ScenePart[]; // every layer, in the order the slots are filled
-  gains: Record<string, number>; // the glows' gains: 'arc:<id>', 'flood', 'lightning', 'charge'
+  gains: Record<string, number>; // the glows' gains: 'arc:<id>', 'flood', 'lightning', 'ribbons' (the ribbons' glow, boost and all), 'charge'
 }
 
 export interface TurnRead {
@@ -265,7 +297,6 @@ interface Rig {
   tubes: Map<number, Tube[]>;
   edges: WeakMap<Mask, Vec2[][]>;
   faces: WeakMap<Mask, Mask>;
-  heads: WeakMap<Mask, Mask>;
   scenes: Map<number, ImpactScene>;
 }
 
@@ -327,7 +358,6 @@ export function createImpactScene(effect: Effect, clip: ImpactClip, opts: SceneO
     tubes: new Map(),
     edges: new WeakMap(),
     faces: new WeakMap(),
-    heads: new WeakMap(),
     scenes: new Map(),
   };
   rig.base = slam && I !== null ? slamContext(rig, slam, I, crackIds) : null;
@@ -462,6 +492,9 @@ function liftOf(rig: Rig): Lift {
       return liftStroke(st.id, points, [...st.views.front.pressure], bodies[f], st.kind, st.stiffness, st.wobble);
     });
     const slamIds = limbStrokes.filter((st) => rig.limbs.get(st.id)?.slam).map((st) => st.id);
+    // His body, for the limbs to collide with and go round (decision 17), and their root radius in clip px.
+    const dummies = dummyBodies({ bodies, joints: clip.skeleton ?? stand, mask: (f) => clip.personMask(f), width: clip.width, height: clip.height });
+    const radius = rig.R0 / rig.s;
     const I = rig.I;
     const control =
       I !== null && rig.slam && rig.base && slamIds.length > 0 && I >= 0 && I < n
@@ -473,6 +506,8 @@ function liftOf(rig: Rig): Lift {
             unit: bodies[I].unit,
             seed: rig.base.seed,
             dps: rig.dps,
+            dummies,
+            radius,
           })
         : undefined;
     frames = animate3d({
@@ -485,6 +520,8 @@ function liftOf(rig: Rig): Lift {
       emerge: new Map(limbStrokes.flatMap((st) => (rig.emerge.has(st.id) ? [[st.id, rig.emerge.get(st.id) as number] as const] : []))),
       control,
       slam: I !== null && rig.base ? { I, posters: rig.base.posters } : undefined,
+      dummies,
+      radius,
     });
   }
   const start: number[] = [];
@@ -625,31 +662,225 @@ function blit(part: DrawnPart, alpha = 1, T: Matrix = IDENTITY): LayerDraw {
   };
 }
 
+// Reduce flashing's mass part: the mass painted as usual into a canvas twice
+// its box's height, then its tint on top and its shade under it. The tint is
+// the mass with its reds raised so that G − B ≥ 0.55·(R − B) (G4): the
+// 'color' blend shifts every channel alike and, where it clips, scales them
+// about the luma alike, so that ratio survives it, and the result keeps
+// G ≥ 0.55·R. The shade is a grey with the mass's alpha for a 'soft-light':
+// 0.5 (no change) where the mass is light, 0.5 − LUMA_SHADE on its darkest
+// ink, and darker by the tint's liftPull. (A 'screen' to lift the burst's
+// body on a dark plate went over 0.1 L on a mid one.) Drawn once a drawing,
+// so the per-pixel pass stays off the frame. Exported for the tests.
+export function lumaPart(make: MakeScratch, key: string, slot: DrawnPart['slot'], name: string, box: Box | null, draw: (ctx: BrushTarget) => void): DrawnPart {
+  if (!box) return partOf(key, slot, name, null, null);
+  const w = box.x1 - box.x0;
+  const h = box.y1 - box.y0;
+  const sc = make(w, 2 * h);
+  const ctx = sc.ctx as BrushTarget & { createImageData(w: number, h: number): Pixels };
+  ctx.setTransform(1, 0, 0, 1, -box.x0, -box.y0);
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1;
+  draw(ctx);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  const tint = ctx.getImageData(0, 0, w, h);
+  const shade = ctx.createImageData(w, h);
+  const t = tint.data;
+  const g = shade.data;
+  const pulls = new Map<number, number>(); // by the raised tint's rgb: a mass has few colours
+  for (let i = 0; i < t.length; i += 4) {
+    if (t[i + 3] === 0) continue;
+    const y = (0.2126 * t[i] + 0.7152 * t[i + 1] + 0.0722 * t[i + 2]) / 255;
+    const lift = t[i + 2] + LUMA_RED * (t[i] - t[i + 2]); // only a red over its blue can turn a red field
+    if (t[i] > t[i + 2] && t[i + 1] < lift) t[i + 1] = Math.min(255, Math.ceil(lift));
+    const rgb = (t[i] << 16) | (t[i + 1] << 8) | t[i + 2];
+    let pull = pulls.get(rgb);
+    if (pull === undefined) pulls.set(rgb, (pull = liftPull(t[i] / 255, t[i + 1] / 255, t[i + 2] / 255)));
+    g[i] = g[i + 1] = g[i + 2] = Math.round(255 * Math.max(0, 0.5 - LUMA_SHADE * (1 - y) ** 2 - pull));
+    g[i + 3] = t[i + 3];
+  }
+  ctx.putImageData(tint, 0, 0);
+  ctx.putImageData(shade, 0, h);
+  return partOf(key, slot, name, box, sc.canvas);
+}
+
+// The 'color' blend keeps the plate's luma in gamma (SetLum: 0.3 R + 0.59 G +
+// 0.11 B), so a saturated tint lands brighter in linear L than the grey it
+// replaces: a burst yellow by 0.04 on a mid plate and by 0.15 on one at
+// L 0.7. That lift past LUMA_LIFT, at the light lumas where it peaks, over
+// how much a soft-light grey of 0.5 − 1 darkens a plate there, is how much
+// darker the tint's shade goes. Inks, browns, reds and the dust need none.
+const PULL_AT = [0.6, 0.7, 0.78, 0.84, 0.9, 0.95]; // plate lumas, gamma
+const linear = (c: number) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+function liftPull(r: number, g: number, b: number): number {
+  let pull = 0;
+  for (const l of PULL_AT) {
+    const d = l - (0.3 * r + 0.59 * g + 0.11 * b);
+    let c0 = r + d;
+    let c1 = g + d;
+    let c2 = b + d;
+    // W3C ClipColor: scaled about the luma back into 0..1.
+    const n = Math.min(c0, c1, c2);
+    const x = Math.max(c0, c1, c2);
+    const k = n < 0 ? l / (l - n) : x > 1 ? (1 - l) / (x - l) : 1;
+    c0 = l + (c0 - l) * k;
+    c1 = l + (c1 - l) * k;
+    c2 = l + (c2 - l) * k;
+    const up = 0.2126 * linear(c0) + 0.7152 * linear(c1) + 0.0722 * linear(c2) - linear(l);
+    // A soft light of 0.5 − s takes 2·s·l·(1 − l) off the luma, so s·that·dL/dl off L.
+    const per = 2 * l * (1 - l) * (2.4 / 1.055) * ((l + 0.055) / 1.055) ** 1.4;
+    pull = Math.max(pull, (up - LUMA_LIFT) / per);
+  }
+  return pull;
+}
+
+// A lumaPart laid on the frame at `alpha`, opaque (judge round 2: laid
+// straight on, by the blends alone, the plate's every detail showed through
+// the smoke, his shirt's print and all): what's on the frame under its box,
+// averaged over cells `cell` frame px wide (averaged), its shade by
+// 'soft-light' and its tint by 'color' over that, which keeps the shaded
+// luma, cut to the mass's own coverage and laid on. So the mass hides the
+// plate and still sits at its luminance, within a cell. With no `make`, or a
+// frame that can't be read back, the shade and the tint go straight onto
+// the frame, at the plate's luma pixel by pixel. Exported for the tests.
+export function lumaBlit(part: DrawnPart, alpha: number, make?: MakeScratch, cell = 0): LayerDraw {
+  return {
+    key: null,
+    draw: (ctx) => {
+      if (!part.image || !(alpha > 0)) return;
+      const { x0, y0, width: w, height: h } = part;
+      const image = part.image as never;
+      const under = make && cell > 0 ? averaged(ctx, make, part, cell) : null;
+      if (alpha < 1) ctx.globalAlpha *= alpha;
+      const u = under ? under.ctx : ctx;
+      const [dx, dy] = under ? [0, 0] : [x0, y0];
+      u.globalCompositeOperation = 'soft-light';
+      u.drawImage(image, 0, h, w, h, dx, dy, w, h);
+      u.globalCompositeOperation = 'color';
+      u.drawImage(image, 0, 0, w, h, dx, dy, w, h);
+      if (!under) return;
+      u.globalCompositeOperation = 'destination-in';
+      u.drawImage(image, 0, 0, w, h, 0, 0, w, h);
+      u.globalCompositeOperation = 'source-over';
+      ctx.drawImage(under.canvas as never, 0, 0, w, h, x0, y0, w, h);
+    },
+  };
+}
+
+// What's on the frame under a part's box, averaged over cells `cell` frame px
+// wide: shrunk to a pixel a cell (scratch slot 3) and stretched back,
+// smoothed, into a canvas at the box (slot 4), opaque wherever the box is on
+// the frame. Null when the frame can't be read back: a context without its
+// canvas or getTransform, a turned transform, or a box off the frame.
+function averaged(ctx: BrushTarget, make: MakeScratch, part: DrawnPart, cell: number): Scratch | null {
+  const t = ctx as BrushTarget & { canvas?: { width: number; height: number }; getTransform?(): { a: number; b: number; c: number; d: number; e: number; f: number } };
+  const m = t.getTransform?.();
+  const frame = t.canvas;
+  if (!m || !frame || m.b !== 0 || m.c !== 0 || !(m.a > 0) || !(m.d > 0)) return null;
+  const { x0, y0, width: w, height: h } = part;
+  // The box on the frame's canvas, as far as it's on it ...
+  const cx0 = Math.max(0, m.a * x0 + m.e);
+  const cy0 = Math.max(0, m.d * y0 + m.f);
+  const cx1 = Math.min(frame.width, m.a * (x0 + w) + m.e);
+  const cy1 = Math.min(frame.height, m.d * (y0 + h) + m.f);
+  if (!(cx1 > cx0 && cy1 > cy0)) return null;
+  // ... and that, in the box's own px.
+  const bw = (cx1 - cx0) / m.a;
+  const bh = (cy1 - cy0) / m.d;
+  const sw = Math.max(1, Math.round(bw / cell));
+  const sh = Math.max(1, Math.round(bh / cell));
+  const small = scratch(make, 3, sw, sh);
+  const sc = small.ctx as BrushTarget & { imageSmoothingQuality?: string };
+  sc.imageSmoothingEnabled = true;
+  sc.imageSmoothingQuality = 'high';
+  sc.drawImage(frame as never, cx0, cy0, cx1 - cx0, cy1 - cy0, 0, 0, sw, sh);
+  const box = scratch(make, 4, w, h);
+  const bc = box.ctx as BrushTarget & { imageSmoothingQuality?: string };
+  bc.imageSmoothingEnabled = true;
+  bc.imageSmoothingQuality = 'high'; // bicubic: no cell's corners show
+  bc.drawImage(small.canvas as never, 0, 0, sw, sh, (cx0 - m.e) / m.a - x0, (cy0 - m.f) / m.d - y0, bw, bh);
+  return box;
+}
+
 // What a mass part needs: its content key, its alpha on the frame, and how to draw it.
 interface PartSpec {
   name: string;
   slot: StackSlot;
   key: string;
   alpha: number;
+  luma?: boolean; // drawn by lumaPart and laid by lumaBlit (Reduce flashing's burst, cluster and dust)
   box(): Box | null;
   paint(ctx: BrushTarget, make: MakeScratch): void;
 }
 
 // A mass drawing (fire.ts's MassDrawing) as a part: painted opaque, faded by the blit.
-function massSpec(name: string, slot: StackSlot, key: string, alpha: number, drawing: () => MassDrawing | null, W: number, H: number): PartSpec {
+function massSpec(name: string, slot: StackSlot, key: string, alpha: number, drawing: () => MassDrawing | null, W: number, H: number, luma = false): PartSpec {
   let d: MassDrawing | null | undefined;
   const get = () => (d === undefined ? (d = drawing()) : d);
   return {
     name,
     slot,
-    key,
+    key: luma ? `${key}:luma` : key,
     alpha,
+    luma,
     box: () => {
       const m = get();
       return m ? boxOf(m.shapes.map((sh) => sh.points), PART_PAD, W, H) : null;
     },
     paint: (ctx) => paint(ctx, get(), true),
   };
+}
+
+// The stretches of these arc runs that can be seen to glow (render/limb.ts's
+// rule for the limb's own glow): a run in front of him whole, a run behind
+// him where it's off his mask.
+function seenRuns(runs: readonly ArcRun[], mask: Mask | null, scale: number): ArcRun[] {
+  if (!mask) return [...runs];
+  const out: ArcRun[] = [];
+  for (const run of runs) {
+    if (run.front) {
+      out.push(run);
+      continue;
+    }
+    let from = -1;
+    const flush = (to: number) => {
+      if (from >= 0 && to - from >= 2) out.push({ ...run, points: run.points.slice(from, to), width: run.width.slice(from, to), nz: run.nz.slice(from, to) });
+      from = -1;
+    };
+    run.points.forEach((q, i) => {
+      if (onMask(mask, scale, q[0], q[1])) flush(i);
+      else if (from < 0) from = i;
+    });
+    flush(run.points.length);
+  }
+  return out;
+}
+
+// Recorded glow with nothing within r of P: strokes cut where they come
+// closer, discs, fills and washes dropped when they do.
+function clearOf(calls: readonly GlowCall[], P: Vec2, r: number): GlowCall[] {
+  const far = (q: readonly number[]) => Math.hypot(q[0] - P[0], q[1] - P[1]) > r;
+  const out: GlowCall[] = [];
+  for (const c of calls) {
+    if (c.op === 'disc') {
+      if (far(c.c)) out.push(c);
+    } else if (c.op !== 'stroke') {
+      if (c.outline.every(far)) out.push(c);
+    } else if (c.points.length === 1) {
+      if (far(c.points[0])) out.push(c);
+    } else {
+      let run: Vec2[] = [];
+      for (const q of c.points) {
+        if (far(q)) run.push(q);
+        else {
+          if (run.length >= 2) out.push({ ...c, points: run });
+          run = [];
+        }
+      }
+      if (run.length >= 2) out.push({ ...c, points: run });
+    }
+  }
+  return out;
 }
 
 // ---- Glow -----------------------------------------------------------------------------------
@@ -704,9 +935,10 @@ function worldGlow(rig: Rig, make: MakeScratch, name: string, content: string, c
 
 // ---- The face cut ----------------------------------------------------------------------------
 
-// The cut at quarter size: 255 within 0.03 S of the source, falling linearly
-// to 0 at 0.05 S, from a two-pass chamfer distance (weights 3 and 4, within
-// 6 % of the true distance).
+// The cut at quarter size: 255 within 0.03 S of the source and 0 beyond, with
+// no feather (judge round 2: a soft hole read as a smudge in the smoke), from
+// a two-pass chamfer distance (weights 3 and 4, within 6 % of the true
+// distance). The stack's upscale smooths its edge over a quarter's pixel.
 function cutMask(inside: (x: number, y: number) => boolean, W: number, H: number, S: number): Mask {
   const q = CUT.quarter;
   const w = Math.ceil(W / q);
@@ -743,37 +975,25 @@ function cutMask(inside: (x: number, y: number) => boolean, W: number, H: number
     }
   }
   const reach = ((CUT.reach * S) / q) * 3;
-  const feather = ((CUT.feather * S) / q) * 3;
   const alpha = new Uint8ClampedArray(w * h);
-  for (let i = 0; i < w * h; i++) alpha[i] = d[i] <= reach ? 255 : d[i] >= reach + feather ? 0 : Math.round((255 * (reach + feather - d[i])) / feather);
+  for (let i = 0; i < w * h; i++) alpha[i] = d[i] <= reach ? 255 : 0;
   return { width: w, height: h, alpha };
 }
 
-// The face cut on clip frame c: from his face mask, or the top 20 % of his box.
+// The face cut on clip frame c, from his face mask; none on a frame without
+// one (judge round 2: the old fallback, the top 20 % of his box, landed on his
+// back and shirt while he crouched).
 function faceCut(rig: Rig, c: number): Mask | null {
   const { W, H, S, clip } = rig;
   const f = Math.min(Math.max(0, clip.frames - 1), Math.max(0, c));
   const face = clip.faceMask(f);
-  if (face) {
-    let cut = rig.faces.get(face);
-    if (!cut) {
-      const sx = face.width / W;
-      const sy = face.height / H;
-      cut = cutMask((x, y) => face.alpha[Math.min(face.height - 1, Math.floor(y * sy)) * face.width + Math.min(face.width - 1, Math.floor(x * sx))] >= 128, W, H, S);
-      rig.faces.set(face, cut);
-    }
-    return cut;
-  }
-  const person = clip.personMask(f);
-  const box = person ? maskBox(person) : null;
-  if (!person || !box) return null;
-  let cut = rig.heads.get(person);
+  if (!face) return null;
+  let cut = rig.faces.get(face);
   if (!cut) {
-    const sx = person.width / W;
-    const sy = person.height / H;
-    const bottom = box.y0 + CUT.head * (box.y1 - box.y0);
-    cut = cutMask((x, y) => x * sx >= box.x0 && x * sx < box.x1 && y * sy >= box.y0 && y * sy < bottom, W, H, S);
-    rig.heads.set(person, cut);
+    const sx = face.width / W;
+    const sy = face.height / H;
+    cut = cutMask((x, y) => face.alpha[Math.min(face.height - 1, Math.floor(y * sy)) * face.width + Math.min(face.width - 1, Math.floor(x * sx))] >= 128, W, H, S);
+    rig.faces.set(face, cut);
   }
   return cut;
 }
@@ -884,6 +1104,7 @@ function sceneOf(rig: Rig, step: number): ImpactScene {
     const plate = clip.luma?.(t) ?? null;
     const luma: PlateLuma | null = plate ? (x, y) => plate(x / s, y / s) : null;
     const mask = clip.personMask(Math.min(Math.max(0, clip.frames - 1), t));
+    const maskScale = mask ? mask.width / W : 1;
     const fireOn = ectx !== null && (massClock(ectx, t)?.g ?? Infinity) <= 1;
     const clear = FIRE_CLEAR * (ictx?.frame.U ?? 0);
     const box = limbBox(tubes, P, S, W, H);
@@ -902,38 +1123,49 @@ function sceneOf(rig: Rig, step: number): ImpactScene {
       if (!phase) continue;
       const { spans, pops } = gentle ? QUIET : pulsesAt(tube.id, k, info.timeline);
       const outline = luma ? outlineClasses(tube, luma, { S, palette: rig.palette, settings: rig.settings }) : null;
-      // While the burst shows (A0–2) the tip arcs wait for A3, and no arc
+      // While the burst shows (A0–2) the tip arcs wait for A3, and nothing
       // glows within FIRE_CLEAR U of P, so the flame reads (judge round 1).
       const { far, near } = sheathArcs(tube, k, phase, tube.id, { S, P: P && !fireOn ? P : undefined, idle: rig.settings.arcs, lift: rig.settings.arcLift, fewer: rig.cuts.fewerArcs });
       const side = (runs: ArcRun[], inFront: boolean) => runs.filter((run) => run.front === inFront);
       if (b && f) {
         drawArcs(b, side(far, false), tones, newPath);
         drawArcs(f, side(far, true), tones, newPath);
-        drawLimb(b, f, tube, { S, k, palette: rig.palette, settings: rig.settings, age, pulses: spans, swing, outline, mask, maskScale: mask ? mask.width / W : 1, glow: steady });
+        drawLimb(b, f, tube, { S, k, palette: rig.palette, settings: rig.settings, age, pulses: spans, swing, outline, mask, maskScale, glow: steady });
         drawArcs(b, side(near, false), tones, newPath);
         drawArcs(f, side(near, true), tones, newPath);
         for (const pop of pops) drawPops(sectionAt(tube, pop.s).front ? f : b, tube, [pop], tones);
       }
-      emitPulses(steady, tube, spans, 1, pulseTones);
-      emitPops(steady, tube, pops, 1, tones);
+      // The glow lights only what can be seen, as the limb's own does: a
+      // pulse, a pop or an arc behind him glows off his mask only (judge
+      // round 2: arcs behind his head glowed over it, a cyan cap on f55–57).
+      const seen = (s: number) => {
+        const sec = sectionAt(tube, s);
+        return sec.front || !mask || !onMask(mask, maskScale, sec.screen[0], sec.screen[1]);
+      };
+      emitPulses(steady, tube, spans.filter((sp) => seen(sp.s)), 1, pulseTones);
+      emitPops(steady, tube, pops.filter((pop) => seen(pop.s)), 1, tones);
       const own = recordingSink();
-      emitArcs(own, fireOn && P ? [...far, ...near].filter((run) => run.points.every((q) => Math.hypot(q[0] - P[0], q[1] - P[1]) > clear)) : [...far, ...near], 1, tones);
+      const lit = seenRuns([...far, ...near], mask, maskScale);
+      emitArcs(own, fireOn && P ? lit.filter((run) => run.points.every((q) => Math.hypot(q[0] - P[0], q[1] - P[1]) > clear)) : lit, 1, tones);
       if (own.calls.length > 0) arcs.push({ id: tube.id, calls: own.calls });
     }
     back?.ctx.setTransform(1, 0, 0, 1, 0, 0);
     front?.ctx.setTransform(1, 0, 0, 1, 0, 0);
-    const glow: DrawnGlow[] = [{ id: null, calls: steady.calls }, ...arcs];
+    // While the burst shows, none of the limbs glows within FIRE_CLEAR U of P:
+    // the tips bundled there on the release lit a ball over the fire (judge
+    // round 2, f93–94).
+    const glow: DrawnGlow[] = [{ id: null, calls: fireOn && P ? clearOf(steady.calls, P, clear) : steady.calls }, ...arcs];
     return [keep(rig, partOf(kb, 'limbsBehind', 'limbsBehind', box, back?.canvas ?? null)), keep(rig, partOf(kf, 'limbsFront', 'limbsFront', box, front?.canvas ?? null, glow))];
   };
 
   // ---- Masses ----
 
   // The parts the masses draw on clip frame c, in stack order: the cracks,
-  // the fire or the cluster, the dust, then the front FX's wisps, debris, the
-  // A5–6 veil and the particles, then the A5–6 flash. The keys are the
-  // clocks' (cheap): each says what the drawing shows, its fade apart. The
-  // veil and the flash cut the person out of the frame's own mask, so they
-  // are drawn per frame.
+  // the fire or the cluster, then the dust over its base, then the front FX's
+  // wisps, debris, the A5–6 veil and the particles, then the A5–6 flash. The
+  // keys are the clocks' (cheap): each says what the drawing shows, its fade
+  // apart. The veil and the flash cut the person out of the frame's own mask,
+  // so they are drawn per frame.
   const massSpecs = (c: number): PartSpec[] => {
     if (!ectx || I === null) return [];
     const out: PartSpec[] = [];
@@ -942,20 +1174,24 @@ function sceneOf(rig: Rig, step: number): ImpactScene {
     if (cc) out.push(massSpec('cracks', 'cracks', `cracks:${cc.fraction.toFixed(4)}:${cc.cool.toFixed(5)}`, cc.alpha, () => crackShapes(ectx, c), W, H));
     const mc = massClock(ectx, c);
     if (!mc || !(mc.alpha > 0)) return out;
-    const calm = still ? STILL_MASS : gentle ? GENTLE_MASS : 1;
-    const flare = still ? STILL_MASS : gentle ? GENTLE_FIRE : 1;
-    // The burst and the cluster stand in front of him, face-cut like the veil
-    // (judge round 1: he crouches over P and hid them); the dust stays behind.
-    // Reduce flashing keeps them behind him at his size (fire.ts massFrame).
-    const front: StackSlot = gentle ? 'fire' : 'fx';
-    if (mc.g <= 1) out.push(massSpec('fire', front, `fire:${mc.g}:${mc.start}`, flare * mc.alpha, () => fireShapes(ectx, c), W, H));
-    else out.push(massSpec('cluster', front, `cluster:${mc.g}:${mc.start}`, calm * mc.alpha, () => clusterShapes(ectx, c), W, H));
-    if (mc.g >= 1) out.push(massSpec('dust', 'dust', `dust:${mc.g}:${mc.start}`, calm * mc.alpha, () => dustShapes(ectx, c), W, H));
+    // The burst, the cluster and the dust over its base stand in front of him
+    // uncut, in both flash modes (judges: he crouches over P and hid them, and
+    // a face cut left holes in the smoke). They decay by their own erosion
+    // (fire.ts), not by a fade on top: mc.alpha is 1 until its last
+    // FADE_FRAMES frames. Reduce flashing lays them at the plate's luma.
+    const opacity = degrade.masses;
+    const solid = opacity * mc.alpha;
+    if (mc.g <= 1) out.push(massSpec('fire', 'masses', `fire:${mc.g}:${mc.start}`, solid, () => fireShapes(ectx, c), W, H, gentle));
+    else out.push(massSpec('cluster', 'masses', `cluster:${mc.g}:${mc.start}`, solid, () => clusterShapes(ectx, c), W, H, gentle));
+    if (mc.g >= 1) out.push(massSpec('dust', 'masses', `dust:${mc.g}:${mc.start}`, solid, () => dustShapes(ectx, c), W, H, gentle));
     const age = drawingAge(ectx, c);
     // Reduce flashing holds the wisps under +0.08 L, like the veil (washes.ts's liftCap).
     const wispAlpha = gentle ? Math.min(wispOpacity(age.A), liftCap(rig.palette[1])) : wispOpacity(age.A);
     if (wispKind(age.A)) out.push(massSpec('wisps', 'fx', `wisp:${age.k}:${age.A}:${age.start}`, wispAlpha * mc.alpha, () => wispShapes(ectx, c), W, H));
-    out.push(massSpec('debris', 'fx', `debris:${mc.g}:${mc.start}:${chunkDrawing(ectx, c)}`, calm * mc.alpha, () => debrisShapes(ectx, c), W, H));
+    // The debris and the sparks are thin FX that move every frame: Reduce
+    // flashing keeps them at GENTLE_FX (STILL_FX at the ladder's last step).
+    const thin = !gentle ? 1 : degrade.posters === 'none' ? STILL_FX : GENTLE_FX;
+    out.push(massSpec('debris', 'fx', `debris:${mc.g}:${mc.start}:${chunkDrawing(ectx, c)}`, thin * mc.alpha, () => debrisShapes(ectx, c), W, H));
     const v = veilShapes(ectx, c, washOpts);
     if (v) {
       out.push({ name: 'veil', slot: 'fx', key: `veil:${c}`, alpha: 1, box: () => boxOf([v.rings[0]], PART_PAD, W, H), paint: (ctx, mk) => paintVeil(ctx, mk, v, ectx.personMask(c), W, H) });
@@ -968,7 +1204,7 @@ function sceneOf(rig: Rig, step: number): ImpactScene {
         name: 'particles',
         slot: 'fx',
         key: `particles:${gc.g}:${gc.start}:${rig.cuts.halfParticles ? 'half' : 'all'}`,
-        alpha: calm * pf.alpha,
+        alpha: thin * pf.alpha,
         box: () => {
           const sh = particleShapes(ectx, pf);
           return boxOf([...sh.embers.flatMap((e) => e.polys), ...sh.rings, ...sh.sparks], PART_PAD, W, H);
@@ -981,7 +1217,7 @@ function sceneOf(rig: Rig, step: number): ImpactScene {
     return out;
   };
 
-  const ensure = (sp: PartSpec, mk: MakeScratch): DrawnPart => stored(rig, sp.key) ?? keep(rig, drawPart(mk, sp.key, sp.slot, sp.name, sp.box(), (ctx) => sp.paint(ctx, mk)));
+  const ensure = (sp: PartSpec, mk: MakeScratch): DrawnPart => stored(rig, sp.key) ?? keep(rig, (sp.luma ? lumaPart : drawPart)(mk, sp.key, sp.slot, sp.name, sp.box(), (ctx) => sp.paint(ctx, mk)));
 
   // ---- The 1s energy ----
 
@@ -1174,21 +1410,25 @@ function sceneOf(rig: Rig, step: number): ImpactScene {
       }
     }
 
-    // The masses behind the person; the front FX's 2s parts wait for the floods.
+    // The cracks and the masses; the front FX's 2s parts wait for the floods.
     const specs = massSpecs(c);
     for (const sp of specs) {
       if (sp.slot === 'fx' || sp.slot === 'flash' || !(sp.alpha > 0)) continue;
       const part = ensure(sp, make);
-      if (part.image) add(sp.slot, sp.name, sp.key, sp.alpha, 'composite', blit(part, sp.alpha));
+      if (part.image) add(sp.slot, sp.name, sp.key, sp.alpha, 'composite', sp.luma ? lumaBlit(part, sp.alpha, make, LUMA_CELL * S) : blit(part, sp.alpha));
     }
 
-    // The floods, then the front FX: the 2s parts, then the lightning, then
-    // the A5–6 flash.
+    // The floods, each with its wide glow right over it, under him and the
+    // masses (judge round 2: laid over the cluster, the wash turned the smoke
+    // violet on f113–118, where the reference's stays orange-brown); then the
+    // front FX: the 2s parts, then the lightning, then the A5–6 flash.
     if (ictx && j !== null && j >= 9) {
       const fd: FloodDrawing | null = floodShapes(ictx, j, washOpts);
       if (fd) {
         add('floods', 'flood', fd.key, fd.level, 'energy', { key: null, draw: (ctx) => paintFlood(ctx, make, fd, W, H) });
-        world.push({ name: 'flood', content: fd.key.slice(0, fd.key.lastIndexOf(':')), calls: () => floodCalls(fd), gain: fd.level });
+        const content = fd.key.slice(0, fd.key.lastIndexOf(':'));
+        const wash = () => [[worldGlow(rig, make, 'flood', content, () => floodCalls(fd)), fd.level] as const];
+        add('floods', 'floodGlow', `${content}@${fd.level}`, fd.level, 'glow', { key: null, draw: (ctx) => compositeGlows(ctx, wash()) });
         gains.flood = fd.level;
       }
     }
@@ -1198,11 +1438,13 @@ function sceneOf(rig: Rig, step: number): ImpactScene {
       if (part.image) add('fx', sp.name, sp.key, sp.alpha, 'composite', blit(part, sp.alpha));
     }
     const lp = lightningPlan(c);
+    const boltGlow = gentle ? GENTLE_BOLT_GLOW : 1;
     if (lp) {
       const part = lightningPart(lp);
       if (part.image) add('fx', 'lightning', part.key, lp.gain, 'energy', blit(part, gentle ? GENTLE_BOLT : 1));
-      world.push({ name: 'lightning', content: part.key, calls: () => part.glow?.[0]?.calls ?? [], gain: gentle ? GENTLE_BOLT_GLOW : 1 });
+      world.push({ name: 'lightning', content: part.key, calls: () => part.glow?.[0]?.calls ?? [], gain: boltGlow });
       gains.lightning = lp.gain;
+      gains.ribbons = lp.gain * lp.boost * boltGlow; // the ribbons' glow, all told: the arcs' cap below is half of it
     }
     for (const sp of specs) {
       if (sp.slot !== 'flash' || !(sp.alpha > 0)) continue;
@@ -1211,8 +1453,14 @@ function sceneOf(rig: Rig, step: number): ImpactScene {
     }
 
     // The glow: the limbs' through their stamp (each limb's arcs at its own
-    // flicker), then the frame's own; one composite when the stamp is the
-    // identity (a fresh drawing), as each composite lays two full images.
+    // flicker), then the frame's own (the strike's, the charge's, the
+    // lightning's); one composite when both go in one slot and the stamp is
+    // the identity (a fresh drawing), as each composite lays two full images.
+    // From j 9 the limbs' glow goes on right over the limbs in front, under
+    // the masses that stand in front of them (judge round 2: laid over the
+    // cluster, their red light turned the smoke rose); the lightning's stays
+    // on top, over the smoke its ribbons crawl on.
+    const limbSlot: StackSlot = j !== null && j >= 9 ? 'limbsFront' : 'glow';
     const worldKey = world.map((w) => `${w.content}@${w.gain}`).join('|');
     const worldEntries = () => world.map((w) => [worldGlow(rig, make, w.name, w.content, w.calls), w.gain] as const);
     let worldDone = world.length === 0;
@@ -1220,17 +1468,21 @@ function sceneOf(rig: Rig, step: number): ImpactScene {
       const { part, T } = limbGlow;
       const k1 = c1(c, I);
       const own = part.glow ?? [];
-      const arcGains = own.map((g) => (g.id === null ? (gentle ? GENTLE_LIMB_GLOW : 1) : gentle ? GENTLE_ARC : arcFlicker(g.id, k1)));
+      // Over the measured aftermath the arcs glow at most half as bright as
+      // the ribbons' glow (judge round 2: they outshone them), and half of
+      // the ribbons' full gain before the first bolt.
+      const cap = j !== null && j >= 9 && j <= 31 ? ARC_AFTER * (lp ? lp.gain * lp.boost * boltGlow : 1) : Infinity;
+      const arcGains = own.map((g) => (g.id === null ? (gentle ? GENTLE_LIMB_GLOW : 1) : gentle ? GENTLE_ARC : Math.min(cap, arcFlicker(g.id, k1))));
       own.forEach((g, i) => {
         if (g.id !== null) gains[`arc:${g.id}`] = arcGains[i];
       });
       const limbKey = `${part.key}@${arcGains.map((g) => g.toFixed(4)).join(',')}`;
       const limbEntries = () => glowSet(rig, part, make).map((glow, i) => [glow, arcGains[i]] as const);
-      if (isIdentity(T) && !worldDone) {
+      if (limbSlot === 'glow' && isIdentity(T) && !worldDone) {
         add('glow', 'glow', `${limbKey}|${worldKey}`, 1, 'glow', { key: null, draw: (ctx) => compositeGlows(ctx, [...limbEntries(), ...worldEntries()]) });
         worldDone = true;
       } else {
-        add('glow', 'limbGlow', limbKey, 1, 'glow', {
+        add(limbSlot, 'limbGlow', limbKey, 1, 'glow', {
           key: null,
           draw: (ctx) => {
             if (!isIdentity(T)) (ctx as StackTarget).transform(T[0], T[1], T[2], T[3], T[4], T[5]);

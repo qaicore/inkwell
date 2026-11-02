@@ -18,13 +18,14 @@
 // The cut order. If the main-thread frame misses 26 ms or the worker passes
 // 80 % on the phone, the preview steps down this order, one recorded tier at
 // a time (never automatically during an export, which always draws the full
-// tier). The posters, the limbs and the cracks are never cut. Step 2, the
-// near glow buffer, has no switch in render/light.ts yet, so it is listed
-// and not wired: a WP10 follow-up.
+// tier). The posters, the limbs and the cracks are never cut. Design §10's
+// step 2, dropping the near glow buffer, is out of the order (round 3): it
+// needs a switch in createGlow (render/light.ts) and the scene's glows, and
+// the near halo is the limbs' and the lightning's hot edge, so the six steps
+// here are design steps 1 and 3–7, renumbered 1–6.
 //
 // The device gate (WP17, decision 9): the tiers here are timed in Node. Qai's
-// iPhone run of the limb bench is still to come, so the phone starts uncut
-// (PHONE_CUTS) until its numbers say otherwise.
+// iPhone run of the bench (bench.html) is still to come; see PHONE_CUTS.
 import type { DrawingJob, Tier } from './contracts.ts';
 
 export const PROXY = { width: 1080, height: 608 } as const; // the internal frame the budget is for
@@ -85,36 +86,37 @@ export function windowLoad(w: WorkerWindow): number {
 // ---- The cut order ---------------------------------------------------------------------------
 
 export interface Cut {
-  step: number; // 1..7, in the order they're taken
+  step: number; // 1..6, in the order they're taken
+  design: number; // its step in design §10's order
   name: string;
   what: string;
-  wired: boolean; // false: the renderer has no switch for it yet
 }
 
 export const CUT_ORDER: readonly Cut[] = [
-  { step: 1, name: 'lightning-2s', what: 'lightning on 2s', wired: true },
-  { step: 2, name: 'near-glow', what: 'drop the near glow buffer', wired: false },
-  { step: 3, name: 'ribbons', what: 'lightning 4 → 2 ribbons', wired: true },
-  { step: 4, name: 'particles', what: 'halve the particles', wired: true },
-  { step: 5, name: 'phone-cluster', what: 'the phone cluster (balls 0.033–0.05 U, at most 30, same area)', wired: true },
-  { step: 6, name: 'arcs', what: 'arcs 6 → 3 per limb in the strike window and the aftermath', wired: true },
-  { step: 7, name: 'resolution', what: 'preview at 0.75 resolution', wired: true },
+  { step: 1, design: 1, name: 'lightning-2s', what: 'lightning on 2s' },
+  { step: 2, design: 3, name: 'ribbons', what: 'lightning 4 → 2 ribbons' },
+  { step: 3, design: 4, name: 'particles', what: 'halve the particles' },
+  { step: 4, design: 5, name: 'phone-cluster', what: 'the phone cluster (balls 0.033–0.05 U, at most 30, same area)' },
+  { step: 5, design: 6, name: 'arcs', what: 'arcs 6 → 3 per limb in the strike window and the aftermath' },
+  { step: 6, design: 7, name: 'resolution', what: 'preview at 0.75 resolution' },
 ];
 
+// Design §10's step 2, out of the order (above).
+export const UNCUT = [{ design: 2, name: 'near-glow', what: 'drop the near glow buffer', why: 'no switch in createGlow (render/light.ts); the near halo is the hot edge' }] as const;
+
 export const NEVER_CUT = ['posters', 'limbs', 'cracks'] as const;
-export const CUT_RESOLUTION = 0.75; // step 7's scale on the internal frame
-export const CUT_RIBBONS = 2; // step 3's lightning ribbons
+export const CUT_RESOLUTION = 0.75; // step 6's scale on the internal frame
+export const CUT_RIBBONS = 2; // step 2's lightning ribbons
 
 // What the first n cuts switch, as the scene's render options.
 export interface Cuts {
-  n: number; // 0..7
+  n: number; // 0..6
   lightning2s: boolean; // 1: the lightning holds on the 2s grid instead of every kr step
-  nearGlow: boolean; // 2: false drops the near buffer (not wired: render/light.ts has no option)
-  maxRibbons: number | undefined; // 3: at most this many ribbons; undefined = the band's own
-  halfParticles: boolean; // 4
-  tier: Tier; // 5: 'phone' is the phone cluster, which also brings the lightning's and the particles' phone caps
-  fewerArcs: boolean; // 6
-  resolution: number; // 7: × the internal frame's size
+  maxRibbons: number | undefined; // 2: at most this many ribbons; undefined = the band's own
+  halfParticles: boolean; // 3
+  tier: Tier; // 4: 'phone' is the phone cluster, which also brings the lightning's and the particles' phone caps
+  fewerArcs: boolean; // 5
+  resolution: number; // 6: × the internal frame's size
 }
 
 export function cutsAt(n: number): Cuts {
@@ -122,20 +124,45 @@ export function cutsAt(n: number): Cuts {
   return {
     n,
     lightning2s: n >= 1,
-    nearGlow: n < 2,
-    maxRibbons: n >= 3 ? CUT_RIBBONS : undefined,
-    halfParticles: n >= 4,
-    tier: n >= 5 ? 'phone' : 'full',
-    fewerArcs: n >= 6,
-    resolution: n >= 7 ? CUT_RESOLUTION : 1,
+    maxRibbons: n >= 2 ? CUT_RIBBONS : undefined,
+    halfParticles: n >= 3,
+    tier: n >= 4 ? 'phone' : 'full',
+    fewerArcs: n >= 5,
+    resolution: n >= 6 ? CUT_RESOLUTION : 1,
   };
 }
 
-// The cuts a tier starts from. The export and the desktop draw the full tier;
-// the phone's starting point waits on the device gate.
-export const PHONE_CUTS = 0;
+// The cuts a tier starts from. The export and the desktop draw the full tier
+// (no cuts, so their pixels never change with the phone's). The phone starts
+// from the first step whose strike frame and aftermath frame fit MAIN_BUDGET
+// with the worker at WORKER_LOAD or under, timed in Node on the slam bench's
+// synthetic slam (src/bench/slam.ts, one pass a step, Nov 1, Node 24, under
+// the other fixers' load, so ±30 % from run to run):
+//   cuts  strike  aftermath  worker over f93–115
+//   0     33–48   49–73       91–141 %   (the hero, round 2: 44.6, 56.2, 132–149 %)
+//   1     36      49          94 %
+//   2     32      40          97 %
+//   3     34      45          89 %
+//   4     33      44          91 %
+//   5     30–49   39–67       75–115 %
+//   6     21–37   28–35       63–101 %   (810×456)
+// (median ms a frame; the full tier and steps 5 and 6 from 2–4 runs).
+// No step fits in Node: the whole order, 6, comes closest, about half the
+// full tier's cost, and is where the phone starts until Qai's iPhone run of
+// bench.html, which times the full tier and this one, says otherwise.
+export const PHONE_CUTS = 6;
 export const tierCuts = (tier: Tier): number => (tier === 'phone' ? PHONE_CUTS : 0);
 
-// WP17's gate on Qai's iPhone: a 24-arc limb drawing in the worker within
-// 50 ms, and stamp + cutout + grade on the main thread within 14 ms.
-export const DEVICE_GATE = { worker: 50, main: 14, measured: null as { worker: number; main: number } | null } as const;
+// The device gate on Qai's iPhone (bench.html). WP17's lines: a 24-arc limb
+// drawing in the worker within 50 ms, and stamp + cutout + grade on the main
+// thread within 14 ms. Round 3's, design §10's own: a whole strike frame
+// (f76–83) and a whole aftermath frame (j 18–28) on the main thread within
+// MAIN_BUDGET, and the worker's drawings over f93–115 at WORKER_LOAD or under.
+export interface DeviceNumbers {
+  worker: number;
+  main: number;
+  strike?: number;
+  aftermath?: number;
+  load?: number;
+}
+export const DEVICE_GATE = { worker: 50, main: 14, strike: MAIN_BUDGET, aftermath: MAIN_BUDGET, load: WORKER_LOAD, measured: null as DeviceNumbers | null } as const;

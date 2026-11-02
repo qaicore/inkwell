@@ -26,10 +26,17 @@
 //     within 10 % of its area and inside its IoU band (≤ 0.27 redrawn,
 //     0.48–0.72 carried) is kept, else the nearest. A group's drawing depends
 //     on the last group's, so building g builds g−1 first (memoized).
-//   - The fill is the measured luma ladder in cel steps: the dominant tone,
-//     which darkens 1.5 luma a drawing, over a floor tone 12 darker along the
-//     line, the step's edge torn; the tops inside the cluster (above 0.31 U)
-//     and the streaks take the flat highlight #9e8f7c.
+//   - The fill is the measured luma ladder in cel steps, lighter upward
+//     (judge round 2: not flat cut-outs): a floor tone 12 darker along the
+//     line, the dominant tone (which darkens 1.5 luma a drawing) from the
+//     torn step up, a step MID_LIGHTER lighter over the upper part of each
+//     plume, and the flat highlight #9e8f7c on every crown (the top CROWN of
+//     each plume that stands CROWN_MIN or more), on the tops inside the
+//     cluster (above 0.31 U) and on the streaks. Under it all a soft edge:
+//     the band's top FEATHER and FEATHER/2 higher, at SOFT's opacities.
+//   - In the decay it erodes (fire.ts): the plumes stay opaque, shrink to
+//     √erode in height and width where they stand and drop out in a seeded
+//     order; the rim thins with them.
 // The dust wash veil of A5–6 is WP9's (washes.ts), with the A5–6 flash.
 // Everything here is in U (× the group's zoom factor, see fire.ts) in the
 // floor frame; the cluster reads this layer's cells to know what it covers.
@@ -39,7 +46,7 @@ import { smoothstep } from '../../render/geometry.ts';
 import { DUST, mixHex } from '../palette.ts';
 import { int, rng, uniform, type Rng } from '../rng.ts';
 import {
-  CARRY_FROM, GROUP_AGE, LAST_MEASURED, cellN, clamp, gridIoU, gridStats, jitter, massClock, massFrame, massKey, memo, newGrid, paint, shuffled,
+  CARRY_FROM, GROUP_AGE, LAST_MEASURED, cellN, clamp, erodeKeeps, gridIoU, gridStats, jitter, massClock, massFrame, massKey, memo, newGrid, paint, shuffled,
   stampPolygon, toFrame, ROWS, COLS, VISIBLE_REACH, CELL, cellT,
   type FloorPt, type Grid, type MassContext, type MassDrawing, type MassShape,
 } from './fire.ts';
@@ -80,6 +87,12 @@ const STEP_AT = 0.04; // U over the line: where the dominant tone takes over fro
 const STEP_TEAR = 0.02; // U: how far a cel step's torn edge strays
 const FLOOR_DARKER = 12; // luma: the floor tone under the dominant one
 const HIGHLIGHT_ABOVE = 0.31; // U: a top above this is inside the cluster: the flat highlight
+export const MID_LIGHTER = 11; // luma: the upper step over the dominant one …
+const MID_SHARE = 0.5; // … above this share of the local height (torn by STEP_TEAR)
+export const CROWN = 0.032; // U: a crown's highlight, down from its top …
+export const CROWN_MIN = 0.1; // U: … on a plume this tall or more
+export const FEATHER = 0.012; // U: the soft edge over the crowns
+const SOFT = [0.3, 0.55] as const; // its two steps' opacities, outer and inner
 // The measured palette peaks, luma → tone (destruction §4.5).
 const LADDER: readonly (readonly [number, string])[] = [
   [89, '#665745'], [95, '#6c5e4b'], [103, '#756553'], [110, '#7b6c5a'], [116, '#82735e'], [124, '#897a67'], [132, '#92836e'], [145, DUST.highlight],
@@ -489,12 +502,14 @@ export function dustState(seed: number, g: number): DustState {
   return memo(STATES, `${seed}|${g}`, () => buildDust(seed, g));
 }
 
-// A group's fill as polygons in paint order: the band in the floor tone, the
-// dominant tone over it from the torn step up, and the highlight on the tops
-// inside the cluster.
+// A group's fill as polygons in paint order: the soft edge (outer step, then
+// inner), the band in the floor tone, the dominant tone over it from the torn
+// step up, the lighter step over each plume's upper part, then the highlight
+// on the crowns and on the tops inside the cluster.
 interface Fill {
   role: string;
   color: string;
+  alpha?: number;
   polys: FloorPt[][];
 }
 const FILLS = new WeakMap<DustState, Fill[]>();
@@ -502,14 +517,42 @@ function fillsOf(state: DustState): Fill[] {
   const hit = FILLS.get(state);
   if (hit) return hit;
   const y = dominant(GROUP_AGE[Math.min(state.g, LAST_MEASURED)]);
+  const b = state.band;
   const above = (at: number, edge: Torn) => (t: number) => at + STEP_TEAR * tornAt(edge, t);
-  const fills = [
-    { role: 'dust-floor', color: ladder(y - FLOOR_DARKER), polys: pieces(state.band, () => -Infinity) },
-    { role: 'dust', color: ladder(y), polys: pieces(state.band, above(STEP_AT, state.edges[2])) },
-    { role: 'dust-top', color: DUST.highlight, polys: pieces(state.band, above(HIGHLIGHT_ABOVE, state.edges[3])) },
+  const standing = (i: number) => b.top[i] - b.bot[i] > 1e-4;
+  // The band with its top raised by d where it stands (the soft edge's steps).
+  const raised = (d: number): Band => ({ ts: b.ts, top: b.top.map((v, i) => (standing(i) ? v + d : v)), bot: b.bot });
+  // From `share` of the local height up (torn), and the crowns' bands.
+  const upper: Band = { ts: b.ts, top: b.top, bot: b.top.map((v, i) => Math.max(b.bot[i], MID_SHARE * v + STEP_TEAR * tornAt(state.edges[2], b.ts[i]))) };
+  const under = b.top.map((v, i) => v - CROWN * (0.75 + 0.35 * tornAt(state.edges[3], b.ts[i])));
+  const crowns: Band = { ts: b.ts, top: b.top.map((v, i) => (v >= CROWN_MIN ? v : under[i])), bot: under };
+  const fills: Fill[] = [
+    { role: 'dust-soft', color: ladder(y), alpha: SOFT[0], polys: pieces(raised(FEATHER), () => -Infinity) },
+    { role: 'dust-soft', color: ladder(y), alpha: SOFT[1], polys: pieces(raised(FEATHER / 2), () => -Infinity) },
+    { role: 'dust-floor', color: ladder(y - FLOOR_DARKER), polys: pieces(b, () => -Infinity) },
+    { role: 'dust', color: ladder(y), polys: pieces(b, above(STEP_AT, state.edges[2])) },
+    { role: 'dust-mid', color: ladder(y + MID_LIGHTER), polys: pieces(upper, above(STEP_AT, state.edges[2])) },
+    { role: 'dust-crown', color: DUST.highlight, polys: pieces(crowns, () => -Infinity) },
+    { role: 'dust-top', color: DUST.highlight, polys: pieces(b, above(HIGHLIGHT_ABOVE, state.edges[3])) },
   ];
   FILLS.set(state, fills);
   return fills;
+}
+
+// The dust of a group eroded to `erode` (fire.ts; 1: whole): the plumes the
+// seeded order keeps, each √erode as tall and as wide where it stands, the
+// caps as low, the rim as thin, and the streaks kept the same way.
+const ERODED = new Map<string, DustState>();
+export function erodedDust(seed: number, state: DustState, erode: number): DustState {
+  if (erode >= 1) return state;
+  return memo(ERODED, `${seed}|${state.g}|${erode.toFixed(4)}`, () => {
+    const k = Math.sqrt(Math.max(0, erode));
+    const pr = profile(Math.min(state.g, LAST_MEASURED));
+    const plumes = state.plumes.filter((_, i) => erodeKeeps(seed, 'dust', i, erode)).map((p) => ({ ...p, H: p.H * k, half: p.half * k }));
+    const caps = state.caps.map((c) => ({ ...c, H: c.H * k }));
+    const streaks = state.streaks.filter((_, i) => erodeKeeps(seed, 'dust', 100 + i, erode));
+    return dustOf(state.g, state.phase, pr, state.rim * k, plumes, caps, state.edges, streaks);
+  }, 8);
 }
 
 export interface DustDrawing extends MassDrawing {
@@ -519,20 +562,23 @@ export interface DustDrawing extends MassDrawing {
   state: DustState;
 }
 
-// The dust on frame f: hold group 1 on (A1+), until J_end; null elsewhere.
+// The dust on frame f: hold group 1 on (A1+), until J_end, eroded in the
+// decay; null elsewhere. `state` is the group's whole dust (the cluster's
+// cover), the shapes its eroded drawing.
 export function shapes(ictx: MassContext, f: number): DustDrawing | null {
   const clock = massClock(ictx, f);
   if (!clock || clock.g < 1) return null;
   const state = dustState(ictx.seed, clock.g);
+  const drawn = erodedDust(ictx.seed, state, clock.erode);
   const fr = massFrame(ictx, true);
   const unit = fr.U * clock.zoom;
   const px = (pts: readonly FloorPt[]) => pts.map((p) => toFrame(fr, unit, p));
   const out: MassShape[] = [];
-  for (const fill of fillsOf(state)) for (const p of fill.polys) out.push({ role: fill.role, points: px(p), color: fill.color });
-  for (const s of state.streaks) out.push({ role: 'streak', points: px(s.pts), color: DUST.highlight, round: true });
+  for (const fill of fillsOf(drawn)) for (const p of fill.polys) out.push({ role: fill.role, points: px(p), color: fill.color, alpha: fill.alpha });
+  for (const s of drawn.streaks) out.push({ role: 'streak', points: px(s.pts), color: DUST.highlight, round: true });
   return {
     layer: 'behind',
-    key: `dust:${massKey(ictx)}:${clock.g}:${unit.toFixed(3)}`,
+    key: `dust:${massKey(ictx)}:${clock.g}:${clock.erode.toFixed(4)}:${unit.toFixed(3)}`,
     alpha: clock.alpha,
     shapes: out,
     g: clock.g,

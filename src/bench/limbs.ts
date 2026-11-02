@@ -33,6 +33,10 @@
 // The gate: a 24-arc limb drawing ≤ 50 ms in the worker, and stamp + cutout +
 // grade ≤ 14 ms on the main thread. A miss (no OffscreenCanvas 2D in a worker
 // is one) means WP12 starts from the phone tier and records the numbers.
+// Round 3 adds the frames that miss in Node (slam.ts): a whole strike frame
+// and a whole aftermath frame on this thread, and the worker's load over the
+// aftermath, at the full tier and at the phone's (PHONE_CUTS), each against
+// design §10's line: 26 ms a frame, the worker at most 80 % busy.
 // The same file is the bench's worker: run in a worker scope it answers the
 // page (the guard at the bottom), and anywhere else it only defines things.
 import { jEnd } from '../impact/clock.ts';
@@ -47,7 +51,9 @@ import { createGlow } from '../render/light.ts';
 import { drawLimb, keySwing, limbR0, limbTones, outlineClasses, plateLuma, stampPinned, type LimbTarget, type PlateLuma, type StampLayer, type StampTarget } from '../render/limb.ts';
 import { drawPops, emitPops, emitPulses, limbClock, pulsesAt, pulseTimeline, type PopTarget } from '../render/pulse.ts';
 import { frameMask, type Box } from '../render/stack.ts';
+import { PHONE_CUTS } from '../impact/tiers.ts';
 import type { Mask } from '../track/tracking.ts';
+import { createSlamBench, SLAM, SLAM_FRAMES, timeSlamFrames, timeSlamLoad, type SlamLoad, type SlamSeries } from './slam.ts';
 
 export const BENCH = {
   width: 1080, // the app's internal frame (design §10)
@@ -58,6 +64,7 @@ export const BENCH = {
   arcs: [12, 24] as const, // sheath arcs per drawing: the phone tier's and the full tier's
   gate: { worker: 50, main: 14 }, // ms: a 24-arc limb drawing in the worker; stamp + cutout + grade on the main thread
   pad: 0.1, // × S round the limbs: the layers' box
+  slamCuts: PHONE_CUTS > 0 ? [0, PHONE_CUTS] : [0], // the slam's tiers: the full one, and the phone's starting step
 } as const;
 
 // heroclip (1920×1080): contact on f84 at P, the strike along d, the limbs
@@ -443,6 +450,50 @@ export function gateOf(worker: readonly Series[] | null, main: readonly Series[]
   return { worker: w, main: m, workerPass, mainPass, pass: workerPass && mainPass };
 }
 
+// The slam at one tier: its frames on this thread, its drawings in the worker.
+export interface SlamRun {
+  cuts: number; // the cut order's steps (tiers.ts): 0 is the full tier
+  frames: SlamSeries[]; // the strike frame, then the aftermath frame
+  load: SlamLoad | null; // null: the worker couldn't draw them
+}
+
+export interface SlamGate {
+  cuts: number;
+  strike: number; // ms: the median strike frame
+  aftermath: number; // ms: the median aftermath frame
+  load: number | null; // the worker's share of f93–115
+  strikePass: boolean;
+  aftermathPass: boolean;
+  loadPass: boolean;
+  pass: boolean;
+}
+
+export function slamGateOf(run: SlamRun): SlamGate {
+  const at = (key: string) => {
+    const series = run.frames.find((s) => s.key === key);
+    return series ? median(series.ms) : NaN;
+  };
+  const [strike, aftermath] = [at('strike'), at('aftermath')];
+  const load = run.load?.load ?? null;
+  const strikePass = strike <= SLAM.line.main;
+  const aftermathPass = aftermath <= SLAM.line.main;
+  const loadPass = load !== null && load <= SLAM.line.load;
+  return { cuts: run.cuts, strike, aftermath, load, strikePass, aftermathPass, loadPass, pass: strikePass && aftermathPass && loadPass };
+}
+
+// The tier a cut count names.
+export const tierName = (cuts: number): string => (cuts === 0 ? 'the full tier' : cuts === PHONE_CUTS ? 'the phone tier, PHONE_CUTS' : `${cuts} cuts`);
+
+// What the slam's lines mean for PHONE_CUTS.
+export function slamVerdict(slam: readonly SlamRun[]): string {
+  if (slam.length === 0) return 'slam: not run';
+  const gates = slam.map(slamGateOf);
+  if (gates.find((g) => g.cuts === 0)?.pass) return 'slam: the full tier fits design §10 on this phone, so PHONE_CUTS can go to 0';
+  const fit = gates.filter((g) => g.cuts > 0 && g.pass).sort((a, b) => a.cuts - b.cuts)[0];
+  if (fit) return `slam: ${fit.cuts} cuts fit design §10 on this phone, so PHONE_CUTS stays at ${fit.cuts} or lower`;
+  return 'slam: no tier timed fits design §10 on this phone; post these numbers for the cut order';
+}
+
 export interface BenchReport {
   runs: number;
   warm: number;
@@ -450,6 +501,8 @@ export interface BenchReport {
   worker: Series[] | null; // null: no OffscreenCanvas 2D in a worker, or no worker
   workerNote: string; // what ran the worker's jobs, or why it couldn't
   main: Series[]; // the limb drawings, then the frame jobs
+  slam: SlamRun[]; // the slam, a run a tier timed (BENCH.slamCuts)
+  slamNote: string; // what drew the slam's drawings, or why the worker couldn't
   stamped: string; // what the stamp drew: the worker's bitmaps or this thread's canvases
   hidden: boolean; // the page went to the background during the run, so the times are off
   device: string;
@@ -465,8 +518,21 @@ export function formatReport(r: BenchReport): string {
   if (r.worker) for (const s of r.worker) lines.push(line('worker', s, s.key === 'limbs24' ? `; gate ≤ ${BENCH.gate.worker} ms: ${verdict(gate.workerPass)}` : ''));
   else lines.push(`worker, limb drawing, 24 arcs: not run; gate ≤ ${BENCH.gate.worker} ms: miss`);
   for (const s of r.main) lines.push(line('main', s, s.key === 'frame' ? `; gate ≤ ${BENCH.gate.main} ms: ${verdict(gate.mainPass)}` : ''));
+  for (const run of r.slam) {
+    const g = slamGateOf(run);
+    const cuts = `cuts ${run.cuts}`;
+    for (const s of run.frames) lines.push(line('main', { ...s, label: `${s.label}, ${cuts}` }, `; design ≤ ${SLAM.line.main} ms: ${verdict(s.key === 'strike' ? g.strikePass : g.aftermathPass)}`));
+    const what = `worker, the drawings due on f${SLAM.load[0]}–${SLAM.load[1]}, ${cuts}`;
+    const limit = `design ≤ ${Math.round(SLAM.line.load * 100)} %`;
+    if (run.load) {
+      const kinds = Object.entries(countKinds(run.load)).map(([kind, n]) => `${kind} ${n}`).join(', ');
+      lines.push(`${what}: ${ms(run.load.busyMs)} in ${ms(run.load.windowMs)}, ${run.load.jobs.length} drawings (${kinds}): ${Math.round(run.load.load * 100)} %; ${limit}: ${verdict(g.loadPass)}`);
+    } else lines.push(`${what}: not run; ${limit}: miss`);
+  }
   lines.push(gate.pass ? 'gate: pass, WP12 can start from the full tier' : 'gate: miss, WP12 starts from the phone tier and records these numbers');
-  lines.push(`worker: ${r.workerNote}; stamped: ${r.stamped}`);
+  for (const run of r.slam) lines.push(`slam, cuts ${run.cuts} (${tierName(run.cuts)}): ${verdict(slamGateOf(run).pass)}`);
+  lines.push(slamVerdict(r.slam));
+  lines.push(`worker: ${r.workerNote}; stamped: ${r.stamped}; slam: ${r.slamNote}`);
   lines.push(`device: ${r.device}`);
   if (r.hidden) lines.push('the page went to the background during the run: run it again with the screen on');
   return lines.join('\n');
@@ -497,6 +563,13 @@ function layerBox(tubes: readonly Tube[]): Box {
 
 const boxLayer = (box: Box) => ({ width: box.x1 - box.x0, height: box.y1 - box.y0, x0: box.x0, y0: box.y0 });
 
+// A load's drawings by kind.
+function countKinds(load: SlamLoad): Record<string, number> {
+  const n: Record<string, number> = {};
+  for (const job of load.jobs) n[job.kind] = (n[job.kind] ?? 0) + 1;
+  return n;
+}
+
 // The distance from (x, y) to the segment from (x0, y0) to (x1, y1).
 function toSegment(x: number, y: number, x0: number, y0: number, x1: number, y1: number): number {
   const [dx, dy] = [x1 - x0, y1 - y0];
@@ -506,10 +579,10 @@ function toSegment(x: number, y: number, x0: number, y0: number, x1: number, y1:
 
 // ---- In the browser: the worker and the page ----------------------------------------------
 
-type ToWorker = { type: 'run'; runs: number; warm: number };
+type ToWorker = { type: 'run'; runs: number; warm: number; slamCuts?: readonly number[] };
 type FromWorker =
   | { type: 'progress'; text: string }
-  | { type: 'done'; series: Series[]; box: Box; layers: ImageBitmap[] }
+  | { type: 'done'; series: Series[]; box: Box; layers: ImageBitmap[]; loads: (SlamLoad | null)[]; slamNote: string }
   | { type: 'no2d' }
   | { type: 'error'; message: string };
 
@@ -530,7 +603,8 @@ export const browserMake: MakeScratch = (width, height) => {
 };
 
 // The worker's side: on 'run', both limb series on OffscreenCanvas, then the
-// last drawing's layers as bitmaps, which the page stamps.
+// slam's drawings over the aftermath at each of slamCuts, then the last limb
+// drawing's layers as bitmaps, which the page stamps.
 export function serveBench(scope: WorkerScope): void {
   const now = () => performance.now();
   scope.addEventListener('message', (e) => {
@@ -544,8 +618,19 @@ export function serveBench(scope: WorkerScope): void {
         scope.postMessage({ type: 'progress', text: `In the worker: limb drawings with ${arcs} arcs` });
         series.push(timeLimbs(bench, arcs, now, opts));
       }
+      const loads: (SlamLoad | null)[] = [];
+      let slamNote = 'OffscreenCanvas 2D in the worker';
+      for (const cuts of e.data.slamCuts ?? []) {
+        scope.postMessage({ type: 'progress', text: `In the worker: the slam's drawings over the aftermath, ${cuts} cuts` });
+        try {
+          loads.push(timeSlamLoad(createSlamBench(browserMake, { cuts }), now));
+        } catch (err) {
+          loads.push(null);
+          slamNote = `the worker couldn't draw the slam (${err instanceof Error ? err.message : String(err)})`;
+        }
+      }
       const layers = [bench.behind, bench.front].map((s) => (s.canvas as OffscreenCanvas).transferToImageBitmap());
-      scope.postMessage({ type: 'done', series, box: bench.box, layers }, layers);
+      scope.postMessage({ type: 'done', series, box: bench.box, layers, loads, slamNote }, layers);
     } catch (err) {
       scope.postMessage({ type: 'error', message: err instanceof Error ? err.message : String(err) });
     }
@@ -556,10 +641,12 @@ interface WorkerRun {
   series: Series[] | null;
   note: string;
   layers: [StampLayer, StampLayer] | null;
+  loads: (SlamLoad | null)[]; // one a slamCuts entry; empty when the worker didn't run
+  slamNote: string;
 }
 
 // Starts the worker on this same file and waits for its series.
-function runWorker(say: (text: string) => void, opts: { runs: number; warm: number }): Promise<WorkerRun> {
+function runWorker(say: (text: string) => void, opts: { runs: number; warm: number; slamCuts: readonly number[] }): Promise<WorkerRun> {
   return new Promise((resolve) => {
     let worker: Worker | null = null;
     let timer = 0;
@@ -568,14 +655,14 @@ function runWorker(say: (text: string) => void, opts: { runs: number; warm: numb
       worker?.terminate();
       resolve(run);
     };
-    const failed = (note: string) => finish({ series: null, note, layers: null });
+    const failed = (note: string) => finish({ series: null, note, layers: null, loads: [], slamNote: note });
     try {
       worker = new Worker(new URL(import.meta.url), { type: 'module' });
     } catch (err) {
       failed(`no module worker (${err instanceof Error ? err.message : String(err)})`);
       return;
     }
-    timer = window.setTimeout(() => failed('the worker gave no answer in 120 s'), 120_000);
+    timer = window.setTimeout(() => failed('the worker gave no answer in 180 s'), 180_000);
     worker.addEventListener('message', (e: MessageEvent<FromWorker>) => {
       const msg = e.data;
       if (msg.type === 'progress') say(msg.text);
@@ -584,11 +671,11 @@ function runWorker(say: (text: string) => void, opts: { runs: number; warm: numb
       else {
         const [behind, front] = msg.layers;
         const at = boxLayer(msg.box);
-        finish({ series: msg.series, note: 'OffscreenCanvas 2D', layers: [{ image: behind, ...at }, { image: front, ...at }] });
+        finish({ series: msg.series, note: 'OffscreenCanvas 2D', layers: [{ image: behind, ...at }, { image: front, ...at }], loads: msg.loads, slamNote: msg.slamNote });
       }
     });
     worker.addEventListener('error', (e) => failed(`the worker didn't start (${e.message || 'no detail'})`));
-    worker.postMessage({ type: 'run', ...opts } satisfies ToWorker);
+    worker.postMessage({ type: 'run', runs: opts.runs, warm: opts.warm, slamCuts: opts.slamCuts } satisfies ToWorker);
   });
 }
 
@@ -607,7 +694,8 @@ function timerStep(now: () => number): number {
 const rest = () => new Promise<void>((done) => setTimeout(done, 60)); // lets the status paint between jobs
 
 // The whole bench: the worker's series, this thread's, then the frame jobs on
-// the page's canvas.
+// the page's canvas, then the slam's frames on it, the phone tier first so the
+// full tier's last aftermath frame is the one left on screen.
 async function runBench(view: HTMLCanvasElement, say: (text: string) => void): Promise<BenchReport> {
   const now = () => performance.now();
   const opts = { runs: BENCH.runs, warm: BENCH.warm, repeat: BENCH.repeat };
@@ -616,7 +704,7 @@ async function runBench(view: HTMLCanvasElement, say: (text: string) => void): P
   document.addEventListener('visibilitychange', onHide);
   try {
     say('In the worker: starting');
-    const worker = await runWorker(say, opts);
+    const worker = await runWorker(say, { ...opts, slamCuts: BENCH.slamCuts });
     const limbs = createLimbBench(browserMake);
     const main: Series[] = [];
     for (const arcs of BENCH.arcs) {
@@ -632,10 +720,22 @@ async function runBench(view: HTMLCanvasElement, say: (text: string) => void): P
       await rest();
       main.push(timeFrame(frame, job, now, opts));
     }
-    frame.plate();
-    frame.frame(); // leave the frame on screen
+    const target = { canvas: view, ctx: ctx as unknown as BrushTarget };
+    const slam: SlamRun[] = [];
+    for (const [i, cuts] of [...BENCH.slamCuts.entries()].reverse()) {
+      say(`On this thread: the slam, ${cuts} cuts (its physics and drawings, untimed)`);
+      await rest();
+      const bench = createSlamBench(browserMake, { target, cuts });
+      const frames: SlamSeries[] = [];
+      for (const key of SLAM_FRAMES) {
+        say(`On this thread: the slam's ${key} frames, ${cuts} cuts`);
+        await rest();
+        frames.push(timeSlamFrames(bench, key, now));
+      }
+      slam.unshift({ cuts, frames, load: worker.loads[i] ?? null });
+    }
     const device = `${navigator.userAgent}; dpr ${devicePixelRatio}; ${navigator.hardwareConcurrency || '?'} cores; timer step ${timerStep(now).toFixed(3)} ms`;
-    return { ...opts, worker: worker.series, workerNote: worker.note, main, stamped: worker.layers ? 'the worker’s bitmaps' : 'this thread’s canvases', hidden, device };
+    return { ...opts, worker: worker.series, workerNote: worker.note, main, slam, slamNote: worker.slamNote, stamped: worker.layers ? 'the worker’s bitmaps' : 'this thread’s canvases', hidden, device };
   } finally {
     document.removeEventListener('visibilitychange', onHide);
   }
@@ -663,10 +763,19 @@ function show(doc: Document, r: BenchReport) {
   if (r.worker) for (const s of r.worker) series('worker', s, s.key === 'limbs24' ? BENCH.gate.worker : null, gate.workerPass);
   else row(['worker', r.workerNote, '–', '–', `≤ ${BENCH.gate.worker}: miss`], 'miss');
   for (const s of r.main) series('main', s, s.key === 'frame' ? BENCH.gate.main : null, gate.mainPass);
+  for (const run of r.slam) {
+    const g = slamGateOf(run);
+    for (const s of run.frames) series('main', { ...s, label: `${s.label}, cuts ${run.cuts}` }, SLAM.line.main, s.key === 'strike' ? g.strikePass : g.aftermathPass);
+    const what = `drawings due on f${SLAM.load[0]}–${SLAM.load[1]}, cuts ${run.cuts}`;
+    const limit = `≤ ${Math.round(SLAM.line.load * 100)} %: ${g.loadPass ? 'pass' : 'miss'}`;
+    if (run.load) row(['worker', `${what}: ${run.load.jobs.length} drawings, ${ms(run.load.busyMs)} ms in ${ms(run.load.windowMs)} ms`, `${Math.round(run.load.load * 100)} % busy`, '', limit], g.loadPass ? 'pass' : 'miss');
+    else row(['worker', `${what}: ${r.slamNote}`, '–', '–', limit], 'miss');
+  }
+  const slamPass = r.slam.some((run) => slamGateOf(run).pass);
   const verdict = doc.getElementById('verdict')!;
   verdict.hidden = false;
-  verdict.className = gate.pass ? 'pass' : 'miss';
-  verdict.textContent = gate.pass ? 'Gate: pass. WP12 can start from the full tier.' : 'Gate: miss. WP12 starts from the phone tier and records these numbers.';
+  verdict.className = gate.pass && slamPass ? 'pass' : 'miss';
+  verdict.textContent = `${gate.pass ? 'Limb gate: pass.' : 'Limb gate: miss.'} The slam: ${slamVerdict(r.slam).replace(/^slam: /, '')}.`;
   const report = doc.getElementById('report') as HTMLTextAreaElement;
   report.value = formatReport(r);
   doc.getElementById('report-box')!.hidden = false;

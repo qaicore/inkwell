@@ -6,7 +6,11 @@
 //      ≥ 230) against the panel's;
 //   2. the hero in Full, the default (decision 5): 1920×1080 drawn at
 //      1080×608, P (942, 1061), d (−0.060, 0.998), a synthetic crouched
-//      figure with four limbs pinned on P and the hero's six cracks;
+//      figure with four limbs pinned on P and the hero's six cracks; under
+//      each, the comp's black / white (the round-3 targets: IF2 black ≥ 40,
+//      IF4 black ≥ 5, IF3 and IF6 white ≥ 90, IF1 white ≥ 55) and the
+//      counts the judges check (IF1's spray, IF2's tongues, IF3's inner
+//      lines, IF6's wedges, IF7's splash);
 //   3. the hero in Reduce flashing (gentle mode, G1–G4);
 //   4. a synthetic portrait: 608×1080, P (300, 1040), d (0, 1), h = −1,
 //      Reduce flashing, the same figure and cracks moved to its P.
@@ -44,7 +48,9 @@ const PANEL = [[8.1, 91.9], [47.3, 51.2], [1.9, 94.4], [11.0, 86.3], [92.7, 5.7]
 const COLUMN = 420; // px per poster on the sheet
 const GAP = 14;
 const MARGIN = 24;
-const LABEL = 44; // px under each poster
+const LABEL = 62; // px under each poster
+// The counts shown under the figure rows, by poster.
+const COUNTS: readonly (readonly string[])[] = [['spray'], ['tongues', 'comb', 'streaks'], ['inner', 'lines'], ['spikes'], ['rings'], ['wedges'], ['splash']];
 const TITLE = 34; // px above each row
 const BG = '#e9e7e2';
 const INK = '#111111';
@@ -171,6 +177,9 @@ for (const g of GEOMETRIES) {
       if (report.contour) parts.push('body as contour');
       if (report.trimmed) parts.push(`${report.trimmed} trimmed`);
       detail = parts.join(' · ');
+      const [b, wh] = coverage(canvas);
+      const counts = COUNTS[si].map((k) => `${k} ${report.counts[k] ?? 0}`).join(' · ');
+      text(sx, `comp ${b.toFixed(1)} / ${wh.toFixed(1)} · ${counts}`, x, y + ch + 56, MUTED);
     }
     text(sx, detail, x, y + ch + 37, MUTED);
   }

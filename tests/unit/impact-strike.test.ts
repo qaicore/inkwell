@@ -20,6 +20,7 @@ import {
   SPLASH_ANGLES,
   STRIKE,
   STRIKE_J,
+  SWELL_CORE,
   chargeAt,
   drawStrike,
   onFloor,
@@ -33,6 +34,7 @@ import {
   strikeStep,
   strikeStepAt,
   strikeTones,
+  splashUnit,
   type StrikeContext,
   type StrikeLimbPath,
   type StrikePlan,
@@ -108,8 +110,8 @@ function render(ictx: StrikeContext, plan: StrikePlan, sink: GlowSink = nullSink
   paintStrike(bt(ctx), sink, ictx, plan);
   return ctx.getImageData(0, 0, ictx.width, ictx.height).data;
 }
-const splashOnly = (plan: StrikePlan): StrikePlan => ({ ...plan, beams: [], bursts: [], charge: null });
-const beamsOnly = (plan: StrikePlan): StrikePlan => ({ ...plan, splash: null, bursts: [], charge: null });
+const splashOnly = (plan: StrikePlan): StrikePlan => ({ ...plan, beams: [], bursts: [], flare: null, charge: null });
+const beamsOnly = (plan: StrikePlan): StrikePlan => ({ ...plan, splash: null, bursts: [], flare: null, charge: null });
 const coverage = (data: Uint8ClampedArray) => {
   let sum = 0;
   for (let i = 3; i < data.length; i += 4) sum += data[i];
@@ -223,10 +225,11 @@ describe('beams', () => {
             let sum = 0;
             for (let i = a; i <= z; i++) sum += b.stations[i].left + b.stations[i].right;
             expect(Math.abs(sum / (z - a + 1) / b.target - 1)).toBeLessThan(0.05);
-            // The contact end flares to at least ×1.25–2.7 of it (a bulge already wider stays).
+            // The lead, the bundle at P, flares to at least ×1.25–2.7 of it (a
+            // bulge already wider stays); a strand stops inside it (r3-f3-strike).
             const end = b.stations[b.stations.length - 1].w / b.target;
-            if (s >= 1 && s <= 5) expect(end).toBeGreaterThanOrEqual(STRIKE.contactEnd[s] - 1e-9);
-            if (s === 5) expect(end).toBeCloseTo(STRIKE.contactEnd[5], 9);
+            if (b.role === 'lead' && s >= 1 && s <= 5) expect(end).toBeGreaterThanOrEqual(STRIKE.contactEnd[s] - 1e-9);
+            if (b.role === 'lead' && s === 5) expect(end).toBeCloseTo(STRIKE.contactEnd[5], 9);
           }
         }
       }
@@ -327,14 +330,19 @@ describe('beams', () => {
     }
   });
 
-  it('shows only the third nearest the tip on S0, its head tapered to a point', () => {
+  it('shows on S0 the first third of the way from each limb’s end to P, its head tapered to a point at the far end', () => {
     for (let seed = 1; seed <= 6; seed++) {
       const ictx = context({ P: [540, 560], seed });
-      const plan = planStrike(ictx, 0, limbs(ictx, 0), FULL);
+      const ls = limbs(ictx, 0);
+      const plan = planStrike(ictx, 0, ls, FULL);
+      expect(plan.beams).toHaveLength(4);
       for (const b of plan.beams) {
         const st = b.stations;
-        expect(st[0].q).toBeLessThanOrEqual(1 / 3 + 0.02);
-        expect(st[st.length - 1].q).toBe(0);
+        const E = ls.find((l) => l.id === b.id)!.centerline.at(-1)!;
+        expect(b.role).toBe('head');
+        expect(Math.hypot(st[0].p[0] - E[0], st[0].p[1] - E[1])).toBeLessThan(1e-6); // out of the limb's end
+        expect(st[0].q).toBe(1);
+        expect(Math.abs(st[st.length - 1].q - 2 / 3)).toBeLessThanOrEqual(0.02);
         expect(st[st.length - 1].w).toBeLessThanOrEqual(0.2 * b.target);
         expect(Math.max(...st.map((x) => x.w))).toBeCloseTo(b.target, 6);
       }
@@ -378,17 +386,31 @@ describe('beams', () => {
   it('follows the core-share and edge-wobble tables', () => {
     for (let s = 0; s < 7; s++) {
       const shares: number[] = [];
+      const hot: number[] = [];
       const wobble: number[] = [];
       for (let seed = 1; seed <= 15; seed++) {
         const ictx = context({ P: [540, 560], seed });
         for (const b of planStrike(ictx, s, limbs(ictx, s), FULL).beams) {
-          shares.push(b.coreShare);
+          // S6's swell paints a white-hot teardrop instead (r3-f3-strike); the
+          // table's 0.43 is S6 unswollen, below.
+          (b.hot ? hot : shares).push(b.coreShare);
           const [a, z] = b.body;
           let e2 = 0;
           for (let i = a; i <= z; i++) e2 += (b.stations[i].left - b.stations[i].w / 2) ** 2 + (b.stations[i].right - b.stations[i].w / 2) ** 2;
           wobble.push(Math.sqrt(e2 / (2 * (z - a + 1))) / ictx.frame.S);
         }
       }
+      if (s === 6) {
+        expect(shares).toHaveLength(0);
+        for (const x of hot) {
+          expect(x).toBeGreaterThan(0.45); // a strand stops early in the swell, its thin part a bigger share
+          expect(x).toBeLessThanOrEqual(SWELL_CORE.share + 1e-9);
+        }
+        for (let seed = 1; seed <= 15; seed++) {
+          const ictx = context({ P: [540, 560], seed });
+          for (const b of planStrike(ictx, s, limbs(ictx, s), { ...FULL, swell: false }).beams) shares.push(b.coreShare);
+        }
+      } else expect(hot).toHaveLength(0);
       expect(Math.abs(mean(shares) / STRIKE.coreShare[s] - 1), `S${s} core`).toBeLessThan(0.05);
       for (const x of shares) expect(x).toBeLessThanOrEqual(STRIKE.coreShare[s] + 1e-9);
       // S0 shows only its tapered head, which damps the wobble.
@@ -417,22 +439,28 @@ describe('splash', () => {
     ['portrait', (seed) => context({ P: [304, 1000], seed, w: 608, h: 1080 })],
   ];
 
-  it('covers the step’s % × σ² of the frame within ±15 %, outside an empty disc, every part on the frame', () => {
+  it('covers the step’s % of the frame within ±15 %, outside an empty disc, every part on the frame', () => {
     let mirrored = 0;
     for (const [name, make] of scenes) {
       for (let seed = 1; seed <= 5; seed++) {
         const ictx = make(seed);
-        const { P, U } = ictx.frame;
+        const { P } = ictx.frame;
         for (let s = 1; s <= 6; s++) {
           const plan = planStrike(ictx, s, [], FULL);
           const sp = plan.splash!;
           const where = `${name} seed ${seed} S${s}`;
-          expect(sp.target, where).toBeCloseTo((STRIKE.splash[s] / 100) * ictx.width * ictx.height * ictx.frame.sigma ** 2, 6);
+          expect(sp.target, where).toBeCloseTo((STRIKE.splash[s] / 100) * ictx.width * ictx.height, 6); // no σ² under Full (r3-f3-strike)
           const data = render(ictx, splashOnly(plan));
-          expect(Math.abs(coverage(data) / sp.target - 1), where).toBeLessThan(0.15);
-          // The empty disc: 0.09–0.2 U, and not one pixel in it touched.
-          expect(sp.disc / U).toBeGreaterThanOrEqual(SPLASH.disc[0]);
-          expect(sp.disc / U).toBeLessThanOrEqual(SPLASH.disc[1]);
+          // P 80 px off the bottom of a 608-wide frame leaves S5's heavy
+          // piece (11 % of the frame) and S6's pieces too little room for
+          // blades of their area: the frame cuts them, and a cut side grows
+          // only so far (SPLASH.grow), so they show 15–25 % short (r3-f3-strike).
+          const tolerance = name === 'portrait' && s >= 5 ? 0.25 : 0.15;
+          expect(Math.abs(coverage(data) / sp.target - 1), where).toBeLessThan(tolerance);
+          // The empty disc: 0.09–0.2 L (S under Full, r3-f3-strike), and not one pixel in it touched.
+          const L = splashUnit(ictx.frame);
+          expect(sp.disc / L).toBeGreaterThanOrEqual(SPLASH.disc[0]);
+          expect(sp.disc / L).toBeLessThanOrEqual(SPLASH.disc[1]);
           let hits = 0;
           for (let y = Math.max(0, Math.floor(P[1] - sp.disc)); y <= Math.min(ictx.height - 1, Math.ceil(P[1] + sp.disc)); y++) {
             for (let x = Math.max(0, Math.floor(P[0] - sp.disc)); x <= Math.min(ictx.width - 1, Math.ceil(P[0] + sp.disc)); x++) {
@@ -490,8 +518,13 @@ describe('splash', () => {
     const total = bins.reduce((p, q) => p + q, 0);
     SPLASH_ANGLES.forEach(([from, to, share], i) => expect(Math.abs((100 * bins[i]) / total - 100 * share), `${from}–${to}°`).toBeLessThanOrEqual(5));
     // Nothing within 30° of the source but a stray anti-aliased pixel where
-    // sizing a piece tipped its rim over the line.
-    expect(bins[0] / total).toBeLessThan(1e-5);
+    // sizing a piece tipped its rim over the line, and, since Full sizes the
+    // splash to the frame without σ² (r3-f3-strike), the odd S5 piece, a
+    // tenth of this small frame, too wide to fit between 30° and 180°. It
+    // is wider still where the frame leaves it no room for its length (a
+    // short wide stub instead of a blade the frame cuts, r3-f3-strike): 4.2e-4
+    // of the area over the 200 seeds, all of it S5's.
+    expect(bins[0] / total).toBeLessThan(5e-4);
     expect(pieces).toBe(200 * STRIKE.pieces.reduce<number>((p, q) => p + q, 0));
   }, 120_000);
 
@@ -589,10 +622,12 @@ describe('bursts, charge and glow', () => {
       const fills = sink.calls.flatMap((x) => (x.op === 'fill' ? [x] : []));
       const parts = plan.splash ? plan.splash.pieces.reduce((n, p) => n + p.parts.length, 0) : 0;
       const cores = plan.beams.reduce((n, b) => n + b.core.length, 0);
+      const flare = (STRIKE.flares as readonly number[]).includes(s) ? 1 : 0; // the flare star emits as core
+      expect(plan.flare === null).toBe(flare === 0);
       expect(fills.filter((x) => x.kind === 'body' && x.gain === g)).toHaveLength(plan.beams.length);
-      expect(fills.filter((x) => x.kind === 'core' && x.gain === g)).toHaveLength(cores);
+      expect(fills.filter((x) => x.kind === 'core' && x.gain === g)).toHaveLength(cores + flare);
       expect(fills.filter((x) => x.kind === 'body' && x.gain === g * SPLASH.glow)).toHaveLength(parts);
-      expect(fills).toHaveLength(plan.beams.length + cores + parts);
+      expect(fills).toHaveLength(plan.beams.length + cores + parts + flare);
       const strokes = sink.calls.flatMap((x) => (x.op === 'stroke' ? [x] : []));
       expect(strokes).toHaveLength(2 * plan.bursts.length);
       for (const x of strokes) expect(x.gain).toBe(g);

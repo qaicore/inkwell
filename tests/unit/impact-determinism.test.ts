@@ -27,7 +27,10 @@ function hashes(scene: ImpactScene, from: number, to: number): string[] {
 }
 
 describe('determinism', () => {
-  it('renders I − 10..I + 45 to the same hashes twice, and each sampled frame alone as it was in sequence', () => {
+  // Eight fresh scenes, each with its own physics and body scan: about 47 s
+  // alone and 60–67 s under the whole unit suite (Nov 2), past the default
+  // 60 s. Its own timeout is a hang guard, nearly twice that, not a budget.
+  it('renders I − 10..I + 45 to the same hashes twice, and each sampled frame alone as it was in sequence', { timeout: 120_000 }, () => {
     const first = hashes(sceneOf(), FROM, TO);
     const second = hashes(sceneOf(), FROM, TO);
     expect(second).toEqual(first);

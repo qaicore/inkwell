@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { SHAKE_LATERAL, SHAKE_REF, SHAKE_SCALE, cameraAt, capJolt, composeAffine, mapPoint, shakeAt, zoomCentre, type Affine, type CameraContext } from '../../src/impact/camera.ts';
+import { SHAKE_LATERAL, SHAKE_REF, SHAKE_SCALE, cameraAt, cameraZoom, capJolt, composeAffine, mapPoint, shakeAt, shakeKeep, zoomCentre, type Affine, type CameraContext } from '../../src/impact/camera.ts';
 import { zoomAt } from '../../src/impact/clock.ts';
 import type { ImpactContext } from '../../src/impact/contracts.ts';
 import { strikeFrame } from '../../src/impact/floor.ts';
@@ -54,7 +54,8 @@ describe('the punch-in', () => {
       expect(cam.zoom, `j ${j}`).toBeCloseTo(z, 12);
       expect([cam.a, cam.b, cam.c, cam.d]).toEqual([cam.zoom, 0, 0, cam.zoom]);
     }
-    for (let j = -20; j <= 60; j++) expect(cameraAt(j, HERO_CTX).zoom).toBe(zoomAt(j));
+    for (let j = 0; j <= 60; j++) expect(cameraAt(j, HERO_CTX).zoom).toBe(zoomAt(j));
+    for (let j = -20; j < 0; j++) expect(cameraAt(j, HERO_CTX).zoom).toBe(cameraZoom(j)); // the pull-back (r3-f3-camera)
   });
 
   it('holds c_z = mix(frame centre, P, 0.5) still and scales about it', () => {
@@ -72,8 +73,8 @@ describe('the punch-in', () => {
     }
   });
 
-  it('is exactly the identity before contact and from j 39 on', () => {
-    for (const j of [-200, -14, -8, -1, 39, 40, 45, 129]) {
+  it('is exactly the identity before the coil, on S6 and from j 39 on', () => {
+    for (const j of [-200, -14, -1, 39, 40, 45, 129]) {
       const cam = cameraAt(j, HERO_CTX);
       expect(affine(cam), `j ${j}`).toEqual(IDENTITY);
       expect(cam.offset).toEqual([0, 0]);
@@ -197,24 +198,25 @@ describe('the cap', () => {
     }
   });
 
-  it('stops a capped jolt with a frame edge exactly on the canvas edge', () => {
+  it('stops a capped shake with a frame edge exactly on the canvas edge on its tightest jolt', () => {
     let capped = 0;
     for (const ctx of [HERO_CTX, ...LANDSCAPE, ...PORTRAIT]) {
-      for (let j = 9; j <= 18; j++) {
-        const cam = cameraAt(j, ctx);
-        if (Math.hypot(...cam.offset) >= Math.hypot(...shakeAt(j, ctx)) - 1e-9) continue;
-        capped++;
+      if (shakeKeep(ctx) >= 1) continue;
+      capped++;
+      const room = Array.from({ length: 10 }, (_, n) => {
+        const cam = cameraAt(9 + n, ctx);
         const tl = mapPoint(cam, [0, 0]);
         const br = mapPoint(cam, [ctx.width, ctx.height]);
-        expect(Math.min(-tl[0], -tl[1], br[0] - ctx.width, br[1] - ctx.height)).toBeCloseTo(0, 9);
-      }
+        return Math.min(-tl[0], -tl[1], br[0] - ctx.width, br[1] - ctx.height);
+      });
+      expect(Math.min(...room)).toBeCloseTo(0, 9); // one jolt meets the edge; the others keep some room
     }
     expect(capped).toBeGreaterThan(20);
   });
 });
 
 describe('coverage', () => {
-  it('the frame covers the canvas on every frame from j 0 to 45: the hero, and 100 random P in landscape and in portrait', () => {
+  it('the frame covers the canvas on every frame from j −20 to 45: the hero, and 100 random P in landscape and in portrait', () => {
     const sets: [string, CameraContext[]][] = [
       ['hero', [HERO_CTX, heroAt(0.5)]],
       ['landscape', LANDSCAPE],
@@ -224,7 +226,7 @@ describe('coverage', () => {
     ];
     for (const [name, ctxs] of sets) {
       for (const ctx of ctxs) {
-        for (let j = 0; j <= 45; j++) expect(covers(cameraAt(j, ctx), ctx.width, ctx.height), `${name}: P (${ctx.frame.P}) on ${ctx.width}×${ctx.height}, j ${j}`).toBe(true);
+        for (let j = -20; j <= 45; j++) expect(covers(cameraAt(j, ctx), ctx.width, ctx.height), `${name}: P (${ctx.frame.P}) on ${ctx.width}×${ctx.height}, j ${j}`).toBe(true);
       }
     }
   });
@@ -244,17 +246,24 @@ describe('the hero', () => {
     expect(raw[0]).toBeLessThan(0);
   });
 
-  it('the zoom leaves 22.4 px below c_z, so jolt 1 is cut to that; jolt 2, 28.5 px down, fits the 60 px above', () => {
+  it('the zoom leaves 22.4 px below c_z, so jolt 1 is cut to that, and the whole envelope by the same 0.53', () => {
     const one = cameraAt(9, HERO_CTX);
     const raw = shakeAt(9, HERO_CTX);
     expect(one.offset[1]).toBeCloseTo(-22.36, 9);
     expect(one.offset[0]).toBeCloseTo((raw[0] * 22.36) / -raw[1], 9);
     expect(mapPoint(one, [0, 1080])[1]).toBeCloseTo(1080, 9); // the frame's bottom edge sits on the canvas bottom
     expect(dot(one.offset, UP)).toBeCloseTo(22.248, 3);
+    const keep = shakeKeep(HERO_CTX);
+    expect(keep).toBeCloseTo(22.36 / -raw[1], 9);
+    expect(keep).toBeCloseTo(0.5255, 4);
     const two = cameraAt(10, HERO_CTX);
-    expect(two.offset).toEqual(shakeAt(10, HERO_CTX)); // not cut
-    expect(dot(two.offset, D)).toBeCloseTo(28.512, 9);
-    for (let j = 10; j <= 18; j++) expect(cameraAt(j, HERO_CTX).offset, `j ${j}`).toEqual(shakeAt(j, HERO_CTX)); // only jolt 1 is cut
+    expect(dot(two.offset, D)).toBeCloseTo(28.512 * keep, 9); // 15.0 px down, not round 2's whole 28.5
+    for (let j = 9; j <= 18; j++) {
+      const o = shakeAt(j, HERO_CTX);
+      const got = cameraAt(j, HERO_CTX).offset;
+      expect(got[0], `j ${j}`).toBeCloseTo(o[0] * keep, 9);
+      expect(got[1], `j ${j}`).toBeCloseTo(o[1] * keep, 9);
+    }
   });
 
   it("design §7's figures (42 px whole, then 21 px) are what the cap gives a shake that starts away from the striker", () => {
@@ -288,7 +297,7 @@ describe('the affine helpers', () => {
 
   it('scales with the frame: the hero at half size gets the same camera at half size', () => {
     const half = heroAt(0.5);
-    for (let j = -2; j <= 45; j++) {
+    for (let j = -20; j <= 45; j++) {
       const full = cameraAt(j, HERO_CTX);
       const small = cameraAt(j, half);
       expect(small.zoom).toBe(full.zoom);

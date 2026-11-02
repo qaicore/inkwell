@@ -8,14 +8,14 @@ import { describe, expect, it } from 'vitest';
 import type { LimbControl, StrikeController, StrikeStep, Vec3 } from '../../src/impact/contracts.ts';
 import { project, toCamera, type Body3D } from '../../src/lift/body.ts';
 import { animate3d, liftStroke, type Frame3D, type Lifted } from '../../src/lift/lift.ts';
-import { bulgeSide, limbsFirst, speedExempt, strikeController, strikeCurve, strikePhase, type StrikeOptions } from '../../src/lift/strike.ts';
+import { bulgeSide, limbsFirst, speedExempt, strikeController, strikeCurve, strikePhase, strikeStem, whipFrom, type StrikeOptions } from '../../src/lift/strike.ts';
 import type { Vec2 } from '../../src/types/effect.ts';
 
 const I = 84;
 const STRIKE_AT = limbsFirst(I);
 const { land: LAND, release: RELEASE } = STRIKE_AT;
 const STEPS = 4; // 120 Hz physics at 30 fps
-const EASE = 10; // 4 drawings at 12 a second, in frames
+const EASE = 20; // 8 drawings at 12 a second, in frames
 const P: Vec2 = [1180, 1000];
 const D: Vec2 = [-0.06, 0.998]; // the hero's strike direction, not quite unit length
 const D_LEN = Math.hypot(D[0], D[1]);
@@ -144,27 +144,28 @@ function ordersAt(ctl: StrikeController, b: Body3D, strokes: Lifted[], f: number
 }
 
 describe('the limbs-first schedule', () => {
-  it('lands at I − 7 and lets go at I + 9, with the whip, the landing and the release exempt from the speed guard', () => {
+  it('lands at I − 7 and lets go at I + 9, with the whip (land − 2..land, the tip onto P on land) and the recoil (the release and 5 frames on) exempt from the speed guard', () => {
     expect(limbsFirst(84)).toEqual({ land: 77, release: 93 });
-    expect([75, 76, 77, 78, 92, 93, 94].map((f) => speedExempt(f, STRIKE_AT))).toEqual([false, true, true, false, false, true, false]);
+    expect(whipFrom(STRIKE_AT)).toBe(75);
+    expect([74, 75, 76, 77, 78, 92, 93, 94, 98, 99].map((f) => speedExempt(f, STRIKE_AT))).toEqual([false, true, true, true, false, false, true, true, true, false]);
   });
 
-  it('runs coil, strike, pinned and release on the hero frames, with the coil at (j + 14)/6', () => {
+  it('runs coil, strike, pinned and release on the hero frames, with the coil at (j + 14)/6 and the release easing over 8 drawings', () => {
     const phase = (f: number, sub = STEPS) => strikePhase(f, sub, STEPS, STRIKE_AT, EASE);
     expect(phase(69)).toEqual({ kind: 'none' });
     expect(phase(70, 1)).toEqual({ kind: 'coil', p: 0 });
     expect(phase(70)).toEqual({ kind: 'coil', p: 0 }); // j −14: ease_in(0)
-    for (let f = 71; f <= 75; f++) {
+    for (let f = 71; f <= 74; f++) {
       const ph = phase(f);
       expect(ph.kind).toBe('coil');
       if (ph.kind === 'coil') expect(ph.p).toBeCloseTo((f - 70) / 6, 12);
     }
-    expect(phase(76)).toEqual({ kind: 'strike' });
-    for (let f = 77; f <= 92; f++) expect(phase(f, 1).kind, `f${f}`).toBe('pinned');
-    expect(phase(93, 1)).toEqual({ kind: 'release', q: 0.025, first: true });
-    expect(phase(93, 2)).toEqual({ kind: 'release', q: 0.05, first: false });
-    expect(phase(102)).toEqual({ kind: 'release', q: 1, first: false });
-    expect(phase(103, 1)).toEqual({ kind: 'none' });
+    for (const f of [75, 76, 77]) expect(phase(f, 1), `f${f}`).toEqual({ kind: 'strike' });
+    for (let f = 78; f <= 92; f++) expect(phase(f, 1).kind, `f${f}`).toBe('pinned');
+    expect(phase(93, 1)).toEqual({ kind: 'release', q: 0.0125, first: true });
+    expect(phase(93, 2)).toEqual({ kind: 'release', q: 0.025, first: false });
+    expect(phase(112)).toEqual({ kind: 'release', q: 1, first: false });
+    expect(phase(113, 1)).toEqual({ kind: 'none' });
   });
 });
 
@@ -212,7 +213,7 @@ describe('the orders', () => {
   it('gives no orders before the coil, after the release has eased out, or to a stroke that is not a limb', () => {
     const ctl = fresh();
     expect(ordersAt(ctl, bodies[69], strokes, 69, 4).orders.every((o) => o === null)).toBe(true);
-    expect(ordersAt(ctl, bodies[103], strokes, 103, 1).orders.every((o) => o === null)).toBe(true);
+    expect(ordersAt(ctl, bodies[113], strokes, 113, 1).orders.every((o) => o === null)).toBe(true);
     for (const [f, sub] of [[70, 1], [75, 4], [76, 2], [80, 3], [93, 1], [102, 4]]) {
       const { orders } = ordersAt(ctl, bodies[f], strokes, f, sub);
       expect(orders.slice(0, 4).every((o) => o !== null), `f${f}`).toBe(true);
@@ -220,10 +221,10 @@ describe('the orders', () => {
     }
   });
 
-  it('turns each coil target about its root on screen, away from P, by 30°·ease_in, z kept, and stiffens it from 0.1 toward 0.5', () => {
+  it('turns each coil target about its root on screen, away from P, by 30°·ease_in, root first, z kept, and stiffens it from 0.1 toward 0.5', () => {
     const ctl = fresh();
-    const b = bodies[75];
-    const { at, orders } = ordersAt(ctl, b, strokes, 75, STEPS); // p = 5/6
+    const b = bodies[74];
+    const { at, orders } = ordersAt(ctl, b, strokes, 74, STEPS); // p = 4/6 at the root, (4 − 3)/(6 − 3) at the tip
     let turned = 0;
     at.limbs.slice(0, 4).forEach((l, i) => {
       const o = orders[i]!;
@@ -242,8 +243,11 @@ describe('the orders', () => {
       const full = (30 * Math.PI) / 180;
       const away = Math.sin(before) / Math.sin((15 * Math.PI) / 180); // the coil fades within 15° of P or of straight away
       if (Math.abs(away) >= 1) {
-        expect(turn).toBeCloseTo(full * (5 / 6) ** 3, 9);
+        expect(turn).toBeCloseTo(full * (1 / 3) ** 3, 9);
         expect(after).toBeGreaterThan(before);
+        // Root first: the middle has wound further than the tip.
+        const mid = Math.abs(wrap(angleOf(from(target[15])) - angleOf(from(l.target[15]))));
+        expect(mid).toBeGreaterThan(turn);
         turned++;
       }
       expect(o.stiffness!).toBeGreaterThanOrEqual(l.stiffness);
@@ -253,13 +257,21 @@ describe('the orders', () => {
     expect(turned).toBeGreaterThanOrEqual(3);
   });
 
-  it('whips onto the strike curve at stiffness 1, then pins the tip onto P at the curve`s depth with the rest lengths at C`s', () => {
+  it('whips onto the strike curve laid on the chain, the inner half first and the tip onto P at the landing, then pins the tip onto P at the curve`s depth, rippling, with the rest lengths at the curve`s', () => {
     const ctl = fresh();
-    const strike = ordersAt(ctl, bodies[76], strokes, 76, 2).orders;
-    for (const o of strike.slice(0, 4)) {
-      expect(o!.stiffness).toBe(1);
-      expect(o!.pin).toBeUndefined();
-    }
+    // Mid-whip (u = 1/2): laid on the chain (its own tip pinned, so the lift
+    // places it exactly), the root half already on C and the tip still out.
+    const mid = ordersAt(ctl, bodies[76], strokes, 76, 2);
+    const end = ordersAt(ctl, bodies[77], strokes, 77, STEPS); // the whip's end: on C, the tip on P
+    mid.at.limbs.slice(0, 4).forEach((l, i) => {
+      const o = mid.orders[i]!;
+      expect(o.stiffness).toBe(1);
+      expect(o.pin).toEqual(o.target!.at(-1));
+      expect(o.target![0]).toEqual(l.target[0]);
+      expect(dist2(project(bodies[76], o.pin!).xy, P)).toBeGreaterThan(20);
+      const e = end.orders[i]!;
+      expect(dist2(project(bodies[77], e.pin!).xy, P)).toBeLessThan(1e-6);
+    });
     const b = bodies[80];
     const { at, orders } = ordersAt(ctl, b, strokes, 80, 3);
     at.limbs.slice(0, 4).forEach((l, i) => {
@@ -269,29 +281,44 @@ describe('the orders', () => {
       expect(target[0]).toEqual(l.target[0]);
       expect(o.pin).toEqual(target.at(-1));
       expect(dist2(project(b, o.pin!).xy, P)).toBeLessThan(1e-6);
-      expect(o.pin![2] - l.target[0][2]).toBeCloseTo(0.25 * UNIT, 9); // z lifted 0.25 unit at the tip
+      const S = strikeStem(b, l.target[0]); // the curve sets off out of his back
+      expect(o.pin![2] - S[2]).toBeCloseTo(0.25 * UNIT, 9); // z lifted 0.25 unit at the tip
       expect(o.restScale!).toBeCloseTo(polyLength(target) / polyLength(l.target), 12);
-      // Every node lies on C, bowed the way the drawn limb bows.
+      // Every node past the stem lies on C (from the stem's end), bowed the
+      // way the drawn limb bows, but for the ripple running down it:
+      // 0.05·|P − R| at most, and there.
       const R = project(b, l.target[0]).xy;
+      const RS = project(b, S).xy;
       const side = bulgeSide(l.target.map((q) => project(b, q).xy));
-      const curve = Array.from({ length: 4001 }, (_, k) => strikeCurve(R, P, side, k / 4000));
-      for (const q of target) expect(Math.min(...curve.map((c) => dist2(c, project(b, q).xy)))).toBeLessThan(0.5);
+      const curve = Array.from({ length: 4001 }, (_, k) => strikeCurve(RS, P, side, k / 4000));
+      const stem = dist2(R, RS);
+      const off = target.filter((q) => dist2(project(b, q).xy, R) > stem + 1).map((q) => Math.min(...curve.map((c) => dist2(c, project(b, q).xy))));
+      expect(off.length).toBeGreaterThan(target.length - 6);
+      expect(Math.max(...off)).toBeLessThan(0.05 * dist2(P, R) + 0.5);
+      expect(Math.max(...off)).toBeGreaterThan(1);
     });
   });
 
-  it('lets go on the release: no pin, the drawing`s own target and stiffness, and the recoil −d̂·1.5 unit/s·t_i ± 0.4 across on its first step only', () => {
+  it('lets go on the release: no pin, the drawn length back within the frame, a bow of it handing back to the drawing`s own target, and the recoil −d̂·1.5 unit/s·t_i ± 0.4 across on its first step only', () => {
     const ctl = fresh();
-    const pinned = ordersAt(ctl, bodies[93], strokes, 92, STEPS).orders; // C's scale on the same body
-    const { at, orders } = ordersAt(ctl, bodies[93], strokes, 93, 1);
+    const pinned = ordersAt(ctl, bodies[93], strokes, 92, STEPS).orders; // the chains on C, on the same body
+    const chains = pinned.slice(0, 4).map((o) => o!.target!);
+    chains.push(strokes[4].points.map((q) => toCamera(bodies[93], q)));
+    const { at, orders } = ordersAt(ctl, bodies[93], strokes, 93, 1, chains);
     const across: Vec2 = [-DHAT[1], DHAT[0]];
     const laterals: number[] = [];
     at.limbs.slice(0, 4).forEach((l, i) => {
       const o = orders[i]!;
       expect(o.pin).toBeNull();
-      expect(o.target).toBeUndefined();
-      expect(o.stiffness).toBeUndefined();
+      // Half the way from the chain's length to the drawn length on each step.
       const scale = pinned[i]!.restScale!;
-      expect(Math.abs(o.restScale! - scale)).toBeLessThan(Math.abs(1 - scale) * 0.01); // the ease has barely begun
+      expect(o.restScale!).toBeCloseTo(scale + (1 - scale) * 0.5, 9);
+      // The target: the drawn length, from the root, held near stiffness 1.
+      const target = o.target!;
+      expect(target).toHaveLength(l.target.length);
+      expect(target[0]).toEqual(l.target[0]);
+      expect(Math.abs(polyLength(target) / polyLength(l.target) - 1)).toBeLessThan(0.02); // the pull out of P stretches it a little
+      expect(o.stiffness!).toBeGreaterThan(0.99);
       const impulse = o.impulse!;
       expect(impulse).toHaveLength(l.target.length);
       expect(Math.hypot(...impulse[0])).toBe(0); // the root's share
@@ -306,8 +333,9 @@ describe('the orders', () => {
     });
     expect(new Set(laterals.map((x) => x.toFixed(9))).size).toBe(4); // seeded per limb
     for (const sub of [2, 3, 4]) expect(ordersAt(ctl, bodies[93], strokes, 93, sub).orders.every((o) => !o?.impulse)).toBe(true);
-    const done = ordersAt(ctl, bodies[102], strokes, 102, STEPS).orders;
+    const done = ordersAt(ctl, bodies[112], strokes, 112, STEPS).orders; // the end of the ease
     expect(done.slice(0, 4).map((o) => o!.restScale)).toEqual([1, 1, 1, 1]);
+    for (const o of done.slice(0, 4)) expect(o!.stiffness).toBeCloseTo(0.1, 9);
   });
 
   it('draws the lateral from the seed: the same seed gives the same recoil, another seed another', () => {
@@ -327,14 +355,14 @@ describe('the strike in the lift (land 77, release 93)', () => {
   const { bodies, log, frames } = run();
   const steps = withAfter(log);
 
-  it('projects every tip within 0.5 px of P on every step from the landing to release − 1, and draws it there', () => {
+  it('projects every tip within 0.5 px of P on every step from the landing`s end to release − 1, and draws it there', () => {
     let worst = 0;
     let n = 0;
     for (const s of steps) {
-      if (s.at.f < LAND || s.at.f >= RELEASE) continue;
+      if (s.at.f < LAND || s.at.f >= RELEASE || (s.at.f === LAND && s.at.sub < STEPS)) continue; // the whip's last frame brings the tip onto P
       for (let i = 0; i < LIMBS.length; i++, n++) worst = Math.max(worst, dist2(project(s.at.body, s.after[i].at(-1)!).xy, P));
     }
-    expect(n).toBe((RELEASE - LAND) * STEPS * LIMBS.length);
+    expect(n).toBe(((RELEASE - LAND - 1) * STEPS + 1) * LIMBS.length);
     expect(worst).toBeLessThan(0.5);
     for (let f = LAND; f < RELEASE; f++) {
       const placed = frames[f].placed.filter((p) => LIMBS.includes(p.id));
@@ -349,14 +377,17 @@ describe('the strike in the lift (land 77, release 93)', () => {
     expect(worst).toBeLessThan(0.5);
   });
 
-  it('has every segment back within 2 % of its rest length from 4 drawings after the release on (P2)', () => {
+  it('has every segment back within 2 % of its rest length from 8 drawings after the release on (P2)', () => {
+    // The rest length then: the lift's own, at the share of it the limb was drawn at (decision 15).
+    const strokes = strokesOn(bodies[DRAWN]);
+    const share = strokes.map((s) => Math.min(1, s.drawn! / s.points.slice(1).reduce((sum, q, k) => sum + dist3(s.points[k], q), 0)));
     const late = withAfter(run(160).log).filter((s) => s.at.f >= RELEASE + EASE);
     let worst = 0;
     for (const s of late) {
       expect(s.orders.every((o) => o === null)).toBe(true); // the limbs are the lift's again
       s.at.limbs.forEach((l, i) => {
         for (let j = 0; j + 1 < l.target.length; j++) {
-          const rest = dist3(l.target[j], l.target[j + 1]);
+          const rest = dist3(l.target[j], l.target[j + 1]) * (LIMBS.includes(l.id) ? share[i] : 1);
           worst = Math.max(worst, Math.abs(dist3(s.after[i][j], s.after[i][j + 1]) - rest) / rest);
         }
       });
@@ -365,30 +396,22 @@ describe('the strike in the lift (land 77, release 93)', () => {
     expect(worst).toBeLessThan(0.02);
   });
 
-  it('sends every tip along −d in the 3 frames after the release', () => {
+  it('pulls every tip out of P along −d on the release, and keeps it out along −d for the 3 frames after', () => {
     const back: Vec2 = [-DHAT[0], -DHAT[1]];
     LIMBS.forEach((id, i) => {
       const tip = (f: number) => project(bodies[f], frames[f].sim[i].points.at(-1)!).xy;
-      for (let f = RELEASE; f < RELEASE + 3; f++) {
-        const [a, b] = [tip(f - 1), tip(f)];
-        expect((b[0] - a[0]) * back[0] + (b[1] - a[1]) * back[1], `limb ${id} f${f}`).toBeGreaterThan(0);
-      }
+      // The drawn length comes back on the release frame, so the tip leaves P
+      // back along C at once (and the pull carries it on up −d̂); after that
+      // it may settle back a little onto its order, never back to P.
+      const out = (f: number) => (tip(f)[0] - P[0]) * back[0] + (tip(f)[1] - P[1]) * back[1];
+      expect(out(RELEASE), `limb ${id}`).toBeGreaterThan(20);
+      for (let f = RELEASE + 1; f < RELEASE + 3; f++) expect(out(f), `limb ${id} f${f}`).toBeGreaterThan(0.5 * out(RELEASE));
       const [a, b] = [tip(RELEASE - 1), tip(RELEASE + 2)];
       const m: Vec2 = [b[0] - a[0], b[1] - a[1]];
       expect((m[0] * back[0] + m[1] * back[1]) / Math.hypot(m[0], m[1]), `limb ${id}`).toBeGreaterThan(0.5); // within 60° of −d
     });
-    // Here the chains also shorten back from C and swing up toward their
-    // drawings, so check the recoil's own share too: against the same release
-    // without the impulse, every tip is further along −d.
-    const inner = strikeController(options());
-    const withoutRecoil: StrikeController = { ...STRIKE_AT, step: (at) => inner.step(at).map((o) => (o?.impulse ? { ...o, impulse: undefined } : o)) };
-    const still = animate3d({ strokes: strokesOn(bodies[DRAWN]), bodies, frames: RELEASE + 3, dps: 12, boil: BOIL, width: 1920, control: withoutRecoil, slam: { I, posters: true } });
-    LIMBS.forEach((id, i) => {
-      const at = (fr: Frame3D[], f: number) => project(bodies[f], fr[f].sim[i].points.at(-1)!).xy;
-      expect(at(still, RELEASE - 1)).toEqual(at(frames, RELEASE - 1));
-      const [a, b] = [at(still, RELEASE + 2), at(frames, RELEASE + 2)];
-      expect((b[0] - a[0]) * back[0] + (b[1] - a[1]) * back[1], `limb ${id}`).toBeGreaterThan(1);
-    });
+    // The released throw, held near stiffness 1, now sets where the tips go:
+    // the recoil's own share is checked on its step in 'the orders'.
   });
 
   it('leaves a stroke that is not one of the limbs exactly as the plain lift moves it', () => {
@@ -396,18 +419,19 @@ describe('the strike in the lift (land 77, release 93)', () => {
     for (let f = 0; f < FRAMES; f++) expect(frames[f].sim[4].points, `f${f}`).toEqual(plain[f].sim[4].points);
   });
 
-  it('gives byte-identical arrays on two runs, and a new seed changes nothing before the release', () => {
+  it('gives byte-identical arrays on two runs, and a new seed changes nothing before the whip (the ripple is seeded too)', () => {
     const again = run();
     expect(sha(flatten(again.frames))).toBe(sha(flatten(frames)));
     expect(sha(flattenOrders(again.log))).toBe(sha(flattenOrders(log)));
     const other = run(FRAMES, { seed: SEED + 1 });
-    expect(sha(flatten(other.frames.slice(0, RELEASE)))).toBe(sha(flatten(frames.slice(0, RELEASE))));
-    expect(sha(flatten(other.frames.slice(RELEASE)))).not.toBe(sha(flatten(frames.slice(RELEASE))));
+    const whip = whipFrom(STRIKE_AT);
+    expect(sha(flatten(other.frames.slice(0, whip)))).toBe(sha(flatten(frames.slice(0, whip))));
+    expect(sha(flatten(other.frames.slice(whip)))).not.toBe(sha(flatten(frames.slice(whip))));
   });
 });
 
 describe('10,000 steps (P3)', () => {
-  it('gives no NaN, and keeps every tip under 20 torso heights a second on every frame but land − 1, land and the release', () => {
+  it('gives no NaN, and keeps every tip under 20 torso heights a second on every frame but land − 1, land and the recoil', () => {
     const frames = 2501; // 2500 frames of 4 steps
     const bodies = bodies3d(frames);
     const strokes = strokesOn(bodies[DRAWN]);

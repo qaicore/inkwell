@@ -110,8 +110,9 @@ const deps = (make: MakeScratch = nodeScratch): ComposeDeps => ({ make, drawStro
 const freshMaker = (): MakeScratch => (w, h) => nodeScratch(w, h); // its own caches
 
 describe('the stack (design §7)', () => {
-  it('has the 12 slots, bottom to top: fire and cluster in 4, the dust band and wall in 5', () => {
-    expect(STACK_ORDER).toEqual(['plate', 'aura', 'cracks', 'fire', 'dust', 'floods', 'limbsBehind', 'person', 'limbsFront', 'fx', 'flash', 'glow']);
+  it('has the 13 slots, bottom to top: the masses right over the limbs in front, under the thin fx', () => {
+    expect(STACK_ORDER).toEqual(['plate', 'aura', 'cracks', 'fire', 'dust', 'floods', 'limbsBehind', 'person', 'limbsFront', 'masses', 'fx', 'flash', 'glow']);
+    expect(STACK_ORDER.indexOf('masses')).toBe(STACK_ORDER.indexOf('limbsFront') + 1);
     expect(STACK_ORDER.indexOf('dust')).toBe(STACK_ORDER.indexOf('fire') + 1);
   });
 
@@ -121,7 +122,7 @@ describe('the stack (design §7)', () => {
     for (const slot of [...STACK_ORDER].reverse()) slots[slot] = [rectLayer(null, '#102030', [0, 0, 1, 1], log, slot)];
     slots.fx = [rectLayer(null, '#000000', [0, 0, 1, 1], log, 'fx a'), rectLayer('fx b', '#000000', [0, 0, 1, 1], log, 'fx b')];
     drawStack(brush(fill(32, 18, '#000000')), frameLayers(slots), null, createLayerCache(nodeScratch, 32, 18));
-    expect(log).toEqual([...STACK_ORDER.slice(0, 9), 'fx a', 'fx b', 'flash', 'glow']);
+    expect(log).toEqual([...STACK_ORDER.slice(0, 10), 'fx a', 'fx b', 'flash', 'glow']);
   });
 
   it('lays the dust over the cluster, and both under the person', () => {
@@ -200,6 +201,21 @@ describe('the stack (design §7)', () => {
     const whole = fill(w, h, '#000000');
     drawStack(brush(whole), layers(null), null, createLayerCache(nodeScratch, w, h));
     expect(at(whole, 60, 34)).toEqual(rgbOf('#80c040'));
+  });
+
+  it('never cuts the masses: the smoke over his face stays whole, under the thin fx that are cut', () => {
+    const [w, h] = [160, 90];
+    const face = rectMask(40, 22, [10, 5, 20, 12]); // frame x 40..80, y 20..48
+    const layers = frameLayers(
+      { plate: [rectLayer(null, '#203040', [0, 0, w, h])], masses: [rectLayer('cluster', '#642c13', [0, 0, w, 60])], fx: [rectLayer('sparks', '#ffdf3e', [0, 30, w, 10])] },
+      { faceCut: face },
+    );
+    const c = fill(w, h, '#000000');
+    drawStack(brush(c), layers, null, createLayerCache(nodeScratch, w, h));
+    expect(at(c, 60, 25)).toEqual(rgbOf('#642c13')); // the face, under the smoke: no hole
+    expect(at(c, 60, 35)).toEqual(rgbOf('#642c13')); // the sparks are cut there ...
+    expect(at(c, 120, 35)).toEqual(rgbOf('#ffdf3e')); // ... and nowhere else
+    expect(at(c, 60, 70)).toEqual(rgbOf('#203040'));
   });
 });
 
@@ -434,10 +450,16 @@ describe('budget at 1080×608 (design §10)', () => {
   // Timed while other test files share the CPU (npm run check:fast runs them
   // all at once, and everything takes two to three times as long): a batch
   // over its bound is measured again, twice at most. Any other failure fails
-  // at once.
+  // at once. Decision 11: each bound is about 1.5 × the worst median measured
+  // under the whole unit suite (five runs, Nov 2), with the design's number
+  // and today's beside it.
   const UNDER_LOAD = { retry: { count: 2, delay: 300, condition: /to be less than or equal to/ } };
+  const CUTOUT_MS = 11.5; // design 6 (§10's person cutout); today 3.6–7.7 under the whole suite
+  const HALF_GRADE_MS = 13; // no design line; today 6.3–8.7 under the whole suite
+  const STILL_MS = 7.5; // design 2 (§10's camera and layer composite); today 3.4–4.9 under the whole suite
+  const CAMERA_MS = 19; // design 2; today 9.3–12.6 under the whole suite
 
-  it('the person cutout, from a mask decoded ahead: ≤ 6 ms (median of 10); with its half grade ≤ 9', UNDER_LOAD, () => {
+  it('the person cutout, from a mask decoded ahead: ≤ 11.5 ms (median of 10; design 6 ms); with its half grade ≤ 13', UNDER_LOAD, () => {
     const image = video(W, H);
     const mask = personMask(); // a 248×568 px box
     frameMask(nodeScratch, mask, W, H); // ahead of the frame
@@ -453,19 +475,19 @@ describe('budget at 1080×608 (design §10)', () => {
     const plain = median(run(null));
     const graded = median(run(gradeAt(31, ictx)));
     console.log(`cutout: ${plain.median.toFixed(2)} ms, ${graded.median.toFixed(2)} ms with the person's half grade (g8) (medians of 10, 1080×608)`);
-    expect(plain.median, `ms: ${plain.ms.map((m) => m.toFixed(1)).join(' ')}`).toBeLessThanOrEqual(6);
+    expect(plain.median, `ms: ${plain.ms.map((m) => m.toFixed(1)).join(' ')}`).toBeLessThanOrEqual(CUTOUT_MS);
     // The half grade is the grade's three ops again over the person's box; held to a measured bound.
-    expect(graded.median, `ms: ${graded.ms.map((m) => m.toFixed(1)).join(' ')}`).toBeLessThanOrEqual(9);
+    expect(graded.median, `ms: ${graded.ms.map((m) => m.toFixed(1)).join(' ')}`).toBeLessThanOrEqual(HALF_GRADE_MS);
   });
 
-  it('the camera and the layer composite: five cached layers, ≤ 5 ms still, ≤ 13 ms under the camera (design 2 ms)', UNDER_LOAD, () => {
+  it('the camera and the layer composite: five cached layers, ≤ 7.5 ms still, ≤ 19 ms under the camera (design 2 ms)', UNDER_LOAD, () => {
     // Limbs behind and in front, fire and cluster, the dust band, the sparks:
     // each a keyed bitmap, stamped over its box. Measured alone: 1.6–2.0 ms
     // still, within design §10's 2 ms; under the 8 % punch-in every stamp is
     // a resample, 4.5–5.5 ms, and the plate's own draw goes from 1.7 to 4.6
     // (a line the design's table doesn't have). With every test file running
-    // at once it is 2.9–3.3 ms still and 8.8–9.3 under the camera, so the
-    // bounds are set to catch a regression without flaking (WP10 notes).
+    // at once it is 3.4–4.9 ms still and 9.3–12.6 under the camera (Nov 2), so
+    // the bounds are about 1.5 × the worst, to catch a regression without flaking.
     const blob = (key: string, color: string, path: (ctx: Ctx) => void): LayerDraw => ({
       key,
       draw(target) {
@@ -507,7 +529,7 @@ describe('budget at 1080×608 (design §10)', () => {
       `composite: ${still.median.toFixed(2)} ms still, ${moving.median.toFixed(2)} ms under the camera; the plate's own draw ${plate1.median.toFixed(2)} still, ${plate2.median.toFixed(2)} under the camera (medians of 10, 1080×608)`,
     );
     expect(cache.stats.misses).toBe(5); // drawn once each, stamped after
-    expect(still.median, `ms: ${still.ms.map((m) => m.toFixed(1)).join(' ')}`).toBeLessThanOrEqual(5);
-    expect(moving.median, `ms: ${moving.ms.map((m) => m.toFixed(1)).join(' ')}`).toBeLessThanOrEqual(13);
+    expect(still.median, `ms: ${still.ms.map((m) => m.toFixed(1)).join(' ')}`).toBeLessThanOrEqual(STILL_MS);
+    expect(moving.median, `ms: ${moving.ms.map((m) => m.toFixed(1)).join(' ')}`).toBeLessThanOrEqual(CAMERA_MS);
   });
 });

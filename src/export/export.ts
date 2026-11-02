@@ -166,7 +166,8 @@ const checkCopy = (ctx: CanvasRenderingContext2D, width: number, height: number)
 
 // A drawn frame made final: under Reduce flashing the red guard (flash.ts) on
 // its pixels, then, with `collect`, its check copy, from the same read.
-function finish(ctx: CanvasRenderingContext2D, width: number, height: number, flash: 'safe' | 'full', collect: boolean): CheckFrame | null {
+// Exported for the unit tests (app-flow.test.ts), which stub the canvas.
+export function finish(ctx: CanvasRenderingContext2D, width: number, height: number, flash: 'safe' | 'full', collect: boolean): CheckFrame | null {
   if (flash !== 'safe') return collect ? checkCopy(ctx, width, height) : null;
   const img = ctx.getImageData(0, 0, width, height);
   if (guardRed(img.data) > 0) ctx.putImageData(img, 0, 0);

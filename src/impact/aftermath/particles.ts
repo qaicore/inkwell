@@ -10,9 +10,11 @@
 //     to the +t side, their axes mostly not radial. From g2 (A3) the halo:
 //     the same ring, 18·0.92^(A−3) of them. Long axis 0.013 U (A0), 0.019 U
 //     (A1–2), then 0.015 U (A3–5) falling to 0.008 U by A12; elongation
-//     1.5–2.5; #fdcd02 with a paler core and, on the full tier, a thin dark
-//     ring (the fire's bubble ink). A spark born wholly off the frame is
-//     mirrored across P along u (G5), once, where it's born.
+//     1.5–2.5. Each glows (judge round 2: k14–16's red-orange sparks, not
+//     flat yellow seeds): a #fb6a04 body with a #fff884 core and, on the full
+//     tier, a halo standing in for the near glow the layer has no buffer for,
+//     two rings HALO px out at HALO_ALPHA. A spark born wholly off the frame
+//     is mirrored across P along u (G5), once, where it's born.
 //   - Embers. From g2 (A3): 35–59 dots on the smoke (13–21 under the A5–6
 //     flash), inside the cluster's envelope (destruction §6.4), 0.016 U long
 //     at A3 to 0.009 U by A10, coloured #ffdf3e → #ffdb5b → #ffb259 by age.
@@ -30,7 +32,7 @@ import type { ImpactContext, LayerDraw } from '../contracts.ts';
 import type { BrushTarget, MakeScratch } from '../../render/glow.ts';
 import { massGroup, zoomAt } from '../clock.ts';
 import { mirrorIntoFrame } from '../floor.ts';
-import { FIRE, mixHex } from '../palette.ts';
+import { FIRE, ORANGE, SMOKE, mixHex } from '../palette.ts';
 import { int, rng, uniform, type Rng } from '../rng.ts';
 import { ENERGY_DPS, GROUP_AGE, LAST_GROUP, ZOOM_PEAK, boxOf, clamp, energyFrame, faded, fillUnion, groupClock, memo, onFloor, sceneKey, type EnergyContext, type EnergyFrame } from './washes.ts';
 
@@ -47,7 +49,11 @@ export const EMBERS: readonly (readonly [number, number])[] = [[0, 0], [0, 0], [
 export const CARRY = [0.45, 0.55] as const; // the share of a group change's smaller side that carries over
 export const JITTER = 0.035; // U: the most a carried particle moves (under 0.05 U on screen with the zoom's drift)
 export const PHONE_PARTICLES = 30; // of each kind
-export const SPARK_TONES = { body: FIRE.amber, core: '#ffd350', ring: mixHex(FIRE.line[0], FIRE.line[1], 0.5) } as const; // core: between #ffcc57 and #ffda4a
+export const SPARK_TONES = { body: ORANGE, core: SMOKE.spots, halo: mixHex(ORANGE, FIRE.amber, 0.4) } as const; // #fb6a04, #fff884
+// The halo: two rings out from the spark's oval, × S px (the near glow's
+// half strength at 0.011–0.019 H, a tenth by 0.04 H), at these opacities.
+export const HALO = [0.005, 0.011] as const;
+export const HALO_ALPHA = [0.42, 0.2] as const;
 const EMBER_RAMP: readonly [number, string][] = [[3, FIRE.embers[0]], [7, '#ffdb5b'], [12, FIRE.embers[1]]];
 const EMBER_SHADES = [0, 0.15, 0.3]; // each ember's mix toward the ramp's end
 const SPARK_LENGTH: readonly [number, number][] = [[0, 0.013], [1, 0.019], [2, 0.019], [3, 0.015], [5, 0.015], [7, 0.012], [10, 0.009], [12, 0.008]];
@@ -312,7 +318,8 @@ function ovalOf(fr: EnergyFrame, p: Particle, unit: number, length: number, coun
 
 export interface ParticleShapes {
   embers: { color: string; polys: Vec2[][] }[];
-  rings: Vec2[][]; // the sparks' dark rings: the full tier only
+  rings: Vec2[][]; // the sparks' outer halo ring (the full tier only): the widest shapes, so the part's box
+  halos: Vec2[][]; // their inner halo ring
   sparks: Vec2[][];
   cores: Vec2[][];
 }
@@ -325,8 +332,7 @@ export function particleShapes(ictx: ImpactContext, pf: ParticleFrame): Particle
   const fr = energyFrame(ictx);
   const phone = ictx.tier === 'phone';
   const count = phone ? 8 : 12;
-  const ring = Math.max(0.75, 0.0016 * fr.S);
-  const out: ParticleShapes = { embers: [], rings: [], sparks: [], cores: [] };
+  const out: ParticleShapes = { embers: [], rings: [], halos: [], sparks: [], cores: [] };
   if (pf.embers) {
     const base = emberColor(pf.embers.A);
     const by = EMBER_SHADES.map((s) => ({ color: mixHex(base, FIRE.embers[1], s), polys: [] as Vec2[][] }));
@@ -335,7 +341,10 @@ export function particleShapes(ictx: ImpactContext, pf: ParticleFrame): Particle
   }
   if (pf.sparks) {
     for (const p of pf.sparks.particles) {
-      if (!phone) out.rings.push(ovalOf(fr, p, pf.unit, pf.sparks.length, count, ring));
+      if (!phone) {
+        out.rings.push(ovalOf(fr, p, pf.unit, pf.sparks.length, count, Math.max(1.5, HALO[1] * fr.S)));
+        out.halos.push(ovalOf(fr, p, pf.unit, pf.sparks.length, count, Math.max(1, HALO[0] * fr.S)));
+      }
       out.sparks.push(ovalOf(fr, p, pf.unit, pf.sparks.length, count));
       if ((0.5 * pf.sparks.length * p.size * pf.unit) / p.elong >= 1) out.cores.push(ovalOf(fr, p, pf.unit, pf.sparks.length, count, 0, 0.5));
     }
@@ -345,14 +354,19 @@ export function particleShapes(ictx: ImpactContext, pf: ParticleFrame): Particle
 }
 
 // Paints a frame's particles at its decay alpha, as one layer: embers, then
-// the sparks' rings, bodies and cores.
+// the sparks' halo (outer ring, inner ring), bodies and cores.
 export function paintParticles(ctx: BrushTarget, make: MakeScratch, ictx: ImpactContext, pf: ParticleFrame | null) {
   if (!pf) return;
   const sh = particleShapes(ictx, pf);
   const all = [...sh.embers.flatMap((e) => e.polys), ...sh.rings, ...sh.sparks];
   faded(ctx, make, pf.alpha, boxOf(all, 2, ictx.width, ictx.height), (c) => {
     for (const e of sh.embers) fillUnion(c, e.polys, e.color);
-    fillUnion(c, sh.rings, SPARK_TONES.ring);
+    const alpha = c.globalAlpha;
+    HALO_ALPHA.forEach((a, i) => {
+      c.globalAlpha = alpha * a;
+      fillUnion(c, i === 0 ? sh.halos : sh.rings, SPARK_TONES.halo);
+    });
+    c.globalAlpha = alpha;
     fillUnion(c, sh.sparks, SPARK_TONES.body);
     fillUnion(c, sh.cores, SPARK_TONES.core);
   });

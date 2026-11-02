@@ -384,6 +384,17 @@ export function standInPoints(landmarks: unknown): PointSet | null {
   return { x: Float32Array.from(CORE, (_, i) => at(i, 0)), y: Float32Array.from(CORE, (_, i) => at(i, 1)), confidence: Float32Array.from(CORE, (_, i) => at(i, 2)) };
 }
 
+// All 33 landmarks as a point set, for the limbs' crash-test dummy (lift/collide.ts).
+export function skeletonPoints(landmarks: unknown): PointSet | null {
+  if (!Array.isArray(landmarks) || landmarks.length < 33) return null;
+  const at = (i: number, k: number) => {
+    const p = landmarks[i];
+    return Array.isArray(p) && typeof p[k] === 'number' ? p[k] : NaN;
+  };
+  const all = Array.from({ length: 33 }, (_, i) => i);
+  return { x: Float32Array.from(all, (i) => at(i, 0)), y: Float32Array.from(all, (i) => at(i, 1)), confidence: Float32Array.from(all, (i) => at(i, 2)) };
+}
+
 // ---- Output frames, audio and names ------------------------------------------------------------
 
 // The output frames that show clip frames first..last, both included. Under
@@ -827,14 +838,16 @@ class Sheet {
     return this.slots.size;
   }
 
-  add(o: number, image: Canvas, lines: readonly string[]) {
+  // `under`: the image's top rows, source px, the label goes below (the
+  // side-by-side's own label bar, which it would cover otherwise).
+  add(o: number, image: Canvas, lines: readonly string[], under = 0) {
     const i = this.slots.get(o);
     if (i === undefined) return;
     const x = (i % this.cols) * (this.cw + GAP);
     const y = this.top + Math.floor(i / this.cols) * (this.ch + GAP);
     const s = this.src ?? { x: 0, y: 0, w: image.width, h: image.height };
     this.ctx.drawImage(image, s.x, s.y, s.w, s.h, x, y, this.cw, this.ch);
-    label(this.ctx, x + 3, y + 3, lines, this.px);
+    label(this.ctx, x + 3, y + 3 + Math.round((under * this.ch) / s.h), lines, this.px);
     this.ctx.getImageData(0, 0, 1, 1); // rasterize now: the source canvas changes next frame
   }
 
@@ -936,8 +949,8 @@ class VsRef {
     const data = ctx.getImageData(0, 0, this.canvas.width, this.canvas.height).data;
     await this.video.write(data);
     const lines = [`${name.replace('.png', '')} | f${c} j${j}`, phase];
-    this.grid.add(o, this.canvas, lines);
-    for (const page of this.pages) page.add(o, this.canvas, lines);
+    this.grid.add(o, this.canvas, lines, BAR);
+    for (const page of this.pages) page.add(o, this.canvas, lines, BAR);
     this.pairs.push({ o, c, j, ref: name });
   }
 
@@ -1134,12 +1147,12 @@ async function cachedMasks(clip: string, name: string, sha: string, frames: numb
   throw new Error(`no cached ${name} for this clip (sha256 ${sha.slice(0, 12)}…) next to it or in fixtures/probe${tried.length ? ` (${tried.join(', ')} are another clip's)` : ''}; the render reads cached SAM runs only`);
 }
 
-function standIn(frames: number): { bodies: (PointSet | null)[]; file: string } | null {
+function standIn(frames: number): { bodies: (PointSet | null)[]; skeleton: (PointSet | null)[]; file: string } | null {
   const file = process.env.INKWELL_HERO_POSE ?? join(REPO, 'samples', 'hero', 'pose.json');
   if (!existsSync(file)) return null;
   const raw: unknown = JSON.parse(readFileSync(file, 'utf8'));
   if (!Array.isArray(raw)) throw new Error(`${file} is not a stand-in pose (an array of frames)`);
-  return { bodies: Array.from({ length: frames }, (_, f) => standInPoints(raw[f])), file };
+  return { bodies: Array.from({ length: frames }, (_, f) => standInPoints(raw[f])), skeleton: Array.from({ length: frames }, (_, f) => skeletonPoints(raw[f])), file };
 }
 
 function derive(d: HeroDrawings, person: (SamMask | null)[], S: number): DrawnMoments {
@@ -1192,6 +1205,7 @@ export async function main(argv: readonly string[]): Promise<void> {
   let person = personRun.masks;
   let face = faceRun.masks;
   let bodies = pose?.bodies ?? null;
+  let skeleton = pose?.skeleton ?? null;
   let drawings = drawn;
   let moments = derive(drawings, person, Math.min(W0, H0));
   let crop: number | null = null;
@@ -1205,6 +1219,7 @@ export async function main(argv: readonly string[]): Promise<void> {
     person = person.map((m) => (m ? cropSamMask(m, x0, width) : null));
     face = face.map((m) => (m ? cropSamMask(m, x0, width) : null));
     bodies = bodies && shiftBodies(bodies, -x0);
+    skeleton = skeleton && shiftBodies(skeleton, -x0);
     drawings = shiftDrawings(drawn, -x0);
     W0 = width;
     moments = derive(drawings, person, Math.min(W0, H0));
@@ -1251,6 +1266,7 @@ export async function main(argv: readonly string[]): Promise<void> {
       }),
     poses,
     bodies,
+    skeleton,
     units,
     luma: (f) => {
       const rgba = plates?.rgba(f) ?? null;

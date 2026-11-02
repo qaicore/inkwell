@@ -339,10 +339,14 @@ describe('budget at 1080×608 (design §10: glow 4 ms)', () => {
   // composite's two ×4 bilinear blends of the lit box at about 12 ns a pixel,
   // a floor no JS can lower, and rasterizes the emitters' paths at the first
   // readback. With every test file running at once (npm run check:fast), it
-  // all takes two to three times as long: the bolt 7–11 ms, the strike 10–11
-  // a drawing and 8.5–11.5 a frame. So these hold the glow to bounds that
-  // catch a regression, measure a batch that runs over its bound again
-  // (UNDER_LOAD), and log what they measure (WP10 notes).
+  // all takes two to four times as long: under the whole unit suite (five
+  // runs, Nov 2) the bolt 7.6–9.5 ms in all, the strike 7.2–13.5 a drawing
+  // and 8.5–18.5 a frame. So these hold the glow to about 1.5 × the worst of
+  // that (decision 11), which catches a regression, measure a batch that runs
+  // over its bound again (UNDER_LOAD), and log what they measure.
+  const BOLT_MS = 14; // design 4; today 7.6–9.5 under the whole suite
+  const STRIKE_DRAWING_MS = 20; // design 4; today 7.2–13.5 under the whole suite
+  const STRIKE_FRAME_MS = 28; // design 4; today 8.5–18.5 under the whole suite
   const [w, h] = [1080, 608];
   const P: Vec2 = [540, 560];
   const strike = (glow: Glow) => {
@@ -410,16 +414,16 @@ describe('budget at 1080×608 (design §10: glow 4 ms)', () => {
   // measured again, twice at most. Any other failure fails at once.
   const UNDER_LOAD = { retry: { count: 2, delay: 300, condition: /to be less than or equal to/ } };
 
-  it('a bolt and its burst: ≤ 12 ms in all (design 4 ms)', UNDER_LOAD, () => {
+  it('a bolt and its burst: ≤ 14 ms in all (design 4 ms)', UNDER_LOAD, () => {
     const t = time(bolt);
     report('bolt', t);
-    expect(t.drawing + t.frame).toBeLessThanOrEqual(12);
+    expect(t.drawing + t.frame).toBeLessThanOrEqual(BOLT_MS);
   });
 
-  it('the strike drawing: ≤ 14 ms a drawing, ≤ 14 ms a frame (design 4 ms)', UNDER_LOAD, () => {
+  it('the strike drawing: ≤ 20 ms a drawing, ≤ 28 ms a frame (design 4 ms)', UNDER_LOAD, () => {
     const t = time(strike);
     report('strike', t);
-    expect(t.drawing).toBeLessThanOrEqual(14);
-    expect(t.frame).toBeLessThanOrEqual(14);
+    expect(t.drawing).toBeLessThanOrEqual(STRIKE_DRAWING_MS);
+    expect(t.frame).toBeLessThanOrEqual(STRIKE_FRAME_MS);
   });
 });

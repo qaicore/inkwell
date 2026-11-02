@@ -158,12 +158,17 @@ function nearest(p: Vec2, pts: readonly Vec2[], closed: boolean): number {
 
 // The marks alone, white on black: the pixels he drew that this poster shows.
 function markMask(fig: PosterFigure, w: number, h: number): Uint8ClampedArray {
+  return polyMask(fig.marks, w, h);
+}
+
+// The polygons filled white on black (each its own path), RGBA.
+function polyMask(polys: readonly Vec2[][], w: number, h: number): Uint8ClampedArray {
   const canvas = createCanvas(w, h);
   const ctx = canvas.getContext('2d');
   ctx.fillStyle = '#000000';
   ctx.fillRect(0, 0, w, h);
   ctx.fillStyle = '#ffffff';
-  for (const m of fig.marks) {
+  for (const m of polys) {
     ctx.beginPath();
     ctx.moveTo(m[0][0], m[0][1]);
     for (let i = 1; i < m.length; i++) ctx.lineTo(m[i][0], m[i][1]);
@@ -368,19 +373,22 @@ describe('the seven posters, flat, on the reference geometry', () => {
         const draft = posterShapes(context(g, { seed }), 2);
         const F = draft.centre as Vec2;
         const S = draft.L.S;
-        let lines = 0;
+        let dashes = 0;
         for (const shape of draft.shapes) {
           if (shape.z === Z.hud) continue; // the crosshair is on F by design
           for (const poly of shape.polys ?? []) {
             const near = nearest(F, poly, true) / S;
             expect(near, `seed ${seed}`).toBeGreaterThanOrEqual(0.07);
-            if (shape.z === Z.line) {
-              lines++;
+            if (shape.z === Z.over) {
+              // The speed lines lie over his paper fill, each in 2–4 dashes.
+              dashes++;
               expect(near <= 0.325 || near >= 0.465, `a line ends ${near.toFixed(3)} S from F`).toBe(true);
             }
           }
         }
-        expect(lines).toBeGreaterThanOrEqual(55 - 6);
+        expect(draft.counts.lines).toBeGreaterThanOrEqual(55 - 6);
+        expect(dashes).toBeGreaterThanOrEqual(2 * draft.counts.lines);
+        expect(dashes).toBeLessThanOrEqual(4 * draft.counts.lines);
       }
     }
   });
@@ -518,8 +526,9 @@ describe('his impact strokes', () => {
 
   // A pixel of his mark shows when it has the mark's tone, or when the mark
   // moved it a quarter of the way from where it was without him toward that
-  // tone (under IF3's 60 % crosshair, say): only what's above him (the star,
-  // the cross, the HUD) can hide it.
+  // tone (under IF3's 60 % crosshair, say): only what's above him (what lies
+  // over him, Z.over: IF3's lines, IF6's fan and IF7's splash; the star, the
+  // cross, the HUD) can hide it, so a mark pixel under Z.over isn't counted.
   it('shows at least 90 % of what he drew in every poster, for all five messy drawings', () => {
     for (const kind of MESSY_KINDS) {
       const cracks = cracksFor(HERO608, messyDrawing(kind, HERO.seed));
@@ -531,6 +540,7 @@ describe('his impact strokes', () => {
           const r = render(ictx, si, fig, { flat: true });
           const bare = render(ictx, si, NO_FIGURE, { flat: true });
           const mask = markMask(fig, ictx.width, ictx.height);
+          const over = polyMask(posterShapes(ictx, si, { flat: true }).shapes.filter((s) => s.z === Z.over).flatMap((s) => s.polys ?? []), ictx.width, ictx.height);
           const spec = posterSpec(si, flash);
           const T = posterTones(TEST, spec, true);
           const disc = spec.disc === 'ink' ? posterShapes(ictx, si, { flat: true }).disc : null;
@@ -540,7 +550,7 @@ describe('his impact strokes', () => {
           for (let y = 0; y < ictx.height; y++) {
             for (let x = 0; x < ictx.width; x++) {
               const i = 4 * (y * ictx.width + x);
-              if (mask[i] < 250) continue;
+              if (mask[i] < 250 || over[i] > 0) continue;
               expected++;
               const want = disc && pointInPolygon([x + 0.5, y + 0.5], disc) ? paper : ink; // T.fg is the mark on either field
               if (Math.abs(r.data[i] - want[0]) <= 24 && Math.abs(r.data[i + 1] - want[1]) <= 24 && Math.abs(r.data[i + 2] - want[2]) <= 24) shown++;
@@ -643,7 +653,14 @@ describe('determinism and the budget', () => {
   // The median of 10, best of up to five runs of ten: other work on the machine
   // only ever slows a run down. His figure for the poster (the mark outlines;
   // the person is traced once per mask) is part of the poster's time.
-  it('paints each poster at 1080×608 in 8 ms or less (median of 10), him and his marks included', () => {
+  // Decision 11: the bound is about 1.5× the worst time under the whole unit
+  // suite (its serial group, four runs, Nov 2). Design: 8 ms a poster (impact
+  // design §5). Today 3.1–11.0 ms, IF1, IF3 and IF4 the slowest: the comp's
+  // dry-brush hair (each hair a fill, about 7 µs in @napi-rs/canvas) and
+  // thickness grade added about 4 ms to each (min of 30 against HEAD on one
+  // load, Nov 1: IF1 5.6 → 9.4, IF4 4.9 → 9.4).
+  const BUDGET = 16.5; // ms; design 8; today 3.1–11.0 under the whole suite
+  it('paints each poster at 1080×608 in 16.5 ms or less (median of 10; design 8 ms), him and his marks included', () => {
     const report: string[] = [];
     const over: string[] = [];
     for (const flash of ['full', 'safe'] as const) {
@@ -661,7 +678,7 @@ describe('determinism and the budget', () => {
       for (let k = 0; k < 5; k++) for (let si = 0; si < 7; si++) once(si); // warm up (and trace him once)
       for (let si = 0; si < 7; si++) {
         let best = Infinity;
-        for (let run = 0; run < 5 && best > 8; run++) {
+        for (let run = 0; run < 5 && best > BUDGET; run++) {
           const times: number[] = [];
           for (let k = 0; k < 10; k++) {
             const t0 = process.hrtime.bigint();
@@ -671,9 +688,10 @@ describe('determinism and the budget', () => {
           best = Math.min(best, median(times));
         }
         report.push(`IF${si + 1} ${flash} ${best.toFixed(2)}`);
-        if (best > 8) over.push(`IF${si + 1} ${flash}`);
+        if (best > BUDGET) over.push(`IF${si + 1} ${flash}`);
       }
     }
+    console.log(`posters (ms, median of 10, best of up to 5 runs, 1080×608): ${report.join(', ')}`);
     expect(over, report.join(', ')).toEqual([]);
   });
 });

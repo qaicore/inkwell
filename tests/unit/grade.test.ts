@@ -291,11 +291,13 @@ describe('budget at 1080×608 (design §10: grade 4 ms)', () => {
   // (non-separable: SetLum and ClipColor a pixel) alone takes about 3 ms of
   // the frame, the pool's radial gradient about 1.7 over its box and the
   // multiply about 0.8, so the three come to 5.5–8.5 ms measured alone, over
-  // the design's 4, and 9.5–10 with every test file running at once (npm run
-  // check:fast; WP10 notes). This holds them to a bound that catches a
-  // regression; a batch over it is measured again, twice at most, since other
-  // test files share the CPU. Any other failure fails at once.
-  it('g8 with its pool and white balance: ≤ 14 ms (median of 10; design 4 ms)', { retry: { count: 2, delay: 300, condition: /to be less than or equal to/ } }, () => {
+  // the design's 4, and 10.7–15.2 with every test file running at once (the
+  // whole unit suite, five runs, Nov 2). This holds them to about 1.5 × the
+  // worst of that (decision 11), a bound that catches a regression; a batch
+  // over it is measured again, twice at most, since other test files share
+  // the CPU. Any other failure fails at once.
+  const GRADE_MS = 23; // design 4; today 10.7–15.2 under the whole suite
+  it('g8 with its pool and white balance: ≤ 23 ms (median of 10; design 4 ms)', { retry: { count: 2, delay: 300, condition: /to be less than or equal to/ } }, () => {
     const c = ictx();
     const g = gradeAt(31, c);
     const source = busy();
@@ -313,6 +315,6 @@ describe('budget at 1080×608 (design §10: grade 4 ms)', () => {
     const ms = Array.from({ length: 10 }, time).sort((a, b) => a - b);
     const median = (ms[4] + ms[5]) / 2;
     console.log(`grade: ${median.toFixed(2)} ms (median of 10, 1080×608)`);
-    expect(median, `ms: ${ms.map((m) => m.toFixed(1)).join(' ')}`).toBeLessThanOrEqual(14);
+    expect(median, `ms: ${ms.map((m) => m.toFixed(1)).join(' ')}`).toBeLessThanOrEqual(GRADE_MS);
   });
 });

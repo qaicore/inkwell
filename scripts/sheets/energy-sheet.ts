@@ -7,7 +7,8 @@
 // faintly so the ribbons can be read against what they follow. Rows:
 //   1. Full flashing, the default (decision 5): j 9..45, every frame;
 //   2. Reduce flashing (gentle mode): j 18..35, the two washes' 2-frame ramps,
-//      wash 2's bolt brightening and the capped veil and flash;
+//      wash 2's bolt brightening and the capped veil and flash, the lightning
+//      one steady draw from the cracks (as the scene draws it);
 //   3. the hooks and tiers: the phone tier (4 × 48), the cut order's 2
 //      ribbons and half the particles, w1 and w3 'bolt', and noFlash;
 //   4. 1:1 crops round P: the lead-in, an early, a mid and a late kr step.
@@ -154,7 +155,9 @@ function frame(ictx: ImpactContext, j: number, src: Vec2[][], opts: Options = {}
   paintVeil(bt(ctx), nodeScratch, veil, MASK, W, H);
   const pf = particles(ictx, f, opts.particles);
   paintParticles(bt(ctx), nodeScratch, ictx, pf);
-  const plan = ribbons(ictx, j, src, wash);
+  // Reduce flashing draws the lightning steady, from the still sources (the scene's way).
+  const gentle = ictx.flash === 'safe';
+  const plan = ribbons(ictx, j, gentle ? src.slice(1, 1 + HERO_CRACKS.length) : src, { ...wash, steady: gentle });
   paintLightning(bt(ctx), nodeScratch, plan, W, H);
   const flash = flashShapes(ictx, f, wash);
   paintFlash(bt(ctx), nodeScratch, flash, MASK, W, H);
@@ -166,7 +169,7 @@ function frame(ictx: ImpactContext, j: number, src: Vec2[][], opts: Options = {}
   const g = massGroup(f, ictx.I, 12);
   const lines = [`j ${j} · f${f} · kr ${kr(j)} (A${kr(j) - 14}) · g${g ?? '–'}`];
   const parts: string[] = [];
-  if (plan) parts.push(`${plan.ribbons.length} ribbons ${plan.band}, ${plan.bolts.length} thin · gain ${plan.gain.toFixed(2)}${plan.boost > 1 ? ` · boost ×${plan.boost}` : ''}`);
+  if (plan) parts.push(`${plan.ribbons.length} of ${plan.planned} ribbons ${plan.band}${gentle ? ' steady' : ''}, ${plan.bolts.length} thin · area ${((100 * plan.area) / (W * H)).toFixed(1)}% of ${((100 * plan.budget) / (W * H)).toFixed(1)}% · gain ${plan.gain.toFixed(2)}${plan.boost > 1 ? ` · boost ×${plan.boost}` : ''}`);
   else parts.push('no bolts');
   if (flood) parts.push(`wash ${flood.wash} ${(100 * flood.share * flood.level).toFixed(0)}%${flood.level < 1 ? ` (level ${flood.level.toFixed(2)})` : ''}`);
   if (veil) parts.push(`veil α ${veil.alpha.toFixed(2)}`);
@@ -255,7 +258,9 @@ const LINE = 17;
 const BANNER = [
   'Aftermath energy (impact WP9, design §6): aftermath/lightning.ts, washes.ts, particles.ts. Synthetic sources and a stand-in person, not Qai’s footage.',
   `The hero at 1080×608 (S 608, U ${energyFrame(full).U.toFixed(0)} px), P (${P[0].toFixed(0)}, ${P[1].toFixed(0)}), d (${HERO.d.join(', ')}), seed ${HERO.seed}; cells at ½ scale. Faint grey lines: the sources and the floor circles.`,
-  'Stack: floods, the person, the veil, embers and sparks, lightning, the A5–6 flash, then the glow (render/light.ts). Discharge tones (decision 6); sparks and embers keep the measured fire ramp.',
+  'Stack: floods, the person, the veil, embers and sparks, lightning, the A5–6 flash, then the glow (render/light.ts). Sparks and embers keep the measured fire ramp.',
+  "k21–31's measured set: ink #00017b, band #2c5cfc / #233cfd, core #22fded with a hot middle (composites #7efefd–#acfcfd), pale #abfdf4. The area budget drops and shortens ribbons, never thins them.",
+  'Floods: ink, band, ink, pale fringe, field; the edge torn along its normal (teeth every 0.02–0.08 U, 0.01–0.04 U deep); A10–11 pale inside the core rim. The A5–6 flash has no window hole.',
 ];
 function text(ctx: Ctx, s: string, x: number, y: number, color = INK, font = FONT) {
   ctx.font = font;
