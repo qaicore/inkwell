@@ -40,8 +40,8 @@ export interface Scratch {
 export type MakeScratch = (width: number, height: number) => Scratch;
 
 // Scratch buffers per canvas maker, one per slot (0 grain, 1 glow, 2 the
-// flame aura), grown
-// when a stroke needs more room and otherwise reused: no new buffer per
+// flame aura, 3 and 4 the plate averaged under a mass in impact/scene.ts),
+// grown when a stroke needs more room and otherwise reused: no new buffer per
 // stroke or per frame, which matters on a phone.
 const pools = new WeakMap<MakeScratch, Scratch[]>();
 export function scratch(make: MakeScratch, slot: number, width: number, height: number): Scratch {

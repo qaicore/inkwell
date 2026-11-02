@@ -55,4 +55,10 @@ describe('parseEffect', () => {
     expect('problems' in r && r.problems).toEqual(['timing.drawingsPerSecond is not 12 or 8', 'strokes[0].brush is not a brush']);
     expect(parseEffect('{')).toEqual({ problems: ['not JSON'] });
   });
+  it("rejects a stroke's size of 0, a negative one or a string, and reads a positive one", () => {
+    const sized = (size: unknown) => parseEffect(JSON.stringify({ ...EFFECT, strokes: [{ ...EFFECT.strokes[0], size }] }));
+    for (const size of [0, -4, '28']) expect(sized(size), JSON.stringify(size)).toEqual({ problems: ['strokes[0].size is not a positive number'] });
+    const ok = sized(14);
+    expect('effect' in ok && ok.effect.strokes[0].size).toBe(14);
+  });
 });

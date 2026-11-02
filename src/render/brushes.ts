@@ -1,6 +1,6 @@
-// The nine brushes (SPEC §8.8). Every brush is a perfect-freehand outline of
-// the same simulated centerline; they differ only in their settings and in
-// how the outline is filled:
+// The nine brushes (SPEC §8.8), and the limb brush of the impact design (§2).
+// Every brush is a perfect-freehand outline of the same simulated centerline;
+// they differ only in their settings and in how the outline is filled:
 //   - ink, fine-ink: the outline filled solid, straight onto the target.
 //   - textured, fine-textured: the outline drawn white into a scratch buffer
 //     the size of the stroke, grain cut out of its alpha, tinted to the
@@ -18,14 +18,22 @@
 //     so it changes on 2s and re-renders identically.
 //   - electric: a cel-shaded bolt (electric.ts).
 //   - blade, trail: shaded per pixel and cached per drawing (solid.ts).
+//   - limb: the shaded tube (render/limb.ts) on its flat centerline, its
+//     sheath arcs (arcs3d.ts) round it, and the brush glow under it. Off a
+//     slam nothing knows the frame's short side, so it's taken as 16:9's,
+//     607.5 at 1080 wide; the impact scene (impact/scene.ts) draws the
+//     limbs itself, lifted, with their pulses and the slam's light.
 // The same code draws in Node (@napi-rs/canvas) and in the browser; the
 // caller passes a way to make scratch canvases, and they're reused.
-import type { BrushId, BrushSettings, Effect, Vec2 } from '../types/effect.ts';
+import type { BrushId, BrushSettings, Effect, LimbSettings, Vec2 } from '../types/effect.ts';
 import { fillOutline, strokeOutline, type Ends } from './brush.ts';
 import { Centerline, bounds, grainNoise, mixBlack, mixWhite } from './geometry.ts';
 import { drawGlow, scratch, type BrushTarget, type MakeScratch } from './glow.ts';
 import { ELECTRIC_BOLT, ELECTRIC_GLOW, ELECTRIC_SIZE, drawElectric } from './electric.ts';
 import { BLADE_GLOW, BLADE_SIZE, TRAIL_GLOW, TRAIL_SIZE, drawBlade, drawTrail } from './solid.ts';
+import { arcPhase, arcTones, drawArcs, sheathArcs } from './arcs3d.ts';
+import { drawLimb, limbR0 } from './limb.ts';
+import { buildTube, flatHeld } from '../lift/tube.ts';
 
 export type { BrushTarget, MakeScratch, Pixels, Scratch } from './glow.ts';
 
@@ -51,6 +59,11 @@ const NEON_TUBE: [number, number][] = [
 ];
 const GRAIN_CELLS_PER_SIZE = 6; // grain cells across the brush: finer than 1/5 reads as texture, not dirt
 const GRAIN_CONTRAST = 1.2;
+// The limb brush's starting values (impact design §2, §9); Qai tunes them.
+export const LIMB_BRUSH = { size: 28, thinning: 0, smoothing: 0.5, streamline: 0.45 };
+export const LIMB_GLOW = { radiusPx: 26, intensity: 0.55 }; // at 1080 wide
+export const LIMB: LimbSettings = { radius: 0.02, taper: 0.55, socket: 1.3, bands: [-0.08, 0.5, 0.9], linePx: 0.0031, arcs: 3, arcLift: [1.2, 2.1], pulseEvery: [6, 10] };
+const limbDefaults = (): LimbSettings => ({ ...LIMB, bands: [...LIMB.bands], arcLift: [...LIMB.arcLift], pulseEvery: [...LIMB.pulseEvery] });
 
 // The settings a brush resolves to: the effect's own (effect.brushes) when it
 // has them, otherwise the §8.8 defaults built from the ink brush.
@@ -68,6 +81,7 @@ export function brushSettings(effect: Pick<Effect, 'brush' | 'brushes'>, id: Bru
     electric: { ...ink, size: ELECTRIC_SIZE, glow: { ...ELECTRIC_GLOW }, bolt: { ...ELECTRIC_BOLT } },
     blade: { ...ink, size: BLADE_SIZE * ink.size, glow: { ...BLADE_GLOW } },
     trail: { ...ink, size: TRAIL_SIZE * ink.size, glow: { ...TRAIL_GLOW } },
+    limb: { ...LIMB_BRUSH, glow: { ...LIMB_GLOW }, limb: limbDefaults() },
   };
   return { ...defaults[id], ...effect.brushes?.[id] };
 }
@@ -95,6 +109,7 @@ export function drawBrushStroke(ctx: BrushTarget, make: MakeScratch, s: BrushStr
   if (s.brush === 'electric') return drawElectric(ctx, make, s);
   if (s.brush === 'blade') return drawBlade(ctx, make, { ...s, accent: s.accent ?? s.color });
   if (s.brush === 'trail') return drawTrail(ctx, make, { ...s, accent: s.accent ?? s.color });
+  if (s.brush === 'limb') return drawLimbStroke(ctx, make, s);
   const outline = strokeOutline(s.points, s.pressure, s.settings, s.scale, endsOf(s.brush));
   if (s.settings.glow) {
     drawGlow(ctx, make, { ...s, glow: s.settings.glow });
@@ -107,6 +122,28 @@ export function drawBrushStroke(ctx: BrushTarget, make: MakeScratch, s: BrushStr
   } else {
     fillOutline(ctx, outline, s.color);
   }
+}
+
+// A limb off a slam: its tube flat on the frame (no depth, all in front),
+// the far arcs, the tube, the near arcs, over the brush glow.
+const LIMB_FRAME_SHORT = 607.5; // the short side at 1080 wide, 16:9
+const LIMB_LIGHT = '#f4f1ea'; // p1 and p2 for the limb's tones: the default palette's cream and ink
+const LIMB_DARK = '#16141a';
+function drawLimbStroke(ctx: BrushTarget, make: MakeScratch, s: BrushStroke) {
+  if (s.points.length < 2) return;
+  const S = LIMB_FRAME_SHORT * s.scale;
+  const settings = s.settings.limb ?? LIMB;
+  const tube = buildTube(flatHeld(s.id, s.points, s.pressure), limbR0(S, s.settings.size, settings), { taper: settings.taper });
+  if (tube.sections.length === 0) return;
+  const palette: [string, string, string] = [s.color, LIMB_LIGHT, LIMB_DARK];
+  const phase = arcPhase(s.emerge ?? null, null);
+  if (s.settings.glow && phase) drawGlow(ctx, make, { ...s, glow: s.settings.glow });
+  const arcs = phase ? sheathArcs(tube, s.k, phase, s.id, { S, idle: settings.arcs, lift: settings.arcLift }) : null;
+  const tones = arcTones(palette);
+  const target = ctx as unknown as Parameters<typeof drawLimb>[0] & Parameters<typeof drawArcs>[0];
+  if (arcs) drawArcs(target, arcs.far, tones);
+  drawLimb(target, target, tube, { S, k: s.k, palette, settings, age: s.emerge });
+  if (arcs) drawArcs(target, arcs.near, tones);
 }
 
 function drawGrained(ctx: BrushTarget, make: MakeScratch, outline: Vec2[], s: BrushStroke) {

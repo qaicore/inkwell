@@ -13,6 +13,8 @@
         --text: #ececf1;
         --muted: #9a9aa6;
         --accent: #e8203a;
+        --warn: #e0b45a;
+        --touch: 44px; /* the least a finger can hit */
       }
       * {
         box-sizing: border-box;
@@ -53,6 +55,22 @@
         border-top-width: 1px;
         padding-bottom: max(8px, env(safe-area-inset-bottom)); /* and of its home bar */
       }
+      /* The bottom sheet: one row a part, the step bars in place of the main row. */
+      #sheet {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
+      }
+      .row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px 10px;
+      }
+      .prompt {
+        flex: 1 1 100%;
+        font-size: 14px;
+      }
       button,
       input,
       select,
@@ -68,12 +86,14 @@
       }
       #clip-info,
       #status,
-      output {
+      output,
+      .note,
+      .label {
         color: var(--muted);
         font-variant-numeric: tabular-nums;
       }
       #timing-note {
-        color: #e0b45a;
+        color: var(--warn);
       }
       button,
       .button,
@@ -94,6 +114,37 @@
       .button:has(input:disabled) {
         opacity: 0.45;
         cursor: default;
+      }
+      /* The sheet's own controls: a finger's worth every way. */
+      .big {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        min-width: var(--touch);
+        min-height: var(--touch);
+        padding: 8px 14px;
+        font-size: 15px;
+      }
+      .primary {
+        background: var(--accent);
+        border-color: var(--accent);
+        font-weight: 600;
+      }
+      .toggle {
+        cursor: pointer;
+      }
+      .toggle input {
+        width: 20px;
+        height: 20px;
+        margin: 0;
+      }
+      #sheet-message {
+        margin: 0;
+        padding: 8px 10px;
+        border: 1px solid var(--accent);
+        border-radius: 6px;
+        font-size: 14px;
       }
       #stage {
         position: relative;
@@ -124,9 +175,10 @@
         border-color: var(--accent);
         color: var(--text);
       }
-      #scrub {
+      .stepper #scrub {
         flex: 1;
-        min-width: 160px;
+        min-width: 120px;
+        min-height: var(--touch);
       }
       .group {
         display: flex;
@@ -147,7 +199,58 @@
         outline: 2px solid var(--text);
         outline-offset: 2px;
       }
-      /* Phones: tighter rows, so the video gets the room. */
+      #more-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        max-height: 40dvh;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        padding-top: 8px;
+        border-top: 1px solid var(--line);
+      }
+      #turn-keys {
+        flex-basis: 100%;
+      }
+      /* The snap's toast, over the top of the stage. */
+      #toast {
+        position: fixed;
+        z-index: 4;
+        left: 50%;
+        top: calc(max(8px, env(safe-area-inset-top)) + 64px);
+        transform: translateX(-50%);
+        max-width: calc(100vw - 32px);
+        padding: 10px 16px;
+        border-radius: 22px;
+        background: #000000d0;
+        border: 1px solid var(--line);
+        font-size: 14px;
+        pointer-events: none;
+      }
+      /* The export sheet: under the header, inside the safe area. */
+      #export-sheet {
+        position: fixed;
+        z-index: 3;
+        top: calc(max(8px, env(safe-area-inset-top)) + 48px);
+        right: max(12px, env(safe-area-inset-right));
+        width: min(360px, calc(100vw - 24px));
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding: 12px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+      }
+      #export-sheet p {
+        margin: 0;
+      }
+      .warning {
+        padding: 8px 10px;
+        color: var(--warn);
+        border: 1px solid var(--warn);
+        border-radius: 6px;
+      }
       /* The plan: out of the grid, over the stage. A sheet from the bottom on a
          phone (below), a column on the right otherwise. */
       #plan-panel {
@@ -219,6 +322,23 @@
         margin: 6px 0 0;
         color: var(--muted);
       }
+      /* Fingers: every control a finger's worth. */
+      @media (pointer: coarse) {
+        button,
+        .button,
+        select,
+        .tools label.group {
+          min-height: var(--touch);
+        }
+        button {
+          min-width: var(--touch);
+        }
+        .swatch {
+          width: var(--touch);
+          height: var(--touch);
+        }
+      }
+      /* Phones: tighter rows, so the video gets the room. */
       @media (max-width: 600px) {
         #plan-panel {
           top: auto;
@@ -241,6 +361,9 @@
         select {
           padding: 5px 8px;
         }
+        .big {
+          padding: 8px 12px;
+        }
         #clip-info,
         .spacer,
         .size-word {
@@ -254,15 +377,11 @@
         #stage {
           padding: 6px;
         }
-        #scrub {
+        .stepper #scrub {
           min-width: 0;
         }
         #size {
           width: 64px;
-        }
-        .swatch {
-          width: 20px;
-          height: 20px;
         }
       }
     </style>
@@ -286,9 +405,19 @@
       <span class="spacer"></span>
       <span id="timing-note"></span>
       <span id="status"></span>
-      <button id="export" disabled>Export MP4</button>
-      <a id="download" class="button" hidden>Download</a>
+      <button id="export" disabled aria-expanded="false" aria-controls="export-sheet">Export</button>
     </header>
+
+    <section id="export-sheet" hidden aria-label="Export">
+      <label class="big toggle" title="At most 3 flashes a second"><input id="flash-export" type="checkbox" />Reduce flashing</label>
+      <p class="note">The full impact frames are the default. Reduce flashing keeps the video to 3 flashes a second or fewer.</p>
+      <p id="flash-warning" class="warning" role="alert" hidden></p>
+      <div class="row">
+        <button id="export-go" class="big primary" disabled>Export MP4</button>
+        <a id="download" class="button big" hidden>Download</a>
+        <button id="share" class="big" hidden>Save to Photos</button>
+      </div>
+    </section>
 
     <aside id="plan-panel" hidden aria-label="Plan"></aside>
     <main id="stage">
@@ -298,52 +427,102 @@
         <span>It's converted to H.264 at 30 fps first (up to 15 s).</span>
       </div>
     </main>
+    <div id="toast" role="status" hidden></div>
 
-    <footer>
-      <button id="play" disabled>Play</button>
-      <input id="scrub" type="range" min="0" max="0" value="0" disabled />
-      <output id="frame-label">frame –</output>
-      <div class="group" role="radiogroup" aria-label="Ink color">
-        <input class="swatch" type="radio" name="color" value="#e8203a" style="--color: #e8203a" aria-label="Red" checked />
-        <input class="swatch" type="radio" name="color" value="#f4f1ea" style="--color: #f4f1ea" aria-label="White" />
-        <input class="swatch" type="radio" name="color" value="#16141a" style="--color: #16141a" aria-label="Black" />
+    <footer id="sheet">
+      <p id="sheet-message" role="status" hidden></p>
+      <div id="sheet-main" class="row">
+        <button id="draw-limbs" class="big primary" disabled>Draw limbs</button>
+        <button id="draw-impact" class="big" disabled>Draw impact</button>
+        <button id="more" class="big" aria-expanded="false" aria-controls="more-panel">More</button>
       </div>
-      <div class="group" role="radiogroup" aria-label="Layer for new strokes">
-        <span class="layer-word">New strokes:</span>
-        <label class="group"><input type="radio" name="layer" value="front" checked />Front</label>
-        <label class="group"><input type="radio" name="layer" value="behind" />Behind</label>
+      <div id="step-limbs" class="row" hidden>
+        <span class="prompt">Draw the limbs from his body outward: 1 to 6 strokes, all on this frame.</span>
+        <button id="limbs-back" class="big">Back</button>
+        <button id="limbs-undo" class="big">Undo</button>
+        <button id="limbs-done" class="big primary">Done</button>
       </div>
-      <label class="group" aria-label="Brush"
-        ><span class="size-word">Brush</span>
-        <select id="brush">
-          <option value="ink" selected>Ink</option>
-          <option value="textured">Textured</option>
-          <option value="fine-ink">Fine ink</option>
-          <option value="fine-textured">Fine textured</option>
-          <option value="neon-straight">Neon, flat ends</option>
-          <option value="neon-round">Neon, round ends</option>
-          <option value="electric">Electric</option>
-          <option value="blade">Blade</option>
-          <option value="trail">Trail</option>
-        </select></label
-      >
-      <label class="group" aria-label="Brush size"
-        ><span class="size-word">Size</span> <input id="size" type="range" min="4" max="96" value="28" /><output id="size-value">28</output></label
-      >
-      <label class="group" aria-label="Stiffness of new strokes" title="0 hangs like a rope, 1 keeps the drawn shape"
-        ><span class="size-word">Stiff</span> <input id="stiffness" type="range" min="0" max="100" value="50" /><output id="stiffness-value"
-          >0.50</output
-        ></label
-      >
-      <label class="group" title="New strokes follow the body exactly, like horns or a halo"><input id="rigid" type="checkbox" />Rigid</label>
-      <label class="group"><input id="wobble" type="checkbox" checked />Wobble</label>
-      <label class="group" title="A flame around the person, in the ink selected when you turn it on"><input id="flame-aura" type="checkbox" />Flame aura</label>
-      <button id="undo" disabled>Undo</button>
-      <button id="clear" disabled>Clear</button>
-      <button id="plan" disabled title="Wonder reads the strokes on this frame: what each attaches to and how it moves">Plan</button>
-      <button id="save-effect" disabled title="The effect JSON, with your changes to the plan">Save effect</button>
-      <button id="save-drawings" disabled title="Your strokes by frame, for recording Wonder's plan (npm run plan:record)">Save drawings</button>
-      <button id="raw-strokes" disabled title="Your strokes exactly as drawn, for reference/raw-strokes.json">Save strokes</button>
+      <div id="step-impact" class="row" hidden>
+        <span class="prompt">Draw the impact: 2 to 8 strokes, outward from where the hit lands.</span>
+        <label class="big toggle" title="At most 3 flashes a second"><input id="flash-impact" type="checkbox" />Reduce flashing</label>
+        <button id="impact-back" class="big">Back</button>
+        <button id="impact-undo" class="big">Undo</button>
+        <button id="impact-done" class="big primary">Done</button>
+      </div>
+      <div class="row stepper">
+        <button id="play" class="big" disabled>Play</button>
+        <button id="prev-frame" class="big" aria-label="Previous frame" disabled>◀</button>
+        <input id="scrub" type="range" min="0" max="0" value="0" aria-label="Frame" disabled />
+        <button id="next-frame" class="big" aria-label="Next frame" disabled>▶</button>
+        <output id="frame-label">frame –</output>
+      </div>
+
+      <div id="more-panel" hidden>
+        <div class="row">
+          <span class="label">Contact</span>
+          <button id="contact-earlier" class="big" aria-label="Contact a frame earlier" disabled>◀</button>
+          <output id="contact-label">not set</output>
+          <button id="contact-later" class="big" aria-label="Contact a frame later" disabled>▶</button>
+          <label class="group" title="How long the destruction lasts after the contact"
+            ><span class="label">Aftermath</span> <input id="aftermath" type="range" min="15" max="30" step="1" value="15" /><output id="aftermath-value"
+              >1.5 s</output
+            ></label
+          >
+        </div>
+        <div class="row">
+          <span class="label">Turn</span>
+          <span id="turn-ask" class="note"></span>
+          <button id="turn-dir" class="big" aria-pressed="false" title="Which way he spins round">Right side first</button>
+          <button id="turn-here" class="big" title="His back faces you on this frame">This frame</button>
+          <button id="turn-clear" class="big" title="Read the turn from his pose again" hidden>No tap</button>
+          <span id="turn-keys-note" class="note"></span>
+          <div id="turn-keys" class="row"></div>
+        </div>
+        <div class="row tools">
+          <div class="group" role="radiogroup" aria-label="Ink color">
+            <input class="swatch" type="radio" name="color" value="#e8203a" style="--color: #e8203a" aria-label="Red" checked />
+            <input class="swatch" type="radio" name="color" value="#f4f1ea" style="--color: #f4f1ea" aria-label="White" />
+            <input class="swatch" type="radio" name="color" value="#16141a" style="--color: #16141a" aria-label="Black" />
+          </div>
+          <div class="group" role="radiogroup" aria-label="Layer for new strokes">
+            <span class="layer-word">New strokes:</span>
+            <label class="group"><input type="radio" name="layer" value="front" checked />Front</label>
+            <label class="group"><input type="radio" name="layer" value="behind" />Behind</label>
+          </div>
+          <label class="group" aria-label="Brush"
+            ><span class="size-word">Brush</span>
+            <select id="brush">
+              <option value="ink" selected>Ink</option>
+              <option value="textured">Textured</option>
+              <option value="fine-ink">Fine ink</option>
+              <option value="fine-textured">Fine textured</option>
+              <option value="neon-straight">Neon, flat ends</option>
+              <option value="neon-round">Neon, round ends</option>
+              <option value="electric">Electric</option>
+              <option value="blade">Blade</option>
+              <option value="trail">Trail</option>
+              <option value="limb">Limb</option>
+            </select></label
+          >
+          <label class="group" aria-label="Brush size" title="For a limb, its root's width"
+            ><span class="size-word">Size</span> <input id="size" type="range" min="4" max="96" value="28" /><output id="size-value">28</output></label
+          >
+          <label class="group" aria-label="Stiffness of new strokes" title="0 hangs like a rope, 1 keeps the drawn shape"
+            ><span class="size-word">Stiff</span> <input id="stiffness" type="range" min="0" max="100" value="50" /><output id="stiffness-value"
+              >0.50</output
+            ></label
+          >
+          <label class="group" title="New strokes follow the body exactly, like horns or a halo"><input id="rigid" type="checkbox" />Rigid</label>
+          <label class="group"><input id="wobble" type="checkbox" checked />Wobble</label>
+          <label class="group" title="A flame around the person, in the ink selected when you turn it on"><input id="flame-aura" type="checkbox" />Flame aura</label>
+          <button id="undo" disabled>Undo</button>
+          <button id="clear" disabled>Clear</button>
+          <button id="plan" disabled title="Wonder reads the strokes on this frame: what each attaches to and how it moves">Plan</button>
+          <button id="save-effect" disabled title="The effect JSON, with your changes to the plan">Save effect</button>
+          <button id="save-drawings" disabled title="Your strokes by frame, for recording Wonder's plan (npm run plan:record)">Save drawings</button>
+          <button id="raw-strokes" disabled title="Your strokes exactly as drawn, for reference/raw-strokes.json">Save strokes</button>
+        </div>
+      </div>
     </footer>
 
     <script type="module" src="/src/app/main.ts"></script>

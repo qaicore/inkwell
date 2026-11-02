@@ -36,6 +36,7 @@ const BRUSH_NAMES: Record<BrushId, string> = {
   electric: 'Electric',
   blade: 'Blade',
   trail: 'Trail',
+  limb: 'Limb',
 };
 
 export function renderPlanPanel(panel: HTMLElement, rows: PanelRow[], note: string | null, source: string, on: PanelEvents, rootOf: (id: number) => { time: number; xy: [number, number] }) {

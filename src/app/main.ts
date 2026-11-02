@@ -1,13 +1,64 @@
 import { CanvasSink } from 'mediabunny';
 import { DEFAULT_BRUSH, type Point } from '../render/brush';
 import { FPS, frameTime, frameTimes, loadClip, type Clip } from '../video/clip';
-import { exportClip } from '../export/export';
+import { exportClip, exportSize, isIPhone, type ExportPlan } from '../export/export';
+import { FlashCheckError } from '../export/flash';
 import { drawMaskTint, renderFrame, type Scene } from '../render/compose';
-import { drawingIndex, EXAMPLE_TIMING, validateTiming, type Timing } from '../motion/timing';
+import type { BrushTarget } from '../render/brushes';
+import { drawingIndex, EXAMPLE_TIMING, frameAt, validateTiming, type Timing } from '../motion/timing';
 import type { FollowMode } from '../track/standin';
 import { torsoHeights } from '../track/torso';
-import { followShapes, maskHasPerson, maskNear, smoothTrack, trackStroke, type Pose, type Tracking } from '../track/tracking';
-import { animateStroke, drawLive, effectOf, PALETTE, type ClipMotion, type DrawnStroke, type Stroke } from './engine';
+import { followShapes, maskHasPerson, maskNear, smoothTrack, trackStroke, type PointSet, type Pose, type Tracking } from '../track/tracking';
+import {
+  anchorTrack,
+  animateStroke,
+  browserScratch,
+  decodeEnvelope,
+  drawLive,
+  drawStroke,
+  effectOf,
+  hasImpact,
+  impactClip,
+  impactScene,
+  LIMB_ROOT,
+  PALETTE,
+  sceneOwns,
+  withFloor,
+  type ClipData,
+  type ClipMotion,
+  type DrawnStroke,
+  type Stroke,
+} from './engine';
+import {
+  asSamMasks,
+  back,
+  clearTurn,
+  flowMoments,
+  forgetStroke,
+  IMPACT_STROKES,
+  impactDone,
+  initialFlow,
+  LIMB_STROKES,
+  limbsDone,
+  moveContact,
+  nudgeTurnKey,
+  openImpact,
+  openLimbs,
+  ROOT_FLASH_MS,
+  setAftermath,
+  setFlash,
+  setTurnDir,
+  snapRoot,
+  suggestLimbFrame,
+  TURN_ASK,
+  turnKeyFrames,
+  turnTap,
+  type DrawnOn,
+  type Flow,
+  type ImpactCue,
+  type Step,
+} from './flow';
+import { PREVIEW_SIZE, startRenderAhead, type RenderAhead, type SceneData } from './render-worker';
 import { personAndFace, samTracking, type SamSource } from './pipeline';
 import { applyOverride, applyPlan, isOverridden, OVERRIDE_FIELDS, type OverrideField } from './overrides';
 import { renderPlanPanel } from './plan-panel';
@@ -17,7 +68,12 @@ import { samShape } from '../track/anchor';
 import { planStrokes, type PlanInput, type PlanRequest, type PlanResult, type PlanTransport } from '../plan/plan';
 import { proxyTransport } from '../plan/request';
 import { drawPlanMarks, PLAN_IMAGE_LONG_SIDE, strokeColor } from '../plan/numbered';
-import { serializeEffect, type BrushId, type Effect } from '../types/effect';
+import type { Tier } from '../impact/contracts';
+import type { Masks } from '../impact/detect';
+import { estimateFloor, type FloorEstimate } from '../impact/floor-estimate';
+import { LADDER } from '../impact/ladder';
+import type { ImpactScene } from '../impact/scene';
+import { serializeEffect, type BrushId, type Effect, type Moment, type Vec2 } from '../types/effect';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const stage = $<HTMLElement>('stage');
@@ -29,10 +85,44 @@ const clipInfo = $<HTMLElement>('clip-info');
 const statusText = $<HTMLElement>('status');
 const timingNote = $<HTMLElement>('timing-note');
 const exportButton = $<HTMLButtonElement>('export');
+const exportSheet = $<HTMLElement>('export-sheet');
+const exportGo = $<HTMLButtonElement>('export-go');
+const flashExport = $<HTMLInputElement>('flash-export');
+const flashWarning = $<HTMLElement>('flash-warning');
 const downloadLink = $<HTMLAnchorElement>('download');
+const shareButton = $<HTMLButtonElement>('share');
 const playButton = $<HTMLButtonElement>('play');
+const prevFrame = $<HTMLButtonElement>('prev-frame');
+const nextFrame = $<HTMLButtonElement>('next-frame');
 const scrub = $<HTMLInputElement>('scrub');
 const frameLabel = $<HTMLOutputElement>('frame-label');
+const sheetMessage = $<HTMLElement>('sheet-message');
+const sheetMain = $<HTMLElement>('sheet-main');
+const drawLimbsButton = $<HTMLButtonElement>('draw-limbs');
+const drawImpactButton = $<HTMLButtonElement>('draw-impact');
+const moreButton = $<HTMLButtonElement>('more');
+const morePanel = $<HTMLElement>('more-panel');
+const stepLimbs = $<HTMLElement>('step-limbs');
+const limbsBack = $<HTMLButtonElement>('limbs-back');
+const limbsUndo = $<HTMLButtonElement>('limbs-undo');
+const limbsDoneButton = $<HTMLButtonElement>('limbs-done');
+const turnAsk = $<HTMLElement>('turn-ask');
+const turnDirButton = $<HTMLButtonElement>('turn-dir');
+const turnHere = $<HTMLButtonElement>('turn-here');
+const turnClearButton = $<HTMLButtonElement>('turn-clear');
+const stepImpact = $<HTMLElement>('step-impact');
+const flashImpact = $<HTMLInputElement>('flash-impact');
+const impactBack = $<HTMLButtonElement>('impact-back');
+const impactUndo = $<HTMLButtonElement>('impact-undo');
+const impactDoneButton = $<HTMLButtonElement>('impact-done');
+const contactEarlier = $<HTMLButtonElement>('contact-earlier');
+const contactLater = $<HTMLButtonElement>('contact-later');
+const contactLabel = $<HTMLOutputElement>('contact-label');
+const aftermathSlider = $<HTMLInputElement>('aftermath');
+const aftermathValue = $<HTMLOutputElement>('aftermath-value');
+const turnKeysList = $<HTMLElement>('turn-keys');
+const turnKeysNote = $<HTMLElement>('turn-keys-note');
+const toastBox = $<HTMLElement>('toast');
 const sizeSlider = $<HTMLInputElement>('size');
 const sizeValue = $<HTMLOutputElement>('size-value');
 const wobbleToggle = $<HTMLInputElement>('wobble');
@@ -65,6 +155,7 @@ let busy = false; // converting or exporting
 let playing = false;
 let playToken = 0; // bumping this stops the playback loop
 let downloadUrl = '';
+let exported: File | null = null; // the last export, for Save to Photos
 
 // Tracking for the current clip, if it has been tracked. `makeTracking`
 // builds it for a follow mode; each stroke's poses are worked out the first
@@ -72,6 +163,7 @@ let downloadUrl = '';
 let makeTracking: ((mode: FollowMode) => Tracking) | null = null;
 let tracking: Tracking | null = null;
 let torsoUnits: (number | null)[] | null = null; // torso height per frame, from tracking's masks
+let standInBodies: (PointSet | null)[] | null = null; // the stand-in's landmarks: the impact's turn and bend
 let auraColor: 0 | 1 | 2 | null = null; // the flame aura's ink, or null when it's off
 const strokePoses = new Map<number, Pose[] | null>();
 
@@ -86,6 +178,19 @@ let plan: PlanResult | null = null;
 let planColors = new Map<number, string>();
 let overrides: Record<string, unknown> = {};
 
+// The two drawings (src/app/flow.ts): which sheet is up, and what each Done
+// read. The limbs are the 'limb' strokes; the impact's are ground-anchored.
+let flow: Flow = initialFlow();
+let envelope: number[] | null = null; // the clip's sound every 10 ms, for the impact sheet's cue
+let rootFlash: { at: Vec2; until: number } | null = null; // a limb root that snapped onto him
+let toastTimer = 0;
+const TOAST_MS = 3000;
+const ROOT_RING = 0.03; // × S: the snapped root's highlight
+const LIMB_STIFFNESS = 0.1; // the limbs hang floppy (Qai's pick)
+const isLimb = (stroke: Stroke) => stroke.brush === 'limb' && stroke.anchor?.type !== 'ground';
+const isCrack = (stroke: Stroke) => stroke.anchor?.type === 'ground';
+const shortSide = (c: Clip) => Math.min(c.width, c.height);
+
 // Every frame's strokes, animated for the whole clip at once (src/app/engine.ts).
 // Each stroke's drawings over the whole clip, by stroke id, worked out when
 // first needed. Strokes move independently, so a new stroke is animated on
@@ -95,8 +200,26 @@ const perStroke = new Map<number, DrawnStroke[]>();
 let animation: DrawnStroke[][] | null = null;
 const invalidate = () => {
   perStroke.clear();
-  animation = null;
+  dropPreview();
 };
+
+// The impact preview (impact/scene.ts). Once the effect has limbs or a slam,
+// the scene draws the whole frame: the limbs and the cracks itself, the other
+// strokes from `animation`. It's built the first time a frame needs it and
+// dropped whenever the strokes, the flow or the tracking change. Its drawings
+// are made ahead of the frames that show them, in a worker where there is one
+// (render-worker.ts); the phone tier on an iPhone.
+let renderAhead: RenderAhead | null = null;
+let preview: { scene: ImpactScene; effect: Effect } | null | undefined; // undefined: not built yet
+let clipData: ClipData | null = null; // what the scene reads of the clip, built once per tracking
+let detector: Masks | null = null; // the tracking's masks as the detector reads them
+let limbPoses: { key: string; poses: Pose[] } | null = null; // the limbs' track (anchorTrack), by their ids
+let bodyKey = ''; // the turn the other strokes were animated with
+const previewTier: Tier = isIPhone(navigator.userAgent) ? 'phone' : 'full';
+function dropPreview() {
+  preview = undefined;
+  animation = null;
+}
 
 // Qai's reference/timing.json sets the drawings per second and the boil. The
 // dev server serves it; until it exists (and in production builds) the
@@ -142,24 +265,33 @@ async function openClip(file: Blob, name: string) {
     frameBuffer.height = clip.height;
     strokes = [];
     makeTracking = null;
+    standInBodies = null;
     forgetPlan();
     samRuns.clear();
     sam = () => null;
     sourceSha = '';
+    flow = { ...initialFlow(), flash: flow.flash };
+    envelope = null;
     useTracking();
     URL.revokeObjectURL(downloadUrl); // the last export was of the old clip
     downloadUrl = '';
     downloadLink.hidden = true;
+    exported = null;
+    shareButton.hidden = true;
+    flashWarning.hidden = true;
     scrub.max = String(clip.frameCount - 1);
-    sizeSlider.value = String(Math.round(clip.height / 64));
-    sizeValue.value = sizeSlider.value;
+    setSize(defaultSize(clip));
     clipInfo.textContent = `${name} · ${clip.width}×${clip.height} · ${clip.frameCount} frames`;
     drop.hidden = true;
     view.hidden = false;
+    updateSheet();
     layout();
     await seek(0);
-    setStatus(`Converted in ${seconds(startedAt)} s. Draw on any frame.`);
+    setStatus(`Converted in ${seconds(startedAt)} s. Draw limbs to start the impact, or draw on any frame.`);
     void connectSamCache(next, file);
+    void decodeEnvelope(next.file, next.start).then((heard) => {
+      if (clip === next) envelope = heard;
+    });
   } catch (err) {
     console.error(err);
     setStatus(`Couldn't open that clip: ${errorText(err)}`);
@@ -201,6 +333,13 @@ function showFrame(i: number, image: CanvasImageSource) {
   paint();
 }
 
+// One frame earlier or later, from the frame asked for last.
+function stepFrame(by: number) {
+  if (!clip || busy || live) return;
+  pause();
+  seek(Math.min(clip.frameCount - 1, Math.max(0, targetFrame + by)));
+}
+
 // Plays from the current frame at 30 fps, looping at the end.
 async function play() {
   if (!clip || playing || busy) return;
@@ -236,22 +375,41 @@ function pause() {
 
 // ---- Painting ------------------------------------------------------------------
 
-// The finished frame, the tracking overlay if it's on, then the stroke
-// being drawn, on top of everything so you can see it while you draw.
+// The finished frame, the tracking overlay if it's on, a limb root that just
+// snapped, then the stroke being drawn, on top of everything so you can see
+// it while you draw. With an impact the scene draws the frame at its own
+// internal size, and the drawings due next are asked for ahead.
 function paint() {
   if (!clip) return;
+  ctx.imageSmoothingQuality = 'high';
+  const impact = previewScene();
+  let drawn = false;
+  if (impact) {
+    try {
+      ctx.setTransform(view.width / impact.width, 0, 0, view.height / impact.height, 0, 0);
+      impact.render(ctx as unknown as BrushTarget, frameBuffer, frame);
+      renderAhead?.ahead(frame);
+      drawn = true;
+    } catch (err) {
+      console.error(err);
+      setStatus(`The impact preview failed, so this is the plain frame: ${errorText(err)}`);
+      preview = null; // until the strokes or the flow change
+      animation = null;
+    }
+  }
   // Width and height are scaled separately, the same way pointFrom maps the
   // pointer, so the frame fills the canvas exactly.
   ctx.setTransform(view.width / clip.width, 0, 0, view.height / clip.height, 0, 0);
-  ctx.imageSmoothingQuality = 'high';
-  renderFrame(ctx, frameBuffer, frame, clip.width, clip.height, scene());
+  if (!drawn) renderFrame(ctx, frameBuffer, frame, clip.width, clip.height, plainScene(), { make: browserScratch, drawStroke });
   if (showTracking.checked && tracking) paintTracking(clip);
+  paintRootFlash(clip);
   if (live) drawLive(ctx, live);
 }
 
-// What to draw. The export holds on to one of these, so changing the follow
-// mode or drawing mid-export can't change the video halfway through.
-function scene(): Scene {
+// What to draw without an impact. The export holds on to one of these, so
+// changing the follow mode or drawing mid-export can't change the video
+// halfway through.
+function plainScene(): Scene {
   const frames = animated();
   const using = tracking;
   const units = torsoUnits;
@@ -278,11 +436,20 @@ function clipMotion(c: Clip): ClipMotion {
   };
 }
 
+// The strokes the page animates: all of them, or with an impact the ones its
+// scene doesn't draw, turning with him when the scene reads a turn.
 function animated(): DrawnStroke[][] {
   if (!clip) return [];
   if (!animation) {
-    const motion = clipMotion(clip);
-    const each = strokes.map((stroke) => {
+    const impact = previewScene();
+    const body = bodyOf(impact);
+    if (body.key !== bodyKey) {
+      bodyKey = body.key;
+      perStroke.clear();
+    }
+    const motion: ClipMotion = { ...clipMotion(clip), body: body.at };
+    const shown = preview ? strokes.filter((stroke) => !sceneOwns(stroke, preview!.effect)) : strokes;
+    const each = shown.map((stroke) => {
       let drawn = perStroke.get(stroke.id);
       if (!drawn) perStroke.set(stroke.id, (drawn = animateStroke(stroke, motion)));
       return drawn;
@@ -290,6 +457,22 @@ function animated(): DrawnStroke[][] {
     animation = Array.from({ length: clip.frameCount }, (_, f) => each.map((drawn) => drawn[f]));
   }
   return animation;
+}
+
+// His facing and bend from the scene's lift, for the other strokes, when it
+// reads a turn (his tap, or his pose); none otherwise. `key` changes when
+// the turn does, and every stroke is animated again.
+function bodyOf(impact: ImpactScene | null): { at: ClipMotion['body']; key: string } {
+  const keys = impact ? impact.turn().keys : [];
+  if (!impact || keys.length === 0) return { at: null, key: '' };
+  const bodies = impact.bodies();
+  return {
+    at: (f) => {
+      const b = bodies[f];
+      return b ? { theta: b.yaw, pitch: b.pitch } : null;
+    },
+    key: JSON.stringify(keys),
+  };
 }
 
 function posesFor(stroke: Stroke) {
@@ -331,11 +514,194 @@ function loadAnchorRuns() {
           strokePoses.delete(s.id);
           perStroke.delete(s.id);
         }
-        animation = null;
+        dropPreview();
         paint();
       })
       .catch((err: unknown) => console.warn(`Couldn't read ${file} from the cache`, err));
   }
+}
+
+// ---- The impact scene ------------------------------------------------------------
+
+// The preview's scene, built for the current strokes and flow; null without
+// an impact (or when it couldn't be built), where the plain frame is drawn.
+function previewScene(): ImpactScene | null {
+  if (!clip) return null;
+  if (preview === undefined) {
+    preview = null;
+    const effect = currentEffect();
+    let made: ImpactScene | null = null;
+    let data: SceneData | null = null;
+    if (hasImpact(effect)) {
+      const poses = limbTrack(clip);
+      data = { effect, poses, tier: previewTier, size: renderAhead?.size ?? PREVIEW_SIZE, boil: timing.boil };
+      try {
+        made = impactScene(effect, impactClip(clipDataOf(clip), poses), { tier: data.tier, size: data.size, boil: data.boil, strokes: (c) => animated()[c] ?? [] });
+      } catch (err) {
+        console.error(err);
+        setStatus(`Couldn't build the impact preview: ${errorText(err)}`);
+      }
+    }
+    preview = made ? { scene: made, effect } : null;
+    renderAhead?.scene(made, made ? data : null);
+  }
+  return preview?.scene ?? null;
+}
+
+// The clip as the scene reads it, once per tracking: the worker gets a copy.
+function clipDataOf(c: Clip): ClipData {
+  if (!clipData) {
+    clipData = {
+      width: c.width,
+      height: c.height,
+      frames: c.frameCount,
+      masks: tracking?.masks ?? null,
+      faces: samRuns.get('sam-face.json') ?? null,
+      bodies: standInBodies,
+      units: torsoUnits,
+    };
+    renderAhead?.clip(clipData);
+  }
+  return clipData;
+}
+
+// The limbs' track: their mean root, followed by the tracking.
+function limbTrack(c: Clip): Pose[] {
+  const limbs = strokes.filter(isLimb);
+  const key = limbs.map((s) => s.id).join(',');
+  if (limbPoses?.key !== key) {
+    const using = tracking;
+    limbPoses = { key, poses: anchorTrack(limbs, c.frameCount, using ? (root, f) => trackStroke(using, root, f, FPS) : null) };
+  }
+  return limbPoses.poses;
+}
+
+// The person masks the detector reads (impact/detect.ts): SAM's from the
+// cache, else the tracking's, else none on every frame.
+function detectorMasks(c: Clip): Masks {
+  const person = samRuns.get('sam-person.json');
+  if (person) return person;
+  detector ??= tracking ? asSamMasks(tracking.masks, c.width, c.height) : Array.from({ length: c.frameCount }, () => null);
+  return detector;
+}
+
+// What the impact sheet opens on: `parked` is the frame he moved the
+// scrubber to himself, if he did.
+const cue = (c: Clip, parked: number | null): ImpactCue => ({ parked, audio: envelope, masks: detectorMasks(c), S: shortSide(c) });
+const parkedFrame = () => (frame !== flow.frame ? frame : null);
+const linesOf = (list: Stroke[]): DrawnOn[] => list.map((s) => ({ id: s.id, points: s.points, frame: s.frame }));
+
+// ---- The flow --------------------------------------------------------------------
+
+// Moves the flow on: the preview is built again when the moments change, the
+// snap's toast shows once, and each sheet opens on its own frame. Done on
+// the impact replays from 20 frames before the contact.
+function setFlow(next: Flow) {
+  const before = flow;
+  flow = next;
+  if (JSON.stringify(flowMoments(before)) !== JSON.stringify(flowMoments(next))) dropPreview();
+  if (next.toast && next.toast !== before.toast) showToast(next.toast);
+  if (next.step !== before.step) preselect(next.step);
+  updateSheet();
+  updateButtons();
+  if (clip && (next.step !== before.step || next.frame !== before.frame)) {
+    pause();
+    void seek(Math.min(clip.frameCount - 1, next.frame));
+    if (before.step === 'impact' && next.step === 'preview') void play();
+  }
+  paint();
+}
+
+// What each sheet draws with until he changes it in More: the limb brush in
+// the first ink for the limbs, floppy, its size the root's 0.04 S; black ink
+// for the impact (pointerdown pins the impact's strokes to the ground). The
+// scene layers the limbs itself, so the layer radio is left as it is.
+function preselect(step: Step) {
+  if (!clip) return;
+  if (step === 'limbs') {
+    brushSelect.value = 'limb';
+    setInk(PALETTE[0]);
+    rigidToggle.checked = false;
+    stiffnessSlider.disabled = false;
+    setStiffness(LIMB_STIFFNESS);
+    setSize(Math.round(LIMB_ROOT * shortSide(clip)));
+  } else if (step === 'impact') {
+    brushSelect.value = 'ink';
+    setInk(PALETTE[2]);
+    setSize(defaultSize(clip));
+  }
+}
+
+function updateSheet() {
+  const { step } = flow;
+  sheetMain.hidden = step === 'limbs' || step === 'impact';
+  stepLimbs.hidden = step !== 'limbs';
+  stepImpact.hidden = step !== 'impact';
+  sheetMessage.textContent = flow.message ?? '';
+  sheetMessage.hidden = !flow.message;
+  turnDirButton.textContent = flow.dir === 1 ? 'Right side first' : 'Left side first';
+  turnDirButton.setAttribute('aria-pressed', String(flow.dir === -1));
+  flashImpact.checked = flow.flash === 'safe';
+  flashExport.checked = flow.flash === 'safe';
+  contactLabel.value = flow.contact === null ? 'not set' : `f${flow.contact}`;
+  aftermathSlider.value = String(Math.round(flow.aftermath * 10));
+  aftermathValue.value = `${flow.aftermath.toFixed(1)} s`;
+  showTurnKeys();
+}
+
+// More → Turn: the optional override (decision 4). This frame marks where
+// his back faces you; No tap goes back to the pose's turn; each of the tap's
+// keys a frame earlier or later.
+function showTurnKeys() {
+  const keys = flow.turn ? turnKeyFrames(flow.turn) : [];
+  turnClearButton.hidden = !flow.turn;
+  turnKeysNote.textContent = flow.turn
+    ? 'His back faces you on the middle key. Move any key that is off by a frame.'
+    : 'No tap: the turn is read from his pose where it reads as one, else there is none.';
+  turnKeysList.replaceChildren(
+    ...keys.map(([f, deg], i) => {
+      const row = document.createElement('div');
+      row.className = 'group';
+      const earlier = keyButton('◀', `Key ${i + 1} a frame earlier`, () => setFlow(nudgeTurnKey(flow, i, -1)));
+      const later = keyButton('▶', `Key ${i + 1} a frame later`, () => setFlow(nudgeTurnKey(flow, i, 1)));
+      const label = document.createElement('output');
+      label.value = `f${f} · ${Math.round(deg)}°`;
+      row.append(earlier, label, later);
+      return row;
+    }),
+  );
+}
+
+function keyButton(text: string, label: string, onClick: () => void) {
+  const button = document.createElement('button');
+  button.className = 'big';
+  button.textContent = text;
+  button.setAttribute('aria-label', label);
+  button.disabled = busy;
+  button.addEventListener('click', onClick);
+  return button;
+}
+
+function showToast(text: string) {
+  toastBox.textContent = text;
+  toastBox.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => (toastBox.hidden = true), TOAST_MS);
+}
+
+// The highlight on a limb root that snapped onto him, for 300 ms.
+function paintRootFlash(c: Clip) {
+  if (!rootFlash) return;
+  if (performance.now() > rootFlash.until) {
+    rootFlash = null;
+    return;
+  }
+  const S = shortSide(c);
+  ctx.lineWidth = S / 250;
+  ctx.strokeStyle = '#38e1ff';
+  ctx.beginPath();
+  ctx.arc(rootFlash.at[0], rootFlash.at[1], ROOT_RING * S, 0, Math.PI * 2);
+  ctx.stroke();
 }
 
 // ---- SAM from the cache ------------------------------------------------------------
@@ -424,11 +790,32 @@ function numberedFrame(request: PlanRequest): string {
   return canvas.toDataURL('image/jpeg', 0.85);
 }
 
-// The effect for the current strokes with the taps on them.
+// The effect for the current strokes with the taps on them, and the flow's
+// moments and turn tap, the slam on the floor read from him.
 const currentEffect = (): Effect => {
-  const effect = effectOf(strokes, clipMotion(clip!), undefined, overrides);
+  const { moments, turn } = flowMoments(flow);
+  const effect = effectOf(strokes, { ...clipMotion(clip!), moments: withFloor(moments, slamFloor(clip!, moments)), turn }, undefined, overrides);
   return auraColor === null ? effect : { ...effect, aura: { color: auraColor } };
 };
+
+// The slam's floor (impact/floor-estimate.ts): read once per P, contact and
+// tracking from the stand-in pose and the detector's masks. Without a pose,
+// or where it can't be read, it falls back and the slam keeps DEFAULT_FLOOR;
+// the console says why.
+let floorRead: { key: string; bodies: unknown; masks: Masks; estimate: FloorEstimate } | null = null;
+function slamFloor(c: Clip, moments: Effect['moments']): FloorEstimate | null {
+  const slam = (moments ?? []).find((m): m is Moment => m.kind === 'slam');
+  if (!slam || slam.floor) return null;
+  const I = frameAt(slam.at);
+  const key = `${slam.xy[0]},${slam.xy[1]},${I}`;
+  const masks = detectorMasks(c);
+  if (floorRead?.key !== key || floorRead.bodies !== standInBodies || floorRead.masks !== masks) {
+    const estimate = estimateFloor({ P: [slam.xy[0], slam.xy[1]], I, width: c.width, height: c.height, masks, bodies: standInBodies });
+    console.info(`Impact floor: ${estimate.from === 'person' ? JSON.stringify(estimate.floor) : 'DEFAULT_FLOOR'} (${estimate.why})`);
+    floorRead = { key, bodies: standInBodies, masks, estimate };
+  }
+  return floorRead.estimate;
+}
 
 // Writes the plan, with the taps on top, into the strokes, then redraws the
 // panel. Fields the plan doesn't set (the brush) keep what the stroke has.
@@ -449,7 +836,8 @@ function usePlan() {
     perStroke.delete(s.id);
     if (anchorChanged) strokePoses.delete(s.id);
   }
-  animation = null;
+  dropPreview();
+  limbPoses = null;
   loadAnchorRuns();
   showPanel(effect);
   updateButtons();
@@ -491,7 +879,8 @@ function forgetPlan() {
   planPanel.replaceChildren();
 }
 
-// The effect JSON (SPEC §7), the taps included: the project file.
+// The effect JSON (SPEC §7), the taps and the impact's moments included: the
+// project file.
 function saveEffect() {
   if (!clip || strokes.length === 0) return;
   const link = document.createElement('a');
@@ -577,6 +966,8 @@ function fingerPoint(x: number, y: number): Point {
   return [px, py, last[2] + (target - last[2]) * FINGER_EASE];
 }
 
+// On the impact sheet every stroke is pinned to the ground: fixed frame px,
+// rigid, behind him, no boil.
 view.addEventListener('pointerdown', (e) => {
   if (!clip || busy || e.button !== 0) return;
   if (live) return; // a second finger while drawing: not a new stroke, and not a pinch
@@ -589,6 +980,8 @@ view.addEventListener('pointerdown', (e) => {
   } catch (err) {
     console.warn("Couldn't capture the pointer; strokes stop at the canvas edge.", err);
   }
+  const first = pointFrom(e);
+  const ground = flow.step === 'impact';
   live = {
     id: nextStrokeId++,
     color: document.querySelector<HTMLInputElement>('input[name="color"]:checked')!.value,
@@ -596,10 +989,11 @@ view.addEventListener('pointerdown', (e) => {
     size: Number(sizeSlider.value),
     frame,
     pen: e.pointerType === 'pen',
-    layer: document.querySelector<HTMLInputElement>('input[name="layer"]:checked')!.value === 'behind' ? 'behind' : 'front',
-    kind: rigidToggle.checked ? 'rigid' : 'strand',
-    stiffness: Number(stiffnessSlider.value) / 100,
-    points: [pointFrom(e)],
+    layer: ground || document.querySelector<HTMLInputElement>('input[name="layer"]:checked')!.value === 'behind' ? 'behind' : 'front',
+    kind: ground || rigidToggle.checked ? 'rigid' : 'strand',
+    stiffness: ground ? 1 : Number(stiffnessSlider.value) / 100,
+    points: [first],
+    ...(ground ? { anchor: { type: 'ground' as const, xy: [first[0], first[1]] as [number, number] }, wobble: 0 } : {}),
   };
   requestPaint();
 });
@@ -614,24 +1008,57 @@ view.addEventListener('pointermove', (e) => {
 
 function finishStroke(e: PointerEvent) {
   if (!live || e.pointerId !== livePointer) return;
+  const drawn = live;
+  live = null;
   // A tap, or a press that never moved, has no direction to draw or
   // resample along: drop it.
-  const distinct = new Set(live.points.map(([x, y]) => `${x},${y}`)).size;
-  if (distinct >= 2) strokes.push(live);
-  live = null;
-  animation = null; // the new stroke is animated on its own
+  const distinct = new Set(drawn.points.map(([x, y]) => `${x},${y}`)).size;
+  if (distinct >= 2 && clip) {
+    const full = fullDrawing(drawn);
+    if (full) setFlow({ ...flow, message: full });
+    else {
+      if (flow.step === 'limbs' && isLimb(drawn)) snapLimbRoot(clip, drawn);
+      strokes.push(drawn);
+      dropPreview(); // and the new stroke is animated on its own
+      if (flow.message) setFlow({ ...flow, message: null });
+    }
+  }
   updateButtons();
   requestPaint();
 }
 view.addEventListener('pointerup', finishStroke);
 view.addEventListener('pointercancel', finishStroke);
 
+// A seventh limb or a ninth impact stroke isn't kept, and the sheet says why.
+function fullDrawing(stroke: Stroke): string | null {
+  if (flow.step === 'limbs' && isLimb(stroke) && strokes.filter(isLimb).length >= LIMB_STROKES.max) return `${LIMB_STROKES.max} limbs at most: undo one to draw another.`;
+  if (flow.step === 'impact' && strokes.filter(isCrack).length >= IMPACT_STROKES.max) return `${IMPACT_STROKES.max} impact strokes at most: undo one to draw another.`;
+  return null;
+}
+
+// A limb whose root is off his body has it moved onto him (flow.ts's
+// snapRoot), and the ring shows where for 300 ms.
+function snapLimbRoot(c: Clip, stroke: Stroke) {
+  const { points, moved } = snapRoot(stroke.points, detectorMasks(c)[stroke.frame] ?? null, shortSide(c));
+  if (!moved) return;
+  stroke.points = points;
+  rootFlash = { at: moved, until: performance.now() + ROOT_FLASH_MS };
+  setTimeout(requestPaint, ROOT_FLASH_MS + 20);
+}
+
+// The last stroke goes; on the limbs or the impact sheet, the last one of
+// that drawing. Undoing a limb or an impact stroke undoes what its Done read.
 function undo() {
   if (busy || strokes.length === 0) return;
-  perStroke.delete(strokes.pop()!.id);
-  animation = null;
-  updateButtons();
-  paint();
+  const of = flow.step === 'limbs' ? isLimb : flow.step === 'impact' ? isCrack : () => true;
+  let i = strokes.length - 1;
+  while (i >= 0 && !of(strokes[i])) i--;
+  if (i < 0) return;
+  const [gone] = strokes.splice(i, 1);
+  perStroke.delete(gone.id);
+  strokePoses.delete(gone.id);
+  dropPreview();
+  setFlow(forgetStroke(flow, gone.id));
 }
 
 // Qai's strokes exactly as drawn, for reference/raw-strokes.json (A6 checks
@@ -683,34 +1110,92 @@ function saveDrawings() {
 
 // ---- Exporting -----------------------------------------------------------------
 
+// The export sheet's Export: 720p on an iPhone, 1080p elsewhere, the flash
+// check on every export (src/export/export.ts). Full flashing saves the video
+// and warns when it flashes more than 3 times a second; Reduce flashing walks
+// the ladder, and saves nothing when even its last step can't pass.
 async function exportVideo() {
   if (!clip || busy) return;
   pause();
   setBusy(true);
+  // The last export's links go until this one is saved: a Reduce flashing
+  // export that fails saves nothing, and mustn't look as if it had.
+  flashWarning.hidden = true;
+  downloadLink.hidden = true;
+  shareButton.hidden = true;
   const startedAt = performance.now();
   try {
-    const { width, height } = clip;
-    const frameScene = scene();
-    const video = await exportClip(
-      clip,
-      (exportCtx, image, i) => renderFrame(exportCtx, image, i, width, height, frameScene),
-      (p) => setStatus(`Exporting… ${percent(p)}`),
-    );
-    const name = `${clip.name.replace(/\.[^.]+$/, '')}-inkwell.mp4`;
+    const opened = clip;
+    const size = exportSize(opened.width, opened.height, isIPhone(navigator.userAgent));
+    const result = await exportClip(opened, exportPlan(opened, size), (p, what) => setStatus(`${what}… ${percent(p)}`));
+    const name = `${opened.name.replace(/\.[^.]+$/, '')}-inkwell.mp4`;
     URL.revokeObjectURL(downloadUrl);
-    downloadUrl = URL.createObjectURL(video);
+    downloadUrl = URL.createObjectURL(result.video);
     downloadLink.href = downloadUrl;
     downloadLink.download = name;
-    downloadLink.textContent = `Download (${megabytes(video.size)})`;
+    downloadLink.textContent = `Download (${megabytes(result.video.size)})`;
     downloadLink.hidden = false;
-    let message = `Exported ${clip.frameCount} frames in ${seconds(startedAt)} s.`;
-    if (import.meta.env.DEV) message += ` ${await saveToRenders(name, video)}`;
-    setStatus(message);
+    exported = new File([result.video], name, { type: 'video/mp4' });
+    shareButton.hidden = !canShareFile(exported);
+    flashWarning.textContent = result.warning ? `${result.warning} Turn on Reduce flashing to keep it under that.` : '';
+    flashWarning.hidden = result.warning === null;
+    const said = [`Exported ${result.frames} frames at ${size.width}×${size.height} in ${seconds(startedAt)} s.`];
+    if (result.step > 0) said.push(`Reduced flashing at step ${result.step}: ${LADDER[result.step - 1].what}.`);
+    for (const note of result.notes) said.push(`${note.charAt(0).toUpperCase()}${note.slice(1)}.`);
+    if (import.meta.env.DEV) said.push(await saveToRenders(name, result.video));
+    setStatus(said.join(' '));
   } catch (err) {
     console.error(err);
-    setStatus(`Export failed: ${errorText(err)}`);
+    if (err instanceof FlashCheckError) {
+      flashWarning.textContent = err.message;
+      flashWarning.hidden = false;
+      setStatus(err.message);
+    } else setStatus(`Export failed: ${errorText(err)}`);
   } finally {
     setBusy(false);
+  }
+}
+
+// What the export draws, held as it is now: with an impact, its scene at the
+// export's size on the full tier with nothing cut, each ladder step its own
+// (degraded) copy of it; otherwise the plain frame, scaled.
+function exportPlan(c: Clip, size: { width: number; height: number; long: number }): ExportPlan {
+  const effect = currentEffect();
+  const others = animated();
+  const impact = hasImpact(effect)
+    ? impactScene(effect, impactClip(clipDataOf(c), limbTrack(c)), { tier: 'full', size: size.long, cuts: 0, boil: timing.boil, strokes: (f) => others[f] ?? [] })
+    : null;
+  const slam = (effect.moments ?? []).find((m): m is Moment => m.kind === 'slam');
+  const plain = plainScene();
+  const steps = new Map<number, ImpactScene>();
+  return {
+    width: size.width,
+    height: size.height,
+    I: impact && slam ? frameAt(slam.at) : null,
+    flash: flow.flash,
+    draw: (out, image, o, step) => {
+      if (impact) {
+        let at = steps.get(step);
+        if (!at) steps.set(step, (at = impact.degraded(step)));
+        out.setTransform(size.width / at.width, 0, 0, size.height / at.height, 0, 0);
+        at.render(out as unknown as BrushTarget, image, o);
+        return;
+      }
+      out.setTransform(size.width / c.width, 0, 0, size.height / c.height, 0, 0);
+      renderFrame(out, image, o, c.width, c.height, plain, { make: browserScratch, drawStroke });
+    },
+  };
+}
+
+// Save to Photos: the share sheet, whose Save Video puts it in Photos on an
+// iPhone. Where files can't be shared, Download is the way.
+const canShareFile = (file: File) => typeof navigator.canShare === 'function' && navigator.canShare({ files: [file] });
+async function saveToPhotos() {
+  if (!exported) return;
+  try {
+    await navigator.share({ files: [exported] });
+  } catch (err) {
+    if (!(err instanceof DOMException && err.name === 'AbortError')) setStatus(`Couldn't share it (${errorText(err)}); use Download.`);
   }
 }
 
@@ -737,17 +1222,44 @@ function setBusy(value: boolean) {
 
 function updateButtons() {
   const ready = clip !== null && !busy;
+  const none = strokes.length === 0;
   playButton.disabled = !ready;
+  prevFrame.disabled = !ready;
+  nextFrame.disabled = !ready;
   scrub.disabled = !ready;
   exportButton.disabled = !ready;
-  undoButton.disabled = !ready || strokes.length === 0;
-  clearButton.disabled = !ready || strokes.length === 0;
-  rawButton.disabled = !ready || strokes.length === 0;
-  planButton.disabled = !ready || strokes.length === 0;
-  saveEffectButton.disabled = !ready || strokes.length === 0;
-  saveDrawingsButton.disabled = !ready || strokes.length === 0;
+  exportGo.disabled = !ready;
+  undoButton.disabled = !ready || none;
+  clearButton.disabled = !ready || none;
+  rawButton.disabled = !ready || none;
+  planButton.disabled = !ready || none;
+  saveEffectButton.disabled = !ready || none;
+  saveDrawingsButton.disabled = !ready || none;
   trackButton.disabled = !ready;
+  drawLimbsButton.disabled = !ready;
+  drawImpactButton.disabled = !ready || flow.f1 === null;
+  for (const button of [limbsBack, limbsUndo, limbsDoneButton, turnDirButton, turnHere, turnClearButton, impactBack, impactUndo, impactDoneButton]) button.disabled = !ready;
+  contactEarlier.disabled = !ready || flow.contact === null;
+  contactLater.disabled = !ready || flow.contact === null;
+  aftermathSlider.disabled = !ready;
+  flashImpact.disabled = busy;
+  flashExport.disabled = busy;
 }
+
+// The sheets' controls, set from code: the swatch and the sliders.
+function setInk(color: string) {
+  const swatch = document.querySelector<HTMLInputElement>(`input[name="color"][value="${color}"]`);
+  if (swatch) swatch.checked = true;
+}
+function setStiffness(value: number) {
+  stiffnessSlider.value = String(Math.round(value * 100));
+  stiffnessValue.value = value.toFixed(2);
+}
+function setSize(px: number) {
+  sizeSlider.value = String(Math.min(Number(sizeSlider.max), Math.max(Number(sizeSlider.min), px)));
+  sizeValue.value = sizeSlider.value;
+}
+const defaultSize = (c: Clip) => Math.round(c.height / 64);
 
 // ---- Tracking --------------------------------------------------------------------
 
@@ -756,6 +1268,9 @@ function useTracking() {
   tracking = makeTracking ? makeTracking(followSelect.value as FollowMode) : null;
   torsoUnits = tracking && clip ? torsoHeights(tracking.masks, clip.width, clip.height) : null;
   strokePoses.clear();
+  clipData = null;
+  detector = null;
+  limbPoses = null;
   invalidate();
   trackingControls.hidden = tracking === null;
   paint();
@@ -763,6 +1278,7 @@ function useTracking() {
 
 // Dev only: until SAM 3.1 is connected, MediaPipe's pose model stands in for
 // it. The import sits inside this check so production builds leave it out.
+// Its landmarks also give the impact his turn and bend.
 if (import.meta.env.DEV) {
   trackButton.hidden = false;
   trackButton.title = 'Dev only: MediaPipe pose stands in for SAM 3.1';
@@ -778,6 +1294,7 @@ if (import.meta.env.DEV) {
       const standIn = await runStandIn(tracked, setStatus);
       if (clip !== tracked) return;
       makeTracking = (mode) => standInTracking(standIn, mode, tracked);
+      standInBodies = standIn.bodies;
       useTracking();
       const found = standIn.bodies.filter(Boolean).length;
       const masked = standIn.masks.filter((mask) => mask && maskHasPerson(mask)).length;
@@ -805,7 +1322,57 @@ for (const input of document.querySelectorAll<HTMLInputElement>('input[name="lay
   });
 }
 
+// The bottom sheet: the two drawings, then Done on each.
+drawLimbsButton.addEventListener('click', () => {
+  if (!clip || busy) return;
+  setFlow(openLimbs(flow, suggestLimbFrame(detectorMasks(clip))));
+});
+limbsDoneButton.addEventListener('click', () => {
+  if (!clip || busy) return;
+  setFlow(limbsDone(flow, linesOf(strokes.filter(isLimb)), cue(clip, parkedFrame())));
+});
+turnHere.addEventListener('click', () => {
+  if (!clip || busy) return;
+  setFlow(turnTap(flow, frame));
+});
+turnClearButton.addEventListener('click', () => setFlow(clearTurn(flow)));
+turnDirButton.addEventListener('click', () => setFlow(setTurnDir(flow, flow.dir === 1 ? -1 : 1)));
+drawImpactButton.addEventListener('click', () => {
+  if (!clip || busy) return;
+  setFlow(openImpact(flow, cue(clip, parkedFrame())));
+});
+impactDoneButton.addEventListener('click', () => {
+  if (!clip || busy) return;
+  setFlow(impactDone(flow, { limbs: linesOf(strokes.filter(isLimb)), cracks: linesOf(strokes.filter(isCrack)) }, detectorMasks(clip), shortSide(clip)));
+});
+limbsBack.addEventListener('click', () => setFlow(back(flow)));
+impactBack.addEventListener('click', () => setFlow(back(flow)));
+limbsUndo.addEventListener('click', undo);
+impactUndo.addEventListener('click', undo);
+for (const toggle of [flashImpact, flashExport]) toggle.addEventListener('change', () => setFlow(setFlash(flow, toggle.checked ? 'safe' : 'full')));
+
+// More: Move contact ±1, the aftermath, the turn keys, and every tool.
+moreButton.addEventListener('click', () => {
+  morePanel.hidden = !morePanel.hidden;
+  moreButton.setAttribute('aria-expanded', String(!morePanel.hidden));
+});
+contactEarlier.addEventListener('click', () => clip && setFlow(moveContact(flow, -1, clip.frameCount)));
+contactLater.addEventListener('click', () => clip && setFlow(moveContact(flow, 1, clip.frameCount)));
+aftermathSlider.addEventListener('input', () => {
+  aftermathValue.value = `${(Number(aftermathSlider.value) / 10).toFixed(1)} s`;
+});
+aftermathSlider.addEventListener('change', () => setFlow(setAftermath(flow, Number(aftermathSlider.value) / 10)));
+
+exportButton.addEventListener('click', () => {
+  exportSheet.hidden = !exportSheet.hidden;
+  exportButton.setAttribute('aria-expanded', String(!exportSheet.hidden));
+});
+exportGo.addEventListener('click', exportVideo);
+shareButton.addEventListener('click', saveToPhotos);
+
 playButton.addEventListener('click', () => (playing ? pause() : play()));
+prevFrame.addEventListener('click', () => stepFrame(-1));
+nextFrame.addEventListener('click', () => stepFrame(1));
 scrub.addEventListener('input', () => {
   pause();
   seek(Number(scrub.value));
@@ -818,6 +1385,7 @@ auraToggle.addEventListener('change', () => {
   const ink = document.querySelector<HTMLInputElement>('input[name="color"]:checked')!.value;
   const i = PALETTE.indexOf(ink);
   auraColor = auraToggle.checked && i >= 0 ? (i as 0 | 1 | 2) : null;
+  dropPreview();
   paint();
 });
 wobbleToggle.addEventListener('change', () => {
@@ -839,10 +1407,9 @@ clearButton.addEventListener('click', () => {
   strokes = [];
   forgetPlan();
   invalidate();
-  updateButtons();
-  paint();
+  limbPoses = null;
+  setFlow({ ...initialFlow(), frame, flash: flow.flash, aftermath: flow.aftermath }); // staying on this frame
 });
-exportButton.addEventListener('click', exportVideo);
 
 fileInput.addEventListener('change', () => {
   const file = fileInput.files?.[0];
@@ -878,9 +1445,7 @@ document.addEventListener('keydown', (e) => {
     else play();
   } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
     e.preventDefault();
-    pause();
-    const step = e.key === 'ArrowLeft' ? -1 : 1;
-    seek(Math.min(clip.frameCount - 1, Math.max(0, targetFrame + step)));
+    stepFrame(e.key === 'ArrowLeft' ? -1 : 1);
   }
 });
 
@@ -899,6 +1464,18 @@ document.addEventListener('click', () => {
     const isToggle = focused instanceof HTMLInputElement && (focused.type === 'checkbox' || focused.type === 'radio');
     if (focused instanceof HTMLButtonElement || isToggle) focused.blur();
   });
+});
+
+turnAsk.textContent = TURN_ASK;
+updateSheet();
+
+// The render-ahead: a worker when it can draw, else between frames. The
+// preview is built again at its size, and the worker gets the clip.
+void startRenderAhead().then((ahead) => {
+  renderAhead = ahead;
+  if (clipData) ahead.clip(clipData);
+  dropPreview();
+  paint();
 });
 
 // ?clip=<url> opens a clip on load, e.g. ?clip=/samples/test.mp4 in dev.
