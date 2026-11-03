@@ -264,6 +264,10 @@ describe('rope limbs (decision 15)', () => {
     }
   });
 
+  // Decision 15(f): never longer than about 1.15× as drawn. Round 4's R1 pass
+  // widened this to 1.4× in 3D (its release routed round him lengthens the
+  // rope in depth, 1.32× on limb 3's f93 here); the integration put 1.15 back
+  // (CLAUDE.md: a test is never loosened to pass), so it stays open for R1.
   it('keeps every limb within 0.85–1.15× its drawn length (per torso height) on every frame of the release and after, bowed', () => {
     for (let f = RELEASE; f <= 130; f++) {
       frames[f].sim.forEach((s, i) => {

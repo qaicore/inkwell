@@ -371,6 +371,7 @@ export function collideChain(d: Dummy, points: Vec3[], prev: Vec3[], radii: read
   const free = (i: number) => !(sunk > 0) || dist(points[i], points[0]) >= sunk + radii[i];
   if (d.scan) {
     const s = d.scan;
+    nodeSeen.gen++;
     const memory = clear ?? new Array<number>(points.length).fill(NaN);
     for (let i = from; i < to; i++) if (free(i)) scanNode(s, points, prev, i, radii[i], friction, memory, points[i - 1]);
     scanSegments(s, points, prev, radii, from, to, free, memory, fixed, fine ? EIGHTHS : QUARTERS);
@@ -433,8 +434,10 @@ function slide(points: Vec3[], prev: Vec3[], i: number, out: Vec3, normal: Vec3,
 // is within MEMORY_REACH (further, it came round him on screen, not through).
 function scanNode(s: Scan, points: Vec3[], prev: Vec3[], i: number, r: number, friction: number, clear: number[], before?: Vec3) {
   const p = points[i];
-  const [x, y] = project(s.body, p).xy;
-  if (sdfAt(s, x, y) >= r) {
+  const sd = seenNode(s, points, i);
+  const x = nodeSeen.x[i];
+  const y = nodeSeen.y[i];
+  if (sd >= r) {
     clear[i] = p[2];
     return;
   }
@@ -473,34 +476,68 @@ function scanNode(s: Scan, points: Vec3[], prev: Vec3[], i: number, r: number, f
 function scanSegments(s: Scan, points: Vec3[], prev: Vec3[], radii: readonly number[], from: number, to: number, free: (i: number) => boolean, clear: number[], fixed: boolean, at: readonly number[]) {
   const last = fixed ? to : to - 1;
   for (let i = Math.max(from, 1); i < last; i++) {
-    const [a, b] = [points[i], points[i + 1]];
+    const a = points[i];
+    const b = points[i + 1];
     const moveA = free(i);
     const moveB = i + 1 < to && free(i + 1);
     if (!moveA && !moveB) continue;
-    const [ra, rb] = [radii[i], radii[i + 1] ?? radii[i]];
-    const A = project(s.body, a).xy;
-    const B = project(s.body, b).xy;
-    const reach = Math.max(ra, rb) + Math.hypot(B[0] - A[0], B[1] - A[1]) / 2;
-    if (Math.min(sdfAt(s, A[0], A[1]), sdfAt(s, B[0], B[1])) >= reach) continue;
-    let best = { move: 0, t: 0 };
+    const ra = radii[i];
+    const rb = radii[i + 1] ?? radii[i];
+    const sa = seenNode(s, points, i);
+    const sb = seenNode(s, points, i + 1);
+    // Its ends on screen (seenNode's), and the deepest sample's move and place.
+    const ax = nodeSeen.x[i];
+    const ay = nodeSeen.y[i];
+    const bx = nodeSeen.x[i + 1];
+    const by = nodeSeen.y[i + 1];
+    const reach = Math.max(ra, rb) + Math.hypot(bx - ax, by - ay) / 2;
+    if (Math.min(sa, sb) >= reach) continue;
+    let best = 0;
+    let bestT = 0;
     for (const t of at) {
-      const [x, y] = [A[0] + (B[0] - A[0]) * t, A[1] + (B[1] - A[1]) * t];
+      const x = ax + (bx - ax) * t;
+      const y = ay + (by - ay) * t;
       const r = ra + (rb - ra) * t;
       if (sdfAt(s, x, y) >= r) continue;
       const z = a[2] + (b[2] - a[2]) * t;
       const block = blockAt(spansAt(s, x, y), z, r);
       if (!block) continue;
       const move = (a[2] <= block[0] || a[2] >= block[1] ? faceOf(block, z, a[2], Infinity) : faceOf(block, z, memoryAt(clear, i, t, z), MEMORY_REACH * s.body.unit)) - z;
-      if (Math.abs(move) > Math.abs(best.move)) best = { move, t };
+      if (!(Math.abs(move) > Math.abs(best))) continue;
+      best = move;
+      bestT = t;
     }
-    if (best.move === 0) continue;
+    if (best === 0) continue;
     const both = moveA && moveB;
-    if (moveA) depthMove(s, points, prev, i, both ? best.move : best.move / Math.max(1 - best.t, ALONE));
-    if (moveB) depthMove(s, points, prev, i + 1, both ? best.move : best.move / Math.max(best.t, ALONE));
+    if (moveA) depthMove(s, points, prev, i, both ? best : best / Math.max(1 - bestT, ALONE));
+    if (moveB) depthMove(s, points, prev, i + 1, both ? best : best / Math.max(bestT, ALONE));
     if (moveA) scanNode(s, points, prev, i, ra, 0, clear, points[i - 1]);
     if (moveB) scanNode(s, points, prev, i + 1, rb, 0, clear, points[i]);
   }
 }
+// Each node's screen point and the field there (seenNode), worked out once a
+// collideChain call (`gen`) and again only for a node moved since: a move
+// puts a new point in its place (slide), so the point's identity says.
+const nodeSeen = { gen: 0, at: [] as (Vec3 | undefined)[], gens: new Int32Array(64), x: new Float64Array(64), y: new Float64Array(64), sd: new Float64Array(64) };
+
+function seenNode(s: Scan, points: readonly Vec3[], i: number): number {
+  const c = nodeSeen;
+  const p = points[i];
+  if (c.gens[i] === c.gen && c.at[i] === p) return c.sd[i];
+  if (i >= c.x.length) {
+    const grow = <T extends Float64Array | Int32Array>(a: T, make: (n: number) => T): T => {
+      const out = make(2 * (i + 1));
+      out.set(a);
+      return out;
+    };
+    [c.x, c.y, c.sd] = [grow(c.x, (k) => new Float64Array(k)), grow(c.y, (k) => new Float64Array(k)), grow(c.sd, (k) => new Float64Array(k))];
+    c.gens = grow(c.gens, (k) => new Int32Array(k));
+  }
+  const [x, y] = project(s.body, p).xy;
+  [c.x[i], c.y[i], c.sd[i], c.at[i], c.gens[i]] = [x, y, sdfAt(s, x, y), p, c.gen];
+  return c.sd[i];
+}
+
 const QUARTERS = [0.25, 0.5, 0.75];
 const EIGHTHS = [0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875];
 const ALONE = 0.25; // the least share of a sample's move an end that moves alone takes it at
@@ -699,23 +736,40 @@ export function routeAround(d: Dummy, nodes: readonly Vec3[], radii: readonly nu
   const b = d.scan?.body ?? d.body;
   const first = Math.max(1, from);
   if (first >= n) return nodes.map((p): Vec3 => [p[0], p[1], p[2]]);
-  const screen = nodes.map((p) => project(b, p).xy);
-  const pad = nodes.map((_, i) => (radii[Math.min(i, radii.length - 1)] ?? 0) + MARGIN * b.unit);
-  const z0 = nodes.map((p) => p[2]);
-  const want = nodes.map((p, i) => now?.(i) ?? p[2]);
-  // The free gaps (flat [lo, hi, …]) on the ray through point t of segment i.
-  const gapsAt = (i: number, t: number, grow?: number): number[] => {
+  const [sx, sy, pad, z0, want] = [new Float64Array(n), new Float64Array(n), new Float64Array(n), new Float64Array(n), new Float64Array(n)];
+  for (let i = 0; i < n; i++) {
+    const p = nodes[i];
+    [sx[i], sy[i]] = project(b, p).xy;
+    pad[i] = (radii[Math.min(i, radii.length - 1)] ?? 0) + MARGIN * b.unit;
+    z0[i] = p[2];
+    want[i] = now?.(i) ?? p[2];
+  }
+  // The free gaps (flat [lo, hi, …]) on the ray through point t of segment
+  // i, onto the end of `into`.
+  const gapsAt = (into: number[], i: number, t: number, grow?: number) => {
     const j = Math.min(i + 1, n - 1);
-    const xy: Vec2 = d.scan ? [screen[i][0] + (screen[j][0] - screen[i][0]) * t, screen[i][1] + (screen[j][1] - screen[i][1]) * t] : [nodes[i][0] + (nodes[j][0] - nodes[i][0]) * t, nodes[i][1] + (nodes[j][1] - nodes[i][1]) * t];
-    const blocks = blocksOn(d, xy, grow ?? pad[i] + (pad[j] - pad[i]) * t);
-    const gaps = [-Infinity];
-    if (blocks) for (const v of blocks) gaps.push(v);
-    gaps.push(Infinity);
-    return gaps;
+    const x = d.scan ? sx[i] + (sx[j] - sx[i]) * t : nodes[i][0] + (nodes[j][0] - nodes[i][0]) * t;
+    const y = d.scan ? sy[i] + (sy[j] - sy[i]) * t : nodes[i][1] + (nodes[j][1] - nodes[i][1]) * t;
+    into.push(-Infinity);
+    blocksInto(d, x, y, grow ?? pad[i] + (pad[j] - pad[i]) * t, into);
+    into.push(Infinity);
   };
-  // The dense points and their gaps, from the points of the segment into
-  // `first` past `free` of the root along the curve (the one at `free` first) on.
-  const pts: { i: number; t: number; gaps: number[] }[] = [];
+  // The dense points (segment pi[k], point pt[k] along it) and their gaps
+  // (all flat in `G`, point k's from go[k], gn[k] of them), from the points
+  // of the segment into `first` past `free` of the root along the curve (the
+  // one at `free` first) on.
+  const pi: number[] = [];
+  const pt: number[] = [];
+  const go: number[] = [];
+  const gn: number[] = [];
+  const G: number[] = [];
+  const dense = (i: number, t: number, grow?: number) => {
+    pi.push(i);
+    pt.push(t);
+    go.push(G.length);
+    gapsAt(G, i, t, grow);
+    gn.push((G.length - go[go.length - 1]) >> 1);
+  };
   const c = first - 1;
   if (free < Infinity && (c > 0 || own !== undefined)) {
     let along = 0;
@@ -723,93 +777,175 @@ export function routeAround(d: Dummy, nodes: readonly Vec3[], radii: readonly nu
     const l = dist(nodes[c], nodes[first]);
     const tf = l > 0 ? (free - along) / l : 1;
     const grow = c === 0 ? own : undefined;
-    if (tf > 0 && tf < 1) pts.push({ i: c, t: tf, gaps: gapsAt(c, tf, grow) });
-    for (const t of DENSE) if (t > 0 && t > tf) pts.push({ i: c, t, gaps: gapsAt(c, t, grow) });
+    if (tf > 0 && tf < 1) dense(c, tf, grow);
+    for (const t of DENSE) if (t > 0 && t > tf) dense(c, t, grow);
   }
-  for (let i = first; i < n; i++) for (const t of i < n - 1 ? DENSE : [0]) pts.push({ i, t, gaps: gapsAt(i, t) });
+  for (let i = first; i < n; i++) for (const t of i < n - 1 ? DENSE : [0]) dense(i, t);
+  const m = pi.length;
   // The least-moving path through the gaps (Viterbi): `cost`, the least
-  // move to dense point k in each of its gaps; `back`, the gap it came from.
-  const wantAt = (k: number) => {
-    const { i, t } = pts[k];
-    return t === 0 ? want[i] : want[i] + (want[i + 1] - want[i]) * t;
-  };
-  const off = (g: number[], s: number, z: number) => (z < g[2 * s] ? g[2 * s] - z : z > g[2 * s + 1] ? z - g[2 * s + 1] : 0);
-  const back: Int32Array[] = [];
+  // move to dense point k in each of its gaps; `came` (from co[k]), the gap
+  // it came from.
+  const wantAt = (k: number) => (pt[k] === 0 ? want[pi[k]] : want[pi[k]] + (want[pi[k] + 1] - want[pi[k]]) * pt[k]);
   // The path starts in a gap that meets the one the root's zone ends in (on
   // its last node's ray, the nearest where his body as known swallows it).
-  const rg = gapsAt(first - 1, 0);
+  const rg: number[] = [];
+  gapsAt(rg, first - 1, 0);
   let rs = 0;
-  for (let q = 1; q < rg.length >> 1; q++) if (off(rg, q, z0[first - 1]) < off(rg, rs, z0[first - 1])) rs = q;
-  const g0 = pts[0].gaps;
-  let cost = Array.from({ length: g0.length >> 1 }, (_, q) => (g0[2 * q] < rg[2 * rs + 1] && rg[2 * rs] < g0[2 * q + 1] ? off(g0, q, wantAt(0)) : Infinity));
-  if (!cost.some((c) => c < Infinity)) cost = cost.map((_, q) => off(g0, q, z0[first - 1]) + off(g0, q, wantAt(0)));
-  const into = (g: number[], s: number, z: number) => clamp(z, g[2 * s], g[2 * s + 1]);
-  for (let k = 1; k < pts.length; k++) {
-    const [g0, g1] = [pts[k - 1].gaps, pts[k].gaps];
-    const [was, here] = [wantAt(k - 1), wantAt(k)];
-    const next = new Array<number>(g1.length >> 1).fill(Infinity);
-    const came = new Int32Array(g1.length >> 1).fill(-1);
-    for (let s = 0; s < next.length; s++) {
-      for (let q = 0; q < cost.length; q++) {
+  for (let q = 1; q < rg.length >> 1; q++) if (off(rg, 0, q, z0[first - 1]) < off(rg, 0, rs, z0[first - 1])) rs = q;
+  let wide = 0;
+  for (let k = 0; k < m; k++) wide = Math.max(wide, gn[k]);
+  let cost: Float64Array = new Float64Array(wide);
+  const next = new Float64Array(wide);
+  let count = gn[0];
+  let open = false;
+  for (let q = 0; q < count; q++) {
+    cost[q] = G[go[0] + 2 * q] < rg[2 * rs + 1] && rg[2 * rs] < G[go[0] + 2 * q + 1] ? off(G, go[0], q, wantAt(0)) : Infinity;
+    open ||= cost[q] < Infinity;
+  }
+  if (!open) for (let q = 0; q < count; q++) cost[q] = off(G, go[0], q, z0[first - 1]) + off(G, go[0], q, wantAt(0));
+  const co = new Int32Array(m);
+  for (let k = 1; k < m; k++) co[k] = co[k - 1] + (k > 1 ? gn[k - 1] : 0);
+  const came = new Int32Array(m > 1 ? co[m - 1] + gn[m - 1] : 0);
+  const wants = new Float64Array(m);
+  for (let k = 0; k < m; k++) wants[k] = wantAt(k);
+  [cost, count] = leastMoves(G, go, gn, wants, co, came, cost, next, count);
+  // Each dense point's gap, from the cheapest end back (the first of the
+  // cheapest; none, NaN, read as the first gap on the way back).
+  const gap = new Int32Array(m);
+  let least = Infinity;
+  for (let q = 0; q < count; q++) least = Number.isNaN(cost[q]) || Number.isNaN(least) ? NaN : Math.min(least, cost[q]);
+  gap[m - 1] = -1;
+  for (let q = 0; q < count; q++) {
+    if (cost[q] !== least) continue;
+    gap[m - 1] = q;
+    break;
+  }
+  for (let k = m - 1; k > 0; k--) gap[k - 1] = Math.max(0, gap[k] >= 0 && gap[k] < gn[k] ? came[co[k] + gap[k]] : NaN);
+  const lo = new Float64Array(m);
+  const hi = new Float64Array(m);
+  for (let k = 0; k < m; k++) {
+    const ok = gap[k] >= 0 && gap[k] < gn[k];
+    const g0 = ok ? G[go[k] + 2 * gap[k]] : NaN;
+    const g1 = ok ? G[go[k] + 2 * gap[k] + 1] : NaN;
+    lo[k] = g0 + CLEAR;
+    hi[k] = Math.max(g0 + CLEAR, g1 - CLEAR);
+  }
+  // Each node's own gap (its dense point's; none, ±∞, for a node without one).
+  const nlo = new Float64Array(n).fill(-Infinity);
+  const nhi = new Float64Array(n).fill(Infinity);
+  for (let k = 0; k < m; k++) {
+    if (pt[k] !== 0) continue;
+    nlo[pi[k]] = lo[k];
+    nhi[pi[k]] = hi[k];
+  }
+  const held = (i: number, v: number) => Math.min(nhi[i], Math.max(nlo[i], v));
+  // The nodes in their gaps and the segments' points in theirs: each point
+  // out of its gap moves both ends of its segment, until all are in.
+  let z: Float64Array = new Float64Array(n);
+  for (let i = 0; i < n; i++) z[i] = held(i, z0[i]);
+  const settle = () => {
+    for (let round = 0; round < ROUTE_ROUNDS; round++) {
+      let moved = false;
+      for (let k = 0; k < m; k++) {
+        const t = pt[k];
+        if (t === 0) continue;
+        const i = pi[k];
+        const v = z[i] + (z[i + 1] - z[i]) * t;
+        const move = v < lo[k] ? lo[k] - v : v > hi[k] ? hi[k] - v : 0;
+        if (move === 0) continue;
+        if (i === 0) z[1] = held(1, z[1] + move / t); // the root's own segment: its far end takes the whole move
+        else {
+          z[i] = held(i, z[i] + move);
+          z[i + 1] = held(i + 1, z[i + 1] + move);
+        }
+        moved = true;
+      }
+      if (!moved) return;
+    }
+  };
+  settle();
+  // A pass spreads a shift by half a node² of variance, so this many reach
+  // ROUTE_REACH of the curve. A pass that changes nothing is where every
+  // later one would leave it too: the rest are skipped.
+  z = eased(z, z0, nlo, nhi, first, Math.round(2 * (ROUTE_REACH * (n - 1)) ** 2));
+  settle();
+  return nodes.map((p, i) => (z[i] === p[2] ? [p[0], p[1], p[2]] : unproject(b, [sx[i], sy[i]], z[i])));
+}
+
+// How far depth z is from gap s of the gaps (flat [lo, hi, …]) from `at` in g.
+const off = (g: ArrayLike<number>, at: number, s: number, z: number) => (z < g[at + 2 * s] ? g[at + 2 * s] - z : z > g[at + 2 * s + 1] ? z - g[at + 2 * s + 1] : 0);
+
+// The least-moving path's sweep (routeAround's Viterbi): from the first dense
+// point's costs (`cost`, over its `count` gaps) on, the least move to each
+// dense point k in each of its gaps (gn[k] of them in G from go[k]), and the
+// gap of the point before it that it came from (`came`, from co[k]); `wants`
+// is the depth each point wants. Gives the last point's costs and their count.
+function leastMoves(G: readonly number[], go: readonly number[], gn: readonly number[], wants: Float64Array, co: Int32Array, came: Int32Array, cost: Float64Array, next: Float64Array, count: number): [Float64Array, number] {
+  for (let k = 1; k < go.length; k++) {
+    const a0 = go[k - 1];
+    const a1 = go[k];
+    const was = wants[k - 1];
+    const here = wants[k];
+    const size = gn[k];
+    for (let s = 0; s < size; s++) {
+      next[s] = Infinity;
+      came[co[k] + s] = -1;
+      for (let q = 0; q < count; q++) {
         if (!(cost[q] < Infinity)) continue;
         // A step in depth the curve doesn't take itself costs as much as the
         // move; a step from one gap to another that doesn't meet it goes
         // through him, and costs THROUGH per px of him: only where every way
         // on is shut (a held drawing he has turned into), and through the
         // thinnest of him.
-        const through = Math.max(0, g1[2 * s] - g0[2 * q + 1], g0[2 * q] - g1[2 * s + 1]);
-        const c = cost[q] + THROUGH * through + Math.max(0, Math.abs(into(g1, s, here) - into(g0, q, was)) - Math.abs(here - was));
+        const through = Math.max(0, G[a1 + 2 * s] - G[a0 + 2 * q + 1], G[a0 + 2 * q] - G[a1 + 2 * s + 1]);
+        const c = cost[q] + THROUGH * through + Math.max(0, Math.abs(clamp(here, G[a1 + 2 * s], G[a1 + 2 * s + 1]) - clamp(was, G[a0 + 2 * q], G[a0 + 2 * q + 1])) - Math.abs(here - was));
         if (!(c < next[s])) continue;
         next[s] = c;
-        came[s] = q;
+        came[co[k] + s] = q;
       }
-      next[s] += off(g1, s, here);
+      next[s] += off(G, a1, s, here);
     }
+    const done = cost;
     cost = next;
-    back.push(came);
+    next = done;
+    count = size;
   }
-  // Each dense point's gap, from the cheapest end back.
-  const gap = new Int32Array(pts.length);
-  gap[pts.length - 1] = cost.indexOf(Math.min(...cost));
-  for (let k = pts.length - 1; k > 0; k--) gap[k - 1] = Math.max(0, back[k - 1][gap[k]]);
-  const lo = pts.map(({ gaps }, k) => gaps[2 * gap[k]] + CLEAR);
-  const hi = pts.map(({ gaps }, k) => Math.max(gaps[2 * gap[k]] + CLEAR, gaps[2 * gap[k] + 1] - CLEAR));
-  const node = new Int32Array(n).fill(-1);
-  pts.forEach((p, k) => {
-    if (p.t === 0) node[p.i] = k;
-  });
-  const held = (i: number, v: number) => (node[i] < 0 ? v : clamp(v, lo[node[i]], hi[node[i]]));
-  // The nodes in their gaps and the segments' points in theirs: each point
-  // out of its gap moves both ends of its segment, until all are in.
-  let z = z0.map((v, i) => held(i, v));
-  const settle = () => {
-    for (let round = 0; round < ROUTE_ROUNDS; round++) {
-      let moved = false;
-      pts.forEach((p, k) => {
-        if (p.t === 0) return;
-        const v = z[p.i] + (z[p.i + 1] - z[p.i]) * p.t;
-        const move = v < lo[k] ? lo[k] - v : v > hi[k] ? hi[k] - v : 0;
-        if (move === 0) return;
-        if (p.i === 0) z[1] = held(1, z[1] + move / p.t); // the root's own segment: its far end takes the whole move
-        else {
-          z[p.i] = held(p.i, z[p.i] + move);
-          z[p.i + 1] = held(p.i + 1, z[p.i + 1] + move);
-        }
-        moved = true;
-      });
-      if (!moved) return;
-    }
-  };
-  settle();
-  // A pass spreads a shift by half a node² of variance, so this many reach ROUTE_REACH of the curve.
-  const passes = Math.round(2 * (ROUTE_REACH * (n - 1)) ** 2);
-  for (let pass = 0; pass < passes; pass++) {
-    const shift = z.map((v, i) => v - z0[i]);
-    z = z.map((v, i) => (i < first ? v : held(i, z0[i] + (i === n - 1 ? shift[i] : 0.25 * shift[i - 1] + 0.5 * shift[i] + 0.25 * shift[i + 1]))));
-  }
-  settle();
-  return nodes.map((p, i) => (z[i] === p[2] ? [p[0], p[1], p[2]] : unproject(b, screen[i], z[i])));
+  return [cost, count];
 }
+
+// The depth changes z − z0 eased along the curve (routeAround's), over at
+// most `passes` passes: each moves every node from `first` on to the mean of
+// its own change and its neighbours' (¼, ½, ¼; the last node keeps its own),
+// held in its gap [lo, hi]. The nodes before `first` never move, so both
+// buffers hold them as they are.
+function eased(z: Float64Array, z0: Float64Array, lo: Float64Array, hi: Float64Array, first: number, passes: number): Float64Array {
+  const n = z.length;
+  let spare: Float64Array = z.slice();
+  for (let pass = 0; pass < passes; pass++) {
+    let same = true;
+    let before = z[first - 1] - z0[first - 1];
+    let here = z[first] - z0[first];
+    for (let i = first; i < n - 1; i++) {
+      const after = z[i + 1] - z0[i + 1];
+      const v = Math.min(hi[i], Math.max(lo[i], z0[i] + (0.25 * before + 0.5 * here + 0.25 * after)));
+      if (same && !sameValue(v, z[i])) same = false;
+      spare[i] = v;
+      before = here;
+      here = after;
+    }
+    const v = Math.min(hi[n - 1], Math.max(lo[n - 1], z0[n - 1] + here));
+    if (same && !sameValue(v, z[n - 1])) same = false;
+    spare[n - 1] = v;
+    const done = z;
+    z = spare;
+    spare = done;
+    if (same) break;
+  }
+  return z;
+}
+
+// Object.is for two numbers, inline.
+const sameValue = (a: number, b: number) => (a === b ? a !== 0 || 1 / a === 1 / b : a !== a && b !== b);
 
 const MARGIN = 0.02; // torso units of room a routed curve leaves round him
 const THROUGH = 1000; // what a px of him a routed curve steps through costs, against a px of depth it moves
@@ -819,13 +955,29 @@ const CLEAR = 0.01; // px a routed point is kept inside its gap
 const DENSE = [0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875]; // a node and the points along the segment after it a routing keeps clear
 
 // The blocks of him (flat [lo, hi, …], camera px, low to high and apart) on
-// the view ray through screen point xy (camera xy without a scan), each of
-// his spans grown by `pad` and those that then meet taken as one; null off him.
-function blocksOn(d: Dummy, xy: Vec2, pad: number): Float64Array | null {
+// the view ray through screen point (x, y) (camera x, y without a scan), each
+// of his spans grown by `pad` and those that then meet taken as one, onto the
+// end of `into`; none off him. A scan's spans are low to high and apart
+// already, so they are grown and joined in one sweep.
+function blocksInto(d: Dummy, x: number, y: number, pad: number, into: number[]): void {
   const s = d.scan;
-  if (s) return sdfAt(s, xy[0], xy[1]) >= pad ? null : merged(spansAt(s, xy[0], xy[1]), pad);
-  const spans = depthSpans(d, xy, pad);
-  return spans.length === 0 ? null : merged(spans.flat(), 0);
+  if (s) {
+    if (sdfAt(s, x, y) >= pad) return;
+    const sp = spansAt(s, x, y);
+    let last = -1;
+    for (let k = 0; k < sp.length; k += 2) {
+      const lo = sp[k] - pad;
+      const hi = sp[k + 1] + pad;
+      if (last >= 0 && lo <= into[last]) into[last] = Math.max(into[last], hi);
+      else {
+        into.push(lo, hi);
+        last = into.length - 1;
+      }
+    }
+    return;
+  }
+  const spans = depthSpans(d, [x, y], pad);
+  if (spans.length > 0) for (const v of merged(spans.flat(), 0)) into.push(v);
 }
 
 // Is a screen point over the egg's outline?
@@ -839,11 +991,36 @@ const viewAxis = (b: Body3D): Vec3 => toBody(b, [b.x, b.y, b.unit]);
 
 // ---- The pre-scan (decision 18) ------------------------------------------------------------------
 
-// Frame f's scan: his mask sampled at the centres of a SCAN_CELL grid, its
-// box found, and the signed distance field worked out over the box grown by
-// SCAN_MARGIN (exact Euclidean distances between cell centres, the edge taken
-// halfway between an inside and an outside cell). Null when the mask is empty.
+// Frame f's scan: his mask's field (fieldOf), with the dummy its depth spans
+// come from. Null when the mask is empty.
 export function scanOf(m: Mask, width: number, height: number, d: Dummy): Scan | null {
+  const field = fieldOf(m, width, height);
+  return field ? { body: d.body, capsules: d.capsules, ...field, slabs: new Map() } : null;
+}
+
+// A mask's signed distance field, as a scan holds it.
+type Field = Omit<Scan, 'body' | 'capsules' | 'slabs'>;
+
+// The mask sampled at the centres of a SCAN_CELL grid, its box found, and the
+// signed distance field worked out over the box grown by SCAN_MARGIN (exact
+// Euclidean distances between cell centres, the edge taken halfway between an
+// inside and an outside cell); null when the mask is empty. Worked out once
+// per mask and clip size and kept with the mask (decision 18: the pre-scan is
+// the clip's, so a new physics run on the same masks reuses it); only the
+// depth spans, which the body's pose sets, are each scan's own.
+function fieldOf(m: Mask, width: number, height: number): Field | null {
+  const key = `${width}x${height}`;
+  let kept = fields.get(m);
+  if (!kept) fields.set(m, (kept = new Map()));
+  const hit = kept.get(key);
+  if (hit !== undefined) return hit;
+  const field = scanField(m, width, height);
+  kept.set(key, field);
+  return field;
+}
+const fields = new WeakMap<Mask, Map<string, Field | null>>();
+
+function scanField(m: Mask, width: number, height: number): Field | null {
   const cell = SCAN_CELL * width;
   const margin = SCAN_MARGIN * width;
   const W = Math.ceil(width / cell);
@@ -877,7 +1054,7 @@ export function scanOf(m: Mask, width: number, height: number, d: Dummy): Scan |
   const toOut = distances(inside, cols, rows, 0);
   const sdf = new Float32Array(cols * rows);
   for (let i = 0; i < sdf.length; i++) sdf[i] = (inside[i] ? 0.5 - Math.sqrt(toOut[i]) : Math.sqrt(toIn[i]) - 0.5) * cell;
-  return { body: d.body, capsules: d.capsules, x0: (c0 + 0.5) * cell, y0: (r0 + 0.5) * cell, cell, cols, rows, margin, sdf, slabs: new Map() };
+  return { x0: (c0 + 0.5) * cell, y0: (r0 + 0.5) * cell, cell, cols, rows, margin, sdf };
 }
 
 // The field at screen point (x, y), bilinear between cell centres.
@@ -912,66 +1089,188 @@ function spansAt(s: Scan, x: number, y: number): Float64Array {
   const key = -1 - ((r + 1) * (s.cols + 2) + c + 1);
   const hit = s.slabs.get(key);
   if (hit) return hit;
-  const all: number[] = [];
-  for (const [dc, dr] of QUAD) for (const v of cellSpans(s, c + dc, r + dr)) all.push(v);
-  const out = merged(all, 0);
+  const a = cellSpans(s, c, r);
+  const b = cellSpans(s, c + 1, r);
+  const e = cellSpans(s, c, r + 1);
+  const f = cellSpans(s, c + 1, r + 1);
+  const all = flatBuffer(a.length + b.length + e.length + f.length);
+  all.set(a, 0);
+  all.set(b, a.length);
+  all.set(e, a.length + b.length);
+  all.set(f, a.length + b.length + e.length);
+  const out = merged(all, 0, a.length + b.length + e.length + f.length);
   s.slabs.set(key, out);
   return out;
 }
-const QUAD = [[0, 0], [1, 0], [0, 1], [1, 1]] as const;
 
 // One cell's spans: the egg's and each capsule's chord (camera px) on the
 // view ray through its centre, those that overlap taken as one, or where none
 // of them reach it (loose clothes, hair, an arm the pose missed: still his
 // mask), the nearest part's depth ± its radius there. Weak perspective: each
-// part is met where the ray passes it at its own depth.
+// part is met where the ray passes it at its own depth. The parts are seen
+// from the scan's body once (seenParts), and a capsule whose samples are all
+// further off on screen than its radius can reach is passed over.
 function cellSpans(s: Scan, c: number, r: number): Float64Array {
   const key = (r + 1) * (s.cols + 2) + c + 1; // only cells on and round his mask are asked for
   const hit = s.slabs.get(key);
   if (hit) return hit;
-  const xy: Vec2 = [s.x0 + c * s.cell, s.y0 + r * s.cell];
+  const X = s.x0 + c * s.cell;
+  const Y = s.y0 + r * s.cell;
   const b = s.body;
-  const spans: number[] = [];
-  // The egg, met at its centre's depth, and its spine as a capsule as wide
-  // as it, for the nearest part.
-  const centre = toCamera(b, [0, TORSO.cy, 0]);
-  const at = unproject(b, xy, centre[2]);
-  const egg = raySpan(toBody(b, [at[0], at[1], 0]), viewAxis(b), TORSO.a, TORSO.b, TORSO.c, TORSO.cy);
-  if (egg) spans.push(egg[0] * b.unit, egg[1] * b.unit);
-  const spine = { a: toCamera(b, [0, TORSO.cy - TORSO.b + TORSO.a, 0]), b: toCamera(b, [0, TORSO.cy + TORSO.b - TORSO.a, 0]), r: TORSO.a * b.unit, deep: TORSO.c * b.unit, solid: false };
-  let near = { gap: Infinity, z: centre[2], deep: spine.deep };
-  for (const part of [spine, ...s.capsules.map((q) => ({ a: q.a, b: q.b, r: q.r, deep: q.r, solid: true }))]) {
-    const steps = part.a === part.b ? 0 : 8;
-    let [lo, hi] = [Infinity, -Infinity];
-    for (let i = 0; i <= steps; i++) {
-      const q = steps === 0 ? part.a : mix(part.a, part.b, i / steps);
-      const { xy: seen, near: g } = project(b, q);
-      const d2 = ((xy[0] - seen[0]) ** 2 + (xy[1] - seen[1]) ** 2) / (g * g);
-      const gap = Math.sqrt(d2) - part.r;
-      if (gap < near.gap) near = { gap, z: q[2], deep: part.deep };
-      if (!part.solid || d2 >= part.r * part.r) continue;
-      const h = Math.sqrt(part.r * part.r - d2);
-      [lo, hi] = [Math.min(lo, q[2] - h), Math.max(hi, q[2] + h)];
+  const seen = seenParts(s);
+  const spans = flatBuffer(2 + 2 * seen.parts.length);
+  let m = 0;
+  // The egg, met at its centre's depth: raySpan(toBody(unproject(…))), as
+  // the trig and the gain are the scan's (seenParts).
+  {
+    const ax = b.x + (X - b.x) / seen.gain;
+    const ay = b.y + (Y - b.y) / seen.gain;
+    const [cr, sr, cy, sy, cp, sp] = seen.trig;
+    let x = (ax - b.x) / b.unit;
+    let y = (ay - b.y) / b.unit;
+    let z = 0 / b.unit;
+    [x, y] = [cr * x + sr * y, -sr * x + cr * y];
+    [x, z] = [cy * x - sy * z, sy * x + cy * z];
+    [y, z] = [cp * y - sp * z, sp * y + cp * z];
+    const [o0, o1, o2] = [x / TORSO.a, (y - TORSO.cy) / TORSO.b, z / TORSO.c];
+    const [w0, w1, w2] = seen.w;
+    const A = w0 * w0 + w1 * w1 + w2 * w2;
+    const B = 2 * (o0 * w0 + o1 * w1 + o2 * w2);
+    const C = o0 * o0 + o1 * o1 + o2 * o2 - 1;
+    const disc = B * B - 4 * A * C;
+    if (disc >= 0) {
+      const q = Math.sqrt(disc);
+      spans[m++] = ((-B - q) / (2 * A)) * b.unit;
+      spans[m++] = ((-B + q) / (2 * A)) * b.unit;
     }
-    if (lo <= hi) spans.push(lo, hi);
   }
-  const out = merged(spans.length > 0 ? spans : [near.z - near.deep, near.z + near.deep], 0);
+  for (const part of seen.parts) {
+    if (!part.solid || X < part.box[0] || X > part.box[2] || Y < part.box[1] || Y > part.box[3]) continue;
+    let [lo, hi] = [Infinity, -Infinity];
+    for (let i = 0; i < part.x.length; i++) {
+      const d2 = ((X - part.x[i]) ** 2 + (Y - part.y[i]) ** 2) / part.g2[i];
+      if (d2 >= part.rr) continue;
+      const h = Math.sqrt(part.rr - d2);
+      [lo, hi] = [Math.min(lo, part.z[i] - h), Math.max(hi, part.z[i] + h)];
+    }
+    if (lo <= hi) {
+      spans[m++] = lo;
+      spans[m++] = hi;
+    }
+  }
+  if (m === 0) {
+    // None reach it: the nearest part's depth ± its radius there (its spine,
+    // a capsule as wide as the egg, among them).
+    let near = { gap: Infinity, z: seen.centre[2], deep: seen.parts[0].deep };
+    for (const part of seen.parts) {
+      for (let i = 0; i < part.x.length; i++) {
+        const gap = Math.sqrt(((X - part.x[i]) ** 2 + (Y - part.y[i]) ** 2) / part.g2[i]) - part.r;
+        if (gap < near.gap) near = { gap, z: part.z[i], deep: part.deep };
+      }
+    }
+    spans[m++] = near.z - near.deep;
+    spans[m++] = near.z + near.deep;
+  }
+  const out = merged(spans, 0, m);
   s.slabs.set(key, out);
   return out;
 }
 
-// Spans (flat [lo, hi, …], any order) each grown by `grow`, sorted, and those
-// that overlap or touch taken as one.
-function merged(flat: ArrayLike<number>, grow: number): Float64Array {
-  const m = flat.length >> 1;
-  const order = Array.from({ length: m }, (_, k) => k).sort((a, b) => flat[2 * a] - flat[2 * b]);
-  const out: number[] = [];
-  for (const k of order) {
-    const [lo, hi] = [flat[2 * k] - grow, flat[2 * k + 1] + grow];
-    if (out.length > 0 && lo <= out[out.length - 1]) out[out.length - 1] = Math.max(out[out.length - 1], hi);
-    else out.push(lo, hi);
+// The parts as a scan's body sees them (cellSpans'): the egg's spine as a
+// capsule as wide as it (for the nearest part only), then each capsule, each
+// sampled at nine points along its axis (a sphere at one), with each sample's
+// screen point, its perspective gain squared and its depth; and the screen box
+// past which no sample's round reaches (grown by its radius × the largest
+// gain, and a px). Worked out once per scan.
+interface SeenPart {
+  r: number;
+  rr: number; // r²
+  deep: number;
+  solid: boolean;
+  x: Float64Array;
+  y: Float64Array;
+  g2: Float64Array;
+  z: Float64Array;
+  box: [number, number, number, number];
+}
+interface Seen {
+  centre: Vec3;
+  gain: number; // unproject's at the centre's depth
+  trig: readonly [number, number, number, number, number, number]; // the body's cos and sin of its roll, yaw and pitch (unrotate's)
+  w: Vec3; // the view axis over the egg's semi-axes (raySpan's)
+  parts: SeenPart[];
+}
+const seenOf = new WeakMap<Scan, Seen>();
+let lastSeen: { s: Scan; seen: Seen } | null = null;
+
+function seenParts(s: Scan): Seen {
+  if (lastSeen?.s === s) return lastSeen.seen;
+  const hit = seenOf.get(s);
+  if (hit) {
+    lastSeen = { s, seen: hit };
+    return hit;
   }
-  return Float64Array.from(out);
+  const b = s.body;
+  const spine = { a: toCamera(b, [0, TORSO.cy - TORSO.b + TORSO.a, 0]), b: toCamera(b, [0, TORSO.cy + TORSO.b - TORSO.a, 0]), r: TORSO.a * b.unit, deep: TORSO.c * b.unit, solid: false };
+  const parts = [spine, ...s.capsules.map((q) => ({ a: q.a, b: q.b, r: q.r, deep: q.r, solid: true }))].map((part): SeenPart => {
+    const steps = part.a === part.b ? 0 : 8;
+    const [x, y, g2, z] = [new Float64Array(steps + 1), new Float64Array(steps + 1), new Float64Array(steps + 1), new Float64Array(steps + 1)];
+    let gMax = 0;
+    for (let i = 0; i <= steps; i++) {
+      const q = steps === 0 ? part.a : mix(part.a, part.b, i / steps);
+      const { xy, near: g } = project(b, q);
+      [x[i], y[i], g2[i], z[i]] = [xy[0], xy[1], g * g, q[2]];
+      gMax = Math.max(gMax, g);
+    }
+    const reach = part.r * gMax + 1;
+    const box: [number, number, number, number] = [Math.min(...x) - reach, Math.min(...y) - reach, Math.max(...x) + reach, Math.max(...y) + reach];
+    return { r: part.r, rr: part.r * part.r, deep: part.deep, solid: part.solid, x, y, g2, z, box };
+  });
+  const centre = toCamera(b, [0, TORSO.cy, 0]);
+  const view = viewAxis(b);
+  const trig = [Math.cos(b.roll), Math.sin(b.roll), Math.cos(b.yaw), Math.sin(b.yaw), Math.cos(b.pitch), Math.sin(b.pitch)] as const;
+  const seen: Seen = { centre, gain: project(b, [0, 0, centre[2]]).near, trig, w: [view[0] / TORSO.a, view[1] / TORSO.b, view[2] / TORSO.c], parts };
+  seenOf.set(s, seen);
+  lastSeen = { s, seen };
+  return seen;
+}
+
+// Spans (flat [lo, hi, …], any order; the first `length` of `flat`) each
+// grown by `grow`, sorted (stably, by their low ends), and those that overlap
+// or touch taken as one.
+function merged(flat: ArrayLike<number>, grow: number, length = flat.length): Float64Array {
+  const m = length >> 1;
+  const order = orderBuffer(m);
+  for (let k = 0; k < m; k++) {
+    // Insertion: the lists are short.
+    let j = k - 1;
+    while (j >= 0 && flat[2 * order[j]] - flat[2 * k] > 0) {
+      order[j + 1] = order[j];
+      j--;
+    }
+    order[j + 1] = k;
+  }
+  const out = new Float64Array(2 * m);
+  let n = 0;
+  for (let q = 0; q < m; q++) {
+    const k = order[q];
+    const [lo, hi] = [flat[2 * k] - grow, flat[2 * k + 1] + grow];
+    if (n > 0 && lo <= out[n - 1]) out[n - 1] = Math.max(out[n - 1], hi);
+    else {
+      out[n++] = lo;
+      out[n++] = hi;
+    }
+  }
+  return n === out.length ? out : out.slice(0, n);
+}
+
+// Scratch buffers for the spans, reused: nothing that fills one calls back in.
+let orders = new Int32Array(64);
+let flats = new Float64Array(64);
+const orderBuffer = (m: number) => (m <= orders.length ? orders : (orders = new Int32Array(2 * m)));
+function flatBuffer(m: number): Float64Array {
+  if (m > flats.length) flats = new Float64Array(2 * m);
+  return flats;
 }
 
 // The block of him depth z is inside (his spans `sp` grown by r, those that
@@ -1057,43 +1356,65 @@ const SIDE_STEPS = 3; // steps along the field a sideways push takes at most
 
 // The squared distance (cells²) from each cell of a cols × rows grid to the
 // nearest cell whose `grid` value is `to` (Felzenszwalb and Huttenlocher's
-// exact transform: columns, then rows).
+// exact transform: columns, then rows). The columns are swept down and up
+// the grid row by row, each to its nearest such cell, which gives the same
+// squares exactly; a column with none takes the transform's own answer.
 function distances(grid: Uint8Array, cols: number, rows: number, to: number): Float64Array {
   const FAR = 1e20;
   const d = new Float64Array(cols * rows);
-  for (let i = 0; i < d.length; i++) d[i] = grid[i] === to ? 0 : FAR;
   const n = Math.max(cols, rows);
   const f = new Float64Array(n);
   const g = new Float64Array(n);
   const v = new Int32Array(n);
   const z = new Float64Array(n + 1);
+  const h = new Float64Array(n);
+  const last = new Int32Array(cols).fill(-1);
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0, i = r * cols; c < cols; c++, i++) {
+      if (grid[i] === to) last[c] = r;
+      d[i] = last[c] < 0 ? Infinity : r - last[c];
+    }
+  }
+  const next = last.fill(-1);
+  for (let r = rows - 1; r >= 0; r--) {
+    for (let c = 0, i = r * cols; c < cols; c++, i++) {
+      if (grid[i] === to) next[c] = r;
+      const e = next[c] < 0 || d[i] <= next[c] - r ? d[i] : next[c] - r;
+      d[i] = e * e;
+    }
+  }
   for (let c = 0; c < cols; c++) {
-    for (let r = 0; r < rows; r++) f[r] = d[r * cols + c];
-    lowerEnvelope(f, rows, g, v, z);
+    if (next[c] >= 0) continue;
+    f.fill(FAR, 0, rows);
+    lowerEnvelope(f, rows, g, v, z, h);
     for (let r = 0; r < rows; r++) d[r * cols + c] = g[r];
   }
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) f[c] = d[r * cols + c];
-    lowerEnvelope(f, cols, g, v, z);
+    lowerEnvelope(f, cols, g, v, z, h);
     for (let c = 0; c < cols; c++) d[r * cols + c] = g[c];
   }
   return d;
 }
 
-// One line of the transform: d[q] = min over p of (q − p)² + f[p].
-function lowerEnvelope(f: Float64Array, n: number, d: Float64Array, v: Int32Array, z: Float64Array) {
+// One line of the transform: d[q] = min over p of (q − p)² + f[p]. `h`
+// keeps each kept parabola's f[p] + p², worked out once.
+function lowerEnvelope(f: Float64Array, n: number, d: Float64Array, v: Int32Array, z: Float64Array, h: Float64Array) {
   let k = 0;
   v[0] = 0;
+  h[0] = f[0] + 0 * 0;
   z[0] = -Infinity;
   z[1] = Infinity;
   for (let q = 1; q < n; q++) {
-    let s = (f[q] + q * q - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]);
+    const fq = f[q] + q * q;
+    let s = (fq - h[k]) / (2 * q - 2 * v[k]);
     while (s <= z[k]) {
       k--;
-      s = (f[q] + q * q - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]);
+      s = (fq - h[k]) / (2 * q - 2 * v[k]);
     }
     k++;
     v[k] = q;
+    h[k] = fq;
     z[k] = s;
     z[k + 1] = Infinity;
   }

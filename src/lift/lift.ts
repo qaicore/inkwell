@@ -63,7 +63,7 @@ import { offsetToTorso, toPixels, toTorso } from '../track/torso.ts';
 import { backDepth, flat, inFront, lerpBody, project, toBody, toCamera, unproject, type Body3D, type Vec3 } from './body.ts';
 import { collideChain, frontFlags, insideDepth, lerpDummy, routeAround, scanPush, type Dummy } from './collide.ts';
 import { createChain3, ROPE3D, stepChain3, type Chain3, type Contact } from './strand3d.ts';
-import { bowedOnScreen, bulgeSide, sagittaRatio, whipFrom, type LimbStep } from './strike.ts';
+import { bowedOnScreen, bulgeSide, floorHeight, sagittaRatio, whipFrom, type LimbStep, type Strike } from './strike.ts';
 import { radiusAt, ROOT_FLARE } from './tube.ts';
 
 // The dish: SLOPE and CURVE per torso height from the root, and by the root it
@@ -79,12 +79,16 @@ export const ROPE = {
   rootHz: 6, // a node at the root takes up the body's turn this fast (its spring's natural frequency) ...
   tipHz: 0.8, // ... the tip this slowly, and the nodes between on (1 − t)² of the way
   follow: 0.5, // the springs' damping ratio: the tip overshoots a stopped turn by about a sixth and swings back
-  waveDeg: 16, // the bend wave's turn at the tip, in the screen plane ...
+  // The bend wave: a standing limb's own curve changes 1–12° a joint between
+  // drawings (decision 19(b)), a rope's undulation running down it: over 1.2
+  // limb lengths at 0.42 Hz it was 0.5°, frozen under the boil. Shorter and
+  // quicker, not wider: a wider swing takes the coiling limbs into him.
+  waveDeg: 22, // the bend wave's turn at the tip, in the screen plane ...
   depthDeg: 9, // ... and toward the camera
-  waveHz: 0.42,
+  waveHz: 0.8,
   depthHz: 0.29,
-  waveLength: 1.2, // limb lengths one wave spans
-  grow: 1.3, // the wave grows as t^grow toward the tip
+  waveLength: 0.8, // limb lengths one wave spans
+  grow: 1, // the wave grows as t^grow toward the tip
   bow: 0.16, // the least sagitta over chord the target shows on screen: the chain, swinging, keeps over a third of it
   least: 0.07, // the least sagitta over chord a drawing of it shows (decision 15's 0.06, and room for the boil)
 };
@@ -148,6 +152,8 @@ export interface Animate3DOptions {
   slam?: { I: number; posters: boolean }; // the contact frame, to mark the poster frames
   dummies?: readonly Dummy[] | null; // his body on every frame (collide.ts): the limbs collide with it and take their front flags from it; missing = the egg's flags, no collisions
   radius?: number; // the limb's root radius before the flare, clip px (the tube's R0); missing = LIMB_RADIUS × the short side of a 16:9 clip
+  height?: number; // the clip's height, px (the floor's bottom edge); missing = a 16:9 clip's
+  floor?: { P: Vec2; d: Vec2 } | null; // the slam's floor line (through P, normal d̂ down into it); missing = the controller's (strike.ts Strike), if it has one
 }
 
 // One stroke's drive: each node's spring-followed turn, bend and lean, and its wave phases.
@@ -184,6 +190,13 @@ export function animate3d(opts: Animate3DOptions): Frame3D[] {
   };
   const R0 = opts.radius ?? LIMB_RADIUS * opts.width * (9 / 16);
   const drives = opts.strokes.map((s) => driveOf(s, R0));
+  // The slam's floor (decision 19(e)): from the release on, a struck limb's
+  // drawings stay above the floor line through P and inside the frame's
+  // bottom edge (onScreenAbove; the controller keeps its throw above it, and
+  // placeOn's routing then takes the drawing round him in depth). The chain
+  // itself isn't pushed up: lifted after its collisions, it went into him.
+  const floor = opts.floor !== undefined ? opts.floor : control && 'floor' in control ? (control as Strike).floor : null;
+  const bottom = opts.height ?? opts.width * (9 / 16);
   const dummies = opts.dummies && opts.dummies.length >= opts.frames ? opts.dummies : null;
   // Each strand's root out of his scanned body on every frame (rootShifts).
   const shifts = opts.strokes.map((s) => (dummies && s.kind === 'strand' ? rootShifts(s, opts.bodies, dummies, opts.frames) : null));
@@ -237,7 +250,8 @@ export function animate3d(opts: Animate3DOptions): Frame3D[] {
   const placeOn = (h: Held, f: number): Placed3D => {
     const b = opts.bodies[f];
     const t = flat(b);
-    const points = h.points.map((p) => toPixels(t, p));
+    const up = floor && strike && f >= strike.release && struck[opts.strokes.findIndex((s) => s.id === h.id)];
+    const points = h.points.map((p, i) => (up && i > 0 ? onScreenAbove(toPixels(t, p), floor, bottom) : toPixels(t, p)));
     const z = h.z.map((v) => v * t.unit);
     if (!dummies || kinds.get(h.id) !== 'strand') return { ...h, points, z };
     let pts = points.map((xy, i) => unproject(b, xy, z[i]));
@@ -281,7 +295,10 @@ export function animate3d(opts: Animate3DOptions): Frame3D[] {
           const order = orders[l] ?? (strike && f >= strike.release && struck[j] ? { restScale: share[j], target: neverStraight(b, target, drives[j].frac) } : null);
           const contact: Contact | null = dummy && s.kind === 'strand' ? { dummy, radii: drives[j].radii, from: drives[j].from } : null;
           stepChain3(chain, target, b.unit, params, order, contact);
-          pinned[j] = !!order?.pin;
+          // Nailed to P: a pin from the landing to the release (from the
+          // release on the controller lays the thrown rope on its own tip,
+          // which is drawn as a free strand's).
+          pinned[j] = !!order?.pin && !(strike && f >= strike.release);
         });
       }
     }
@@ -413,6 +430,19 @@ function rootShifts(s: Lifted, bodies: readonly Body3D[], dummies: readonly Dumm
 }
 const ROOT_SMOOTH = 2;
 const ROOT_CLEAR = 2; // px
+
+// A screen point kept FLOOR_PAD px above the floor line (lifted straight up
+// −d̂, eased in as floorHeight has it, so the line rounds off on it instead
+// of folding flat) and above the frame's bottom edge.
+function onScreenAbove(xy: Vec2, floor: { P: Vec2; d: Vec2 }, bottom: number): Vec2 {
+  const { P, d } = floor;
+  const up = -((xy[0] - P[0]) * d[0] + (xy[1] - P[1]) * d[1]);
+  const lift = floorHeight(up, FLOOR_PAD) - up;
+  const [x, y] = lift > 1e-3 ? [xy[0] - d[0] * lift, xy[1] - d[1] * lift] : xy;
+  return [x, Math.min(y, bottom - FLOOR_PAD)];
+}
+
+const FLOOR_PAD = 2; // px
 
 // ---- The rope's drive ----------------------------------------------------------------------
 

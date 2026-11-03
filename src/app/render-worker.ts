@@ -16,7 +16,7 @@
 // page (the guard at the bottom), and anywhere else it only defines things.
 import type { Effect } from '../types/effect.ts';
 import type { DrawingJob, DrawnLayer, DrawnPart, Tier } from '../impact/contracts.ts';
-import { createImpactScene, type ImpactScene } from '../impact/scene.ts';
+import { createImpactScene, type ImpactScene, type PackedPhysics } from '../impact/scene.ts';
 import { CUT_RESOLUTION } from '../impact/tiers.ts';
 import type { BoilParams } from '../motion/boil.ts';
 import type { Pose } from '../track/tracking.ts';
@@ -35,6 +35,7 @@ export interface SceneData {
   size: number; // the internal frame's long side
   cuts?: number;
   boil?: BoilParams;
+  physics?: PackedPhysics | 'wait'; // the page's scene's physics (lift/sim-worker.ts), or 'wait': the limbs as drawn; missing = worked out here
 }
 
 type ToWorker =
@@ -56,7 +57,7 @@ interface WorkerScope {
 // The scene a SceneData describes, on any thread: the page's and the worker's
 // are built by this one function, so their ids match.
 export function sceneFrom(clip: ClipData, data: SceneData): ImpactScene {
-  return createImpactScene(data.effect, impactClip(clip, data.poses), { tier: data.tier, make: browserScratch, size: data.size, cuts: data.cuts, boil: data.boil });
+  return createImpactScene(data.effect, impactClip(clip, data.poses), { tier: data.tier, make: browserScratch, size: data.size, cuts: data.cuts, boil: data.boil, physics: data.physics });
 }
 
 // What runs the jobs, for the page.

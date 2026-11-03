@@ -336,9 +336,12 @@ describe('determinism and the no-slam output', () => {
 
   it('matches the output recorded for decision 15, with no controller, no emergence and no slam', () => {
     // Re-recorded in round 3 (F1): the rope's damping (ROPE3D) and the drawn
-    // joints eased on screen (easeJoints).
-    expect(noSlamHash(false)).toBe('017e9e9566c930da3ca9185955468305ed808c302a718f6eaf0148dca4bed895');
-    expect(noSlamHash(true)).toBe('3a6f96eb14d8e0da4b0a6703c7e619ca61558a2d4d22717e44845354da0e3044');
+    // joints eased on screen (easeJoints). Again in round 4 (R1): the bend
+    // wave shorter and quicker (lift.ts ROPE, decision 19(b)) and the base's
+    // hold (strand3d.ts HOLD), and in its second pass the wave's turn at the
+    // tip 16° → 22° (standing limbs under 1° a drawing on f141–159).
+    expect(noSlamHash(false)).toBe('fd2854e92a9f78f90e7e3050b0738592fe4497ef0d0660b69ccf3c6168f7e1ee');
+    expect(noSlamHash(true)).toBe('673ca65dcffd75294591eb5de2be012718ea8a796811ca707f4a20ae3359fd32');
   });
 
   it('projects the placed root where the chain root projects on every capture', () => {

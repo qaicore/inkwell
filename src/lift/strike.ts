@@ -8,7 +8,7 @@
 // the white-out on the fist contact (I, f84), and let go at I + 9 (f93).
 // Fist first is out of scope. Every phase is relative to the landing frame
 // `land` and the release frame `release`, and τ = f − 1 + sub/steps is when
-// a step ends, in frames. A whip crack, not a turning rod (decision 15):
+// a step ends, in frames. A whip crack, not a turning rod (decisions 15, 19):
 //   - coil, frames land − 7..land − 3: each target is turned about its root
 //     in the screen plane, z kept, away from P by 30°·ease_in(p_i), root
 //     first: node i starts coilDelay·t_i frames after the root (t_i its arc
@@ -18,43 +18,52 @@
 //     stroke's own (0.1) toward 0.5, but only as far as lets the pull add 8
 //     torso heights a second to a tip that lags its target (a stiffened
 //     spring far from its target is a fast one), and never below the stroke's own;
-//   - strike, land − 2..land (whipFrames): the whip. A front runs down the
-//     limb: node i comes over from the coil (still winding) to the strike
-//     curve C over whipSpan of the whip from whip·t_i² of it (the front runs
-//     on faster as the rope thins), so the inner half comes over first, the
-//     outer last, and the tip comes down onto P last and fastest, on land
-//     itself. The whip is laid on the chain (its own tip pinned, so the lift
-//     places it exactly; stiffness 1): from where the chain is, each segment
-//     turned at least catchUp of the way a step onto the whip's, so the
-//     rope's drag can't carry the outer half over with the inner;
+//   - strike, land − 2..land (whipFrames): the whip, laid on the chain (its
+//     own tip pinned, so the lift places it exactly; stiffness 1). It swings
+//     the chain from the shape the whip found it in (on its first step: laid
+//     from the coil's target instead, it snapped the lagging chain onto it)
+//     to the strike curve C, each segment's way on screen turned round the
+//     camera's z axis, all of them the same way round (swing: against the
+//     coil's wind), node i setting off whip·t_i of the way into the whip and
+//     over whipSpan of it, coming in faster and faster (its share squared),
+//     on a clock running as u^whipEase over the whip's frames: the inner half
+//     comes over first, the bend runs out to the tip, and the tip comes down
+//     onto P last and fastest, on land itself. A loop, not a pigtail
+//     (curlLimited), and the inner half bowed, never a rod (bowInner);
 //   - pinned, land + 1..release − 1: C with a ripple running down it (zero at
 //     both ends, seeded per limb; the whip's C has it too), at pinStiffness,
 //     the tip pinned where C's end projects onto P, so the chain is laid on
 //     C (the lift's kinematic pin) and the rest lengths scaled so the chain
 //     is exactly as long as the rippled curve. The hook takes one scale for
 //     every rest length, so a segment is |C|/(n − 1) when the drawing's
-//     nodes are evenly spaced, and keeps the drawing's proportions otherwise;
-//   - release, from release, eased over easeDrawings (8): unpinned, and the
-//     drawn length back within the frame (decision 15: never longer than
-//     about 1.15× it, never straight). The target is thrown back from C
-//     (as it would lie now) to the lift's own target: for recoilFrom of the
-//     ease the limb only pulls out of P, back along C at its drawn length and
-//     pulled up −d̂ (pullOut × the drawn length at the tip, swelling and gone
-//     over pullSpan); then a recoil wave runs from the tip up to the root
-//     (recoilWave), each segment's direction turned from C's to its own on a
-//     damped spring that swings about a fifth past it (recoilSpring: the
-//     limb flops into its idle curve and past it), bowed on screen to at
-//     least minBow when it would look straighter (bowedOnScreen), while the
-//     stiffness falls from 1 to the stroke's own over the ease
-//     (1 − (1 − s)·smooth(q)²). On the release's first step every node also
-//     gets the recoil, −d̂·1.5 unit/s·t_i plus a seeded lateral of ±0.4×
-//     that. After the ease the limb is the lift's again.
-// With a dummy (collide.ts) the strike curve, the whip's and the pinned, is
-// routed round his body by its depth (routeAround), finely sampled before
-// the chain's nodes are read off it and on the side of him the limb is on
-// now: the slammed limbs reach P round his side or over a shoulder, never
-// through him, and don't flip from one side of him to the other between
-// steps. The released throw is left to the chain's own collisions.
+//     nodes are evenly spaced, and keeps the drawing's proportions otherwise.
+//     C's side and bulge round him change slowly (steady), so the drawn rope
+//     never pops from one side of him to the other;
+//   - release, from release: the tip let go of P and the drawn length back
+//     (decision 15: never longer than about 1.15× it, never straight). The
+//     chain is laid on a thrown curve, pinned to its own tip (made(q)): from
+//     C (as it would lie now, opened out to releaseBulge, on the side of him
+//     it was on at the release) back to its idle curve (its own target,
+//     bowed on screen to at least minBow). For recoilFrom of the throw the
+//     limb only pulls out of P, up −d̂ (pullOut × the drawn length at the
+//     tip, swelling and gone over pullSpan); then a recoil wave runs from the
+//     tip up to the root (recoilWave), each segment's way turned from C's to
+//     the idle curve's at its drawn length on a damped spring that swings
+//     about a fifth past it (recoilSpring), the stem by the root turning
+//     steadily instead (rootTurn), never under the floor line through P
+//     (aboveFloor). The throw's clock q runs over throwDrawings, but never so
+//     fast that a node of the drawn curve moves more than throwPx a drawing
+//     on screen against the last step's curve carried by his torso
+//     (throwClock: the held drawings are carried that way between drawings).
+//     The stiffness falls from 1 to the stroke's own as it goes
+//     (1 − (1 − s)·smooth(q)²), and the limb is the lift's again once the
+//     throw is done, easeDrawings after the release at the latest.
+// With a dummy (collide.ts) every laid curve (the whip's, the pinned and
+// the thrown) is routed round his body by its depth (routeAround), C finely
+// sampled before the chain's nodes are read off it and on the side of him
+// the limb is on now: the slammed limbs reach P round his side or over a
+// shoulder, never through him, and don't flip from one side of him to the
+// other between steps.
 //
 // The strike curve, in frame px: it sets off from the stem's end S, stem
 // torso heights out of his back from the root along its outward normal
@@ -73,7 +82,9 @@
 // Pure: an order is a function of the step and the options alone, so two
 // runs give the same arrays; nothing reads Math.random or a clock.
 import type { LimbControl, StrikeController, StrikeLimb, StrikeStep, Vec2, Vec3 } from '../impact/contracts.ts';
+import { drawingStart } from '../impact/clock.ts';
 import { rng, uniform } from '../impact/rng.ts';
+import { drawingIndex } from '../motion/timing.ts';
 import { project, toBody, toCamera, TORSO, unproject, type Body3D } from './body.ts';
 import { lerpDummy, overOutline, routeAround, type Dummy } from './collide.ts';
 import { radiusAt } from './tube.ts';
@@ -87,32 +98,41 @@ export const STRIKE = {
   coilDelay: 3, // frames the tip's coil starts after the root's: it winds back root first
   coilStiffness: 0.5,
   whipFrames: 3, // the whip's frames, land − 2..land: the inner half comes over first, the outer last, the tip onto P on land
-  whip: 0.75, // node i starts over to C at whip·t_i² of the whip (the front runs on faster as the rope thins) ...
-  whipSpan: 0.25, // ... and is on it this share of it later: the tip at its end
-  catchUp: 0.05, // the whipped chain is laid on its order, from where it is, at least this share of the way a step
+  whip: 0.55, // node i starts over to C at whip·t_i of the whip ...
+  whipSpan: 0.45, // ... and is on it this share of it later: the tip at its end (a wide front: a narrow one folds the rope back on itself, a pigtail) ...
+  whipEase: 1.2, // ... on a clock running as u^whipEase over its frames: by the f76 drawing the front is half way down the limb, the outer half on its way (at 2 the outer half never showed it)
+  whipCurl: 80, // the whipped outer quarter turning this many degrees at most in all (a whip's loop, not a pigtail) ...
+  whipJoint: 24, // ... and no joint of it more than this many
+  whipInnerBow: 0.04, // the least sagitta over chord of the whip's inner half on screen: a rope coming over, never a rod
   bulge: 0.12, // × |P − R|: the least, and without his body
-  bulges: [0.12, 0.2, 0.3, 0.4, 0.5, 0.65, 0.8], // round his outline: the bulges tried ...
+  bulges: [0.12, 0.2, 0.3, 0.4], // round his outline: the bulges tried (a taut rope: past 0.4 the pinned limbs read as loose loops; the routing in depth takes him from there) ...
   bulgeCost: 0.15, // ... each counting this × its bulge × |P − R| of arc over him against itself ...
-  bulgeSoft: 0.04, // ... and blended by exp(−cost/(this × |P − R|)), so the bulge eases as he moves
-  stem: 0.15, // torso heights the curve first runs out of his back, along its normal
+  bulgeSoft: 0.04, // ... and blended by exp(−cost/(this × |P − R|)), so the bulge eases as he moves ...
+  bulgeRate: 0.02, // ... and changes by this much a frame at most from the whip to the release (a jump is a pop; a stamp or a poster held 2 frames shows two frames' change at once) ...
+  flipPx: 18, // ... and swinging over him to the other side, its middle this many px a frame at most (decision 19(d): 60 a drawing, with his own turn, on stamps 2 frames apart)
+  stem: 0.13, // torso heights the curve first runs out of his back, along its normal (0.15 folds the whipped rope at it on f76; 0.12 takes the pinned limb 2 into him as it swings over)
   lift: 0.25, // torso heights toward the camera at the tip ...
   liftSpan: [0.1, 0.4] as const, // ... by smoothstep over this stretch of the curve
   pinStiffness: 1, // the pinned rope's pull: taut ...
-  ripple: 0.05, // ... but alive: × |P − R|, the ripple across C, zero at both ends ...
+  ripple: 0.06, // ... but alive: × |P − R|, the ripple across C, zero at both ends, ...
+  rippleMin: 12, // ... at least this many px ...
+  rippleMax: 32, // ... and at most this many,
+  rippleAlong: 0.45, // and along C a quarter wave behind, this share of it: each point rides an ellipse, so the rope never stops
   rippleHz: 2.2, // ... running down it,
   rippleWaves: 1.5, // this many waves along it
-  easeDrawings: 8, // the release hands back to the lift over this many drawings
-  regrow: 0.5, // the release closes this share of the gap to the drawn length on each step
-  pullOut: 0.12, // × the drawn length: the released tip's pull back up −d̂, out of P ...
-  pullSpan: 0.4, // ... swelling and gone again over this share of the ease
-  recoilFrom: 0.15, // the share of the ease the limb only pulls out of P (along C, at its drawn length) before the throw back ...
-  recoilWave: 0.35, // ... and the share the recoil wave then takes to run from the tip up to the root ...
+  easeDrawings: 24, // the release hands back to the lift within this many drawings at most (f93–152 on the hero), as soon as its throw is done ...
+  throwDrawings: 10, // ... the throw running over this many when nothing slows it ...
+  throwPx: 68, // ... and slower wherever it would change a node more than this many px on screen between two drawings (decision 19(e): 80)
+  pullOut: 0.3, // × the drawn length: the released tip's pull back up −d̂, out of P (the tips lift off the floor before they swing) ...
+  pullSpan: 0.4, // ... swelling and gone again over this share of the throw
+  recoilFrom: 0.15, // the share of the throw the limb only pulls out of P (along C, at its drawn length) before the throw back ...
+  releaseBulge: 0.65, // ... C opening out to this bulge (at least) meanwhile ...
+  recoilWave: 0.6, // ... and the share the recoil wave then takes to run from the tip up to the root ...
   recoilPeak: 0.6, // ... each node's swing past its idle curve peaking this share of its spring after it sets off ...
   recoilDamping: 0.45, // ... on a spring this damped (about a fifth past it); ...
+  floorPad: 4, // px the released limb's target keeps above the floor line through P
   rootTurn: [0.1, 0.4] as const, // ... by the root, up to this stretch of it (smoothstep), a steady turn over the ease
   minBow: 0.1, // the least sagitta over chord on screen a released limb's target shows (never straight)
-  recoil: 1.5, // torso heights a second along −d̂, at the tip
-  lateral: 0.4, // ± × the recoil, across d̂, seeded per limb
   coilSpeed: 8, // torso heights a second the coil's stiffening may add to a lagging tip
 };
 const LIMB_RADIUS = 0.02 * (9 / 16); // × the frame's width: R0 when no radius is given (lift.ts's: 0.02 of a 16:9 clip's short side)
@@ -154,7 +174,7 @@ export interface StrikeOptions {
   d: Vec2; // the strike direction on screen (normalised here)
   limbs: readonly StrikeLimbSpec[]; // the limbs that slam down; any other chain is left alone
   unit: number; // px per torso height: the lift toward the camera and the recoil
-  seed: number; // the recoil's lateral and the ripple's phase
+  seed: number; // the ripple's phase
   dps?: number; // drawings a second, for the release's ease (12)
   fps?: number; // (30)
   dummies?: readonly Dummy[] | null; // his body on every frame (collide.ts): every curve is routed round it; missing = not routed
@@ -250,7 +270,7 @@ function roundOutline(ds: readonly Dummy[], w: number, b: Body3D, R: Vec2, P: Ve
 }
 const OUTLINE_SAMPLES = 40; // pieces of the curve roundOutline scores
 
-export function strikeController(o: StrikeOptions): StrikeController {
+export function strikeController(o: StrikeOptions): Strike {
   const { land, release, P } = o;
   if (!Number.isInteger(land) || !Number.isInteger(release) || release <= land) {
     throw new Error(`strikeController needs whole frames with land < release (got ${land}, ${release})`);
@@ -262,28 +282,135 @@ export function strikeController(o: StrikeOptions): StrikeController {
   const dLen = Math.hypot(o.d[0], o.d[1]);
   const d: Vec2 = dLen > 0 ? [o.d[0] / dLen, o.d[1] / dLen] : [0, 1];
   const specs = new Map(o.limbs.map((s) => [s.id, s]));
-  const lateral = new Map(o.limbs.map((s) => [s.id, uniform(rng(o.seed, 'recoil', s.id), -STRIKE.lateral, STRIKE.lateral)]));
   const ripplePhase = new Map(o.limbs.map((s) => [s.id, uniform(rng(o.seed, 'ripple', s.id), 0, 2 * Math.PI)]));
   const liftPx = STRIKE.lift * o.unit;
-  const recoilPx = STRIKE.recoil * o.unit;
   const R0 = o.radius ?? LIMB_RADIUS * 1920;
   const dummies = o.dummies && o.dummies.length > 0 ? o.dummies : null;
   const coilFrom = land - 1 - STRIKE.coilFrames;
+  // Each limb's strike curve from the whip on (decision 19(d)), held as a
+  // signed bulge (side × bulge): eased toward roundOutline's at bulgeRate a
+  // frame at most, so his moving outline can't pop the pinned rope from a
+  // loose loop to a tight one between frames; and when he turns so the side
+  // round him changes, swung over through straight with its middle flipPx a
+  // frame at most, as a rope nailed at both ends rolls over him (routed in
+  // depth, in front of him or behind), never jumping from one side of him to
+  // the other. The lift steps in time order; a step earlier than the last
+  // one seen starts afresh (a new run of the same controller), so two runs
+  // give the same orders.
+  const held = new Map<number, { tau: number; sb: number }>();
+  const steady = (id: number, tau: number, side: 1 | -1, bulge: number, len: number): { side: 1 | -1; bulge: number } => {
+    const last = held.get(id);
+    const swinging = last !== undefined && (Math.sign(last.sb) !== side || Math.abs(last.sb) < STRIKE.bulge);
+    const rate = (swinging ? STRIKE.flipPx / Math.max(len, 1) : STRIKE.bulgeRate) * (last ? tau - last.tau : 0);
+    const sb = !last || tau <= last.tau ? side * bulge : last.sb + clamp(side * bulge - last.sb, -rate, rate);
+    held.set(id, { tau, sb });
+    return { side: sb >= 0 ? 1 : -1, bulge: Math.abs(sb) };
+  };
+  // The way round a limb swings (swing), per limb and phase: fixed on the
+  // first step it's asked for, so it never flips mid-swing. Kept as `held` is.
+  const ways = new Map<string, { tau: number; sense: number }>();
+  const heldWay = (key: string, tau: number, first: () => number): number => {
+    const last = ways.get(key);
+    const sense = !last || tau <= last.tau ? first() : last.sense;
+    ways.set(key, { tau, sense });
+    return sense;
+  };
+  // Each limb's chain as the whip found it, on the whip's first step: the
+  // shape the whip swings from (laid from the coil's target instead, it
+  // snapped the chain onto it, the coil's lag and all: 440 px on the hero's
+  // limb 3 on f75). Kept as `held` is.
+  const whipped = new Map<number, { tau: number; pts: Vec3[] }>();
+  const whipStart = (id: number, tau: number, pts: readonly Vec3[]): Vec3[] => {
+    const last = whipped.get(id);
+    const kept = !last || tau <= last.tau ? pts.map(copy3) : last.pts;
+    whipped.set(id, { tau, pts: kept });
+    return kept;
+  };
+  // Each released limb's way through its throw, q 0..1 (the release's
+  // made(q)): on at the throw's own pace (throwDrawings), but no further a
+  // step than changes the thrown curve on screen at any node by its share
+  // of throwPx a drawing (a frame of a drawing three frames long, a third),
+  // against the last step's curve carried by his torso's similarity
+  // (what carries a held drawing between drawings, impact/scene.ts): so his
+  // own move counts only as far as the held drawing doesn't follow it, and
+  // a throw that goes his way is free. When even standing still would change
+  // it more (he moves under a tip on the floor), the share of the step that
+  // changes it least. Kept as `held` is: in time order, afresh on an earlier step.
+  const throwFrames = (STRIKE.throwDrawings * fps) / (o.dps ?? 12);
+  const thrown = new Map<number, { tau: number; q: number; body: Body3D; seen: Vec2[] }>();
+  const throwClock = (id: number, b: Body3D, tau: number, made: (q: number) => Vec3[]): { q: number; nodes: Vec3[] } => {
+    const last = thrown.get(id);
+    const seenOf = (pts: readonly Vec3[]) => pts.map((p) => project(b, p).xy);
+    if (!last || tau <= last.tau) {
+      const q = clamp01((tau - (release - 1)) / throwFrames);
+      const nodes = made(q);
+      thrown.set(id, { tau, q, body: b, seen: seenOf(nodes) });
+      return { q, nodes };
+    }
+    const q1 = Math.min(1, last.q + (tau - last.tau) / throwFrames);
+    const a = made(last.q);
+    const c = q1 > last.q ? made(q1) : a;
+    const [sa, sc] = [seenOf(a), seenOf(c)];
+    const was = last.seen.map(carried(last.body, b));
+    // Node i's change at share k of the step: u_i + k·v_i.
+    const u = sa.map((p, i) => [p[0] - was[i][0], p[1] - was[i][1]]);
+    const v = sc.map((p, i) => [p[0] - sa[i][0], p[1] - sa[i][1]]);
+    // The drawing this step's frame leads up to, and how many frames it follows the last one by.
+    const k = drawingIndex(Math.max(0, Math.ceil(tau) - 1), o.dps ?? 12, fps);
+    const span = Math.max(1, drawingStart(k + 1, o.dps ?? 12) - drawingStart(k, o.dps ?? 12));
+    const budget = (STRIKE.throwPx / span) * (tau - last.tau);
+    let [lo, hi] = [0, 1];
+    for (let i = 1; i < u.length && lo <= hi; i++) {
+      // |u + k·v|² ≤ budget²: a quadratic in k.
+      const [A, B, C] = [v[i][0] ** 2 + v[i][1] ** 2, u[i][0] * v[i][0] + u[i][1] * v[i][1], u[i][0] ** 2 + u[i][1] ** 2 - budget * budget];
+      if (A < 1e-12) {
+        if (C > 0) hi = -1;
+        continue;
+      }
+      const disc = B * B - A * C;
+      if (disc < 0) {
+        hi = -1;
+        continue;
+      }
+      const r = Math.sqrt(disc);
+      lo = Math.max(lo, (-B - r) / A);
+      hi = Math.min(hi, (-B + r) / A);
+    }
+    let share = hi;
+    if (!(lo <= hi)) {
+      const worst = (x: number) => Math.max(...u.slice(1).map((ui, j) => Math.hypot(ui[0] + x * v[j + 1][0], ui[1] + x * v[j + 1][1])));
+      share = [0, 0.25, 0.5, 0.75, 1].reduce((best, x) => (worst(x) < worst(best) ? x : best), 0);
+    }
+    const q = last.q + (q1 - last.q) * share;
+    const nodes = share >= 1 ? c : share <= 0 ? a : made(q);
+    thrown.set(id, { tau, q, body: b, seen: share >= 1 ? sc : share <= 0 ? sa : seenOf(nodes) });
+    return { q, nodes };
+  };
 
   const order = (l: StrikeLimb, at: StrikeStep, phase: StrikePhase): LimbControl | null => {
     const spec = specs.get(l.id);
     const n = l.target.length;
-    if (!spec || phase.kind === 'none' || n < 2) return null;
+    const tau = at.f - 1 + at.sub / at.steps;
+    // A released limb is handed back to the lift as soon as its throw is
+    // done, and by the ease's end at the latest: handed back half thrown, the
+    // rope snapped to its idle curve in a frame (550 px on the hero).
+    const last = thrown.get(l.id);
+    const done = phase.kind === 'release' && last !== undefined && tau > last.tau && last.q >= 1;
+    if (!spec || phase.kind === 'none' || n < 2 || done) return null;
     const b = at.body;
     const target = l.target;
     const fr = arcFractions(target);
-    const tau = at.f - 1 + at.sub / at.steps;
     // Round his body, when there is one: the dummy on this step, between its frames'.
     const ends = dummies ? [dummies[Math.max(0, Math.min(dummies.length - 1, at.f - 1))], dummies[Math.min(dummies.length - 1, at.f)]] : null;
     const dummy = ends ? lerpDummy(ends[0], ends[1], at.sub / at.steps) : null;
     // C round his body, routed finely before the nodes are read off it, on
     // the side of him the limb is on now.
-    const depthNow = depthAt(l.points);
+    // The side of him each stretch is on now: the chain's depths, each the
+    // median of its own and its neighbours' (DEPTH_CALM each way), so one
+    // node the last routing left in a sliver of room behind him (290 px
+    // behind its neighbours on the hero's limb 4, f109) isn't asked to stay
+    // there, step after step, while the rest lies in front.
+    const depthNow = depthAt(calmDepths(l.points));
     const routeOf = (pts: Vec3[]) => {
       const ft = arcFractions(pts);
       return routeAround(dummy!, pts, ft.map((t) => radiusAt(t, 1, R0)), routeFrom(ft, polyLength(pts), R0), (k) => depthNow(ft[k]), FLARE * R0);
@@ -301,93 +428,127 @@ export function strikeController(o: StrikeOptions): StrikeController {
       return { target: wound, stiffness: Math.max(s0, Math.min(ramp, cap)) };
     }
     const drawn = polyLength(target);
-    // C's side and bulge: round his outline when there is a body, else the drawing's way.
+    // C's side and bulge: round his outline when there is a body, else the
+    // drawing's way; held steady from the whip on (steady).
     const R = project(b, target[0]).xy;
     const round = ends ? roundOutline(ends, at.sub / at.steps, b, R, P, (1.22 * R0) / (Math.hypot(P[0] - R[0], P[1] - R[1]) || 1), R0 * (1 + OUTLINE_PAD)) : null;
-    const side = round?.side ?? spec.side ?? bulgeSide(target.map((q) => project(b, q).xy));
-    const bulge = round?.bulge ?? STRIKE.bulge;
-    const wave = { amp: STRIKE.ripple * Math.hypot(P[0] - R[0], P[1] - R[1]), phase: (ripplePhase.get(l.id) ?? 0) + 2 * Math.PI * STRIKE.rippleHz * (tau / fps) };
+    const { side, bulge } = steady(l.id, tau, round?.side ?? spec.side ?? bulgeSide(target.map((q) => project(b, q).xy)), round?.bulge ?? STRIKE.bulge, Math.hypot(P[0] - R[0], P[1] - R[1]));
+    const wave = { amp: clamp(STRIKE.ripple * Math.hypot(P[0] - R[0], P[1] - R[1]), STRIKE.rippleMin, STRIKE.rippleMax), phase: (ripplePhase.get(l.id) ?? 0) + 2 * Math.PI * STRIKE.rippleHz * (tau / fps) };
     if (phase.kind === 'strike') {
-      // The whip, laid on the chain (a pin on its own tip: the lift then
-      // places the chain on the order exactly), so the rope's own drag can't
-      // carry the outer half over with the inner: from where the chain is,
-      // each segment's way turned at least catchUp of the way a step onto
-      // the whip's, and all of it once the front has passed it.
+      // The whip (decision 15(d), 19(c)): a bend thrown down the limb. From
+      // the chain as the whip found it to C, each segment's way turned round
+      // the camera's z axis the throw's way (against the coil's wind: back
+      // past the drawn limb and on to P), node i setting off whip·t_i of the
+      // way into the whip and over whipSpan of it, faster and faster, on a
+      // clock that quickens (whipEase), so the inner half comes over first,
+      // the bend runs out to the tip, and the tip comes down onto P last and
+      // fastest, on land itself. Laid on the chain (a pin on its own tip: the
+      // lift then places the chain on the order exactly). Its outer part
+      // loops behind the inner as a whip's does, but a loop, not a pigtail
+      // (curlLimited), and the inner half comes over bowed, never a rod
+      // (bowInner); neither once the front has passed every node, so the tip
+      // lands on P exactly. Routed round him by its depth, as C is.
       const curve = curveNodes(b, target[0], P, side, liftPx, fr, wave, routed, bulge).nodes;
-      const wound = coil(b, target, P, (t) => coilAt(tau, coilFrom, t));
-      const u = (tau - (land - STRIKE.whipFrames)) / STRIKE.whipFrames; // 0..1 through the whip's frames
-      const w = (i: number) => smooth((u - STRIKE.whip * fr[i] ** 2) / STRIKE.whipSpan);
-      const goal = whipBlend(wound, curve, w);
-      const [dx, dy, dz] = sub3(target[0], l.points[0]); // the chain carried with its root to this step's
-      const from = l.points.map((q): Vec3 => [q[0] + dx, q[1] + dy, q[2] + dz]);
-      const laid = dragBlend(from, goal, (i) => Math.max(STRIKE.catchUp, w(i)));
-      return { target: laid, stiffness: 1, pin: laid[n - 1] };
+      const found = whipStart(l.id, tau, l.points);
+      const u = clamp01((tau - (land - STRIKE.whipFrames)) / STRIKE.whipFrames) ** STRIKE.whipEase; // 0..1 through the whip's frames
+      const w = (i: number) => clamp01((u - STRIKE.whip * fr[i]) / STRIKE.whipSpan) ** 2; // each node comes in faster and faster, the tip onto P fastest of all
+      const sense = heldWay(`whip ${l.id}`, tau, () => {
+        const away = coilWay(b, target, P);
+        return Math.abs(away) > 0.5 ? -Math.sign(away) : 0; // no clear way round: the short way
+      });
+      const lengths = found.slice(1).map((p, i) => {
+        const [a, c] = [dist3(found[i], p), dist3(curve[i], curve[i + 1])];
+        return a + (c - a) * w(i + 1);
+      });
+      const goal = swing(found, curve, w, sense, lengths);
+      const laid = w(n - 1) >= 1 ? goal : bowInner(b, curlLimited(goal, fr, w), side, fr);
+      const out = routed && w(n - 1) < 1 ? routed.nodes(laid) : laid;
+      return { target: out, stiffness: 1, pin: out[n - 1] };
     }
     if (phase.kind === 'pinned') {
       const { nodes: curve, length } = curveNodes(b, target[0], P, side, liftPx, fr, wave, routed, bulge);
       return { target: curve, stiffness: STRIKE.pinStiffness, pin: curve[n - 1], restScale: drawn > 0 ? length / drawn : 1 };
     }
-    // The release (decision 15(f)): the drawn length back within the frame,
-    // and the limb thrown from the pinned curve (as it would lie now) back to
-    // its own idle curve by a recoil wave running from the tip up to the
-    // root: after recoilFrom of the ease, node i sets off recoilWave·(1 − t_i)
-    // of it after the tip and swings past its idle curve and back on a
-    // damped spring (recoilSpring), each segment's direction turned from the
-    // curve's to the idle one's at its drawn length. So the tip pulls out of
-    // P first (back along C as the length comes back, and pulled up −d̂),
-    // the bend runs back up, and the limb flops into its curve with an
-    // overshoot, never longer than drawn, never straight (bowed on screen
-    // after, as the idle curve is).
+    // The release (decision 15(f), 19(e)): the drawn length back within the
+    // frame, and the limb thrown from the pinned curve (as it would lie now)
+    // back to its own idle curve by a recoil wave running from the tip up to
+    // the root: after recoilFrom of the ease, node i sets off
+    // recoilWave·(1 − t_i) of it after the tip and swings past its idle curve
+    // and back on a damped spring (recoilSpring), each segment's direction
+    // turned from the curve's to the idle one's at its drawn length. So the
+    // tip pulls out of P first (back along C as the length comes back, and
+    // pulled up −d̂), the bend runs back up, and the limb flops into its
+    // curve with an overshoot, never longer than drawn, never straight
+    // (bowed on screen after, as the idle curve is), and never under the
+    // floor line through P (aboveFloor: laid at the drawn length, C's last
+    // stretch ran on past P into the floor).
     const goal = (l as LimbStep).drawn;
     const want = goal !== undefined && drawn > 0 ? Math.min(1, goal / drawn) : 1;
-    const q = Math.max(0, phase.q);
-    const pinned = curveNodes(b, target[0], P, side, liftPx, fr, undefined, undefined, bulge).nodes;
-    const idle = bowedOnScreen(b, target, side, fr);
-    // By the root (rootTurn of it) the limb turns back steadily over the whole
-    // ease instead: the stem out of his back swung round at once would sweep
-    // the rope through him.
-    const throwAt = (i: number) => recoilSpring((q - STRIKE.recoilFrom - STRIKE.recoilWave * (1 - fr[i])) / (1 - STRIKE.recoilFrom - STRIKE.recoilWave));
-    const w = (i: number) => {
-      const k = smoothstepAt(STRIKE.rootTurn[0], STRIKE.rootTurn[1], fr[i]);
-      return smooth(q) + (throwAt(i) - smooth(q)) * k;
+    // The side of him it is thrown from and the way round it is thrown, held
+    // from the release's first step (the short way then): C opened out to
+    // releaseBulge on the other side, as his outline turns under it, is
+    // half a limb away (290 px on the hero's f132).
+    const from = heldWay(`release side ${l.id}`, tau, () => side) as 1 | -1;
+    const idle = bowedOnScreen(b, target, from, fr);
+    const lengths = idle.slice(1).map((p, i) => dist3(idle[i], p) * want);
+    const sense = heldWay(`release ${l.id}`, tau, () => Math.sign(wrap(chordAngle(idle) - chordAngle(curveNodes(b, target[0], P, from, liftPx, fr, undefined, undefined, bulge).nodes))) || 1);
+    const made = (q: number): Vec3[] => {
+      // The curve it is thrown back from opens out to releaseBulge over the
+      // pull out of P: thrown from the taut pin itself, the throw drags the rope
+      // through him and stretches it (a quarter over its length on limb 4).
+      const relBulge = bulge + Math.max(0, STRIKE.releaseBulge - bulge) * smooth(Math.min(1, q / STRIKE.recoilFrom));
+      const pinned = curveNodes(b, target[0], P, from, liftPx, fr, undefined, undefined, relBulge).nodes;
+      // By the root (rootTurn of it) the limb turns back steadily over the
+      // whole throw instead: the stem out of his back swung round at once
+      // would sweep the rope through him.
+      const throwAt = (i: number) => recoilSpring((q - STRIKE.recoilFrom - STRIKE.recoilWave * (1 - fr[i])) / (1 - STRIKE.recoilFrom - STRIKE.recoilWave));
+      const w = (i: number) => {
+        const k = smoothstepAt(STRIKE.rootTurn[0], STRIKE.rootTurn[1], fr[i]);
+        return smooth(q) + (throwAt(i) - smooth(q)) * k;
+      };
+      // Out of P first: the throw carried back up −d̂, pullOut of the drawn
+      // length at the tip (t_i of it down the limb), swelling and gone again
+      // over the first pullSpan of the throw.
+      const pull = q < STRIKE.pullSpan ? STRIKE.pullOut * drawn * want * Math.sin((Math.PI * q) / STRIKE.pullSpan) : 0;
+      const back = swing(pinned, idle, w, sense, lengths).map((p, i): Vec3 => [p[0] - d[0] * pull * fr[i], p[1] - d[1] * pull * fr[i], p[2]]);
+      return aboveFloor(b, bowedOnScreen(b, back, from, fr), P, d, STRIKE.floorPad);
     };
-    // Out of P first: the throw carried back up −d̂, pullOut of the drawn
-    // length at the tip (t_i of it down the limb), swelling and gone again
-    // over the first pullSpan of the ease.
-    const pull = q < STRIKE.pullSpan ? STRIKE.pullOut * drawn * want * Math.sin((Math.PI * q) / STRIKE.pullSpan) : 0;
-    // That length back within the release frame, half the way left on each
-    // step: all at once, the stretch would fling the chain on for frames.
-    // After it, the drawn length (a chain the collisions stretch on him is
-    // pulled back to it, not given the stretch).
-    const now = drawn > 0 ? polyLength(l.points) / drawn : 1;
-    const out: LimbControl = {
-      pin: null,
-      restScale: at.f > release || Math.abs(want - now) < 0.02 * want ? want : now + (want - now) * STRIKE.regrow,
-      target: bowedOnScreen(
-        b,
-        throwBack(pinned, idle, w, want).map((p, i): Vec3 => [p[0] - d[0] * pull * fr[i], p[1] - d[1] * pull * fr[i], p[2]]),
-        side,
-        fr,
-      ),
-      stiffness: 1 + (l.stiffness - 1) * smooth(q) ** 2, // near 1 early in the ease (the throw is the target's), the rope's own by its end
+    // The throw's own clock (decision 19(e)): it runs with the ease, but
+    // never so fast that a node of the thrown curve moves more than throwPx
+    // a frame on screen (on this step's body, so his own moves don't count):
+    // the drawings are on 2s and 3s from the release on, and a throw at the
+    // ease's pace put a whole drawing's swing (up to 466 px) on one frame.
+    const { q, nodes: throwOf } = throwClock(l.id, b, tau, made);
+    // Laid on the chain, as the whip and the pinned curve are (the lift's
+    // kinematic pin, here on its own tip): left to its collisions, a rope
+    // thrown this slowly lingers by him as he stands up, and the pushes tore
+    // it across him in depth (2.2× its length on the hero's f112). It carries
+    // the throw's velocity on when it is handed back.
+    const laid = routed ? routed.nodes(throwOf) : throwOf;
+    return {
+      pin: laid[n - 1],
+      restScale: drawn > 0 ? polyLength(laid) / drawn : 1,
+      target: laid,
+      stiffness: 1 + (l.stiffness - 1) * smooth(q) ** 2, // the rope's own by the throw's end
     };
-    if (phase.first) {
-      const across = lateral.get(l.id) ?? 0;
-      const vx = recoilPx * (-d[0] - across * d[1]); // −d̂ plus `across` of (−d_y, d_x)
-      const vy = recoilPx * (-d[1] + across * d[0]);
-      out.impulse = fr.map((t): Vec3 => [vx * t, vy * t, 0]);
-    }
-    return out;
   };
 
   return {
     land,
     release,
+    floor: { P: [P[0], P[1]], d },
     step(at) {
       const phase = strikePhase(at.f, at.sub, at.steps, strike, easeFrames);
       return at.limbs.map((l) => order(l, at, phase));
     },
   };
+}
+
+// The controller strikeController makes: the contract's, plus the floor line
+// the slam lands on (through P, normal d̂ down into it), which the lift keeps
+// a released limb above (lift.ts).
+export interface Strike extends StrikeController {
+  floor: { P: Vec2; d: Vec2 };
 }
 
 // ---- Geometry ------------------------------------------------------------------------------
@@ -406,13 +567,20 @@ function coilAt(tau: number, coilFrom: number, t: number): number {
 // flipping between the two.
 function coil(b: Body3D, target: readonly Vec3[], P: Vec2, p: (t: number) => number): Vec3[] {
   const R = project(b, target[0]).xy;
+  const away = coilWay(b, target, P);
+  const fr = arcFractions(target);
+  return target.map((q, i) => (i === 0 ? copy3(q) : turnAbout(b, R, q, away * ((STRIKE.coilDeg * Math.PI) / 180) * p(fr[i]) ** 3)));
+}
+
+// The coil's way round (−1..1, its share of coilDeg): away from P, fading
+// out within 15° of P or of straight away from it.
+function coilWay(b: Body3D, target: readonly Vec3[], P: Vec2): number {
+  const R = project(b, target[0]).xy;
   const tip = project(b, target[target.length - 1]).xy;
   const [ax, ay] = [tip[0] - R[0], tip[1] - R[1]];
   const [cx, cy] = [P[0] - R[0], P[1] - R[1]];
   const sin = (ax * cy - ay * cx) / (Math.hypot(ax, ay) * Math.hypot(cx, cy) || 1); // > 0: P is clockwise of the tip
-  const away = -clamp(sin / Math.sin((15 * Math.PI) / 180), -1, 1);
-  const fr = arcFractions(target);
-  return target.map((q, i) => (i === 0 ? copy3(q) : turnAbout(b, R, q, away * ((STRIKE.coilDeg * Math.PI) / 180) * p(fr[i]) ** 3)));
+  return -clamp(sin / Math.sin((15 * Math.PI) / 180), -1, 1);
 }
 
 // The first node the routing moves: past the flared root, as the lift collides.
@@ -422,78 +590,58 @@ function routeFrom(fr: readonly number[], length: number, R0: number): number {
 }
 const FLARE = 1.22; // × R0: the flared root's radius (tube.ts, 1 + ROOT_FLARE)
 
-// From `from` to `to` (both camera px, root first, the same root), each
-// segment's direction turned `w(i)` of the way, at `to`'s segment lengths:
-// a blend of two shapes that keeps the limb's length, where blending their
-// points would stretch it across the gap between them.
-// The whip's target: each segment's direction turned from the wound coil's
-// toward C's by its node's share w(i) (slerp), its length between theirs,
-// laid from the root. Blending places instead, a node half way between two
-// shapes far apart, kinks the chain where the share changes along it (the
-// outer half crumpled on the strike frame); blending directions, each joint
-// bends no more than the two shapes and the share's own turn. All of C at
-// w = 1.
-function whipBlend(wound: readonly Vec3[], curve: readonly Vec3[], w: (i: number) => number): Vec3[] {
-  const out: Vec3[] = [copy3(wound[0])];
-  for (let i = 0; i < wound.length - 1; i++) {
-    const a = sub3(wound[i + 1], wound[i]);
-    const c = sub3(curve[i + 1], curve[i]);
-    const [la, lc] = [Math.hypot(a[0], a[1], a[2]), Math.hypot(c[0], c[1], c[2])];
-    const t = w(i + 1);
-    const dir = la > 1e-9 && lc > 1e-9 ? turnToward([a[0] / la, a[1] / la, a[2] / la], [c[0] / lc, c[1] / lc, c[2] / lc], t) : lc > 1e-9 ? [c[0] / lc, c[1] / lc, c[2] / lc] : [0, 0, 0];
-    const len = la + (lc - la) * t;
-    const p = out[i];
-    out.push([p[0] + dir[0] * len, p[1] + dir[1] * len, p[2] + dir[2] * len]);
-  }
-  return out;
-}
-
-// From unit a toward unit b, `t` of the angle between them (slerp).
-function turnToward(a: Vec3, b: Vec3, t: number): Vec3 {
-  const w = Math.acos(Math.min(1, Math.max(-1, a[0] * b[0] + a[1] * b[1] + a[2] * b[2])));
-  if (w < 1e-9) return [b[0], b[1], b[2]];
-  const s = Math.sin(w);
-  if (s < 1e-6) return t < 0.5 ? [a[0], a[1], a[2]] : [b[0], b[1], b[2]];
-  const [p, q] = [Math.sin((1 - t) * w) / s, Math.sin(t * w) / s];
-  return [a[0] * p + b[0] * q, a[1] * p + b[1] * q, a[2] * p + b[2] * q];
-}
-
-// As whipBlend, but each segment's way from the node before it as laid now
-// to where its own node is: a node the front hasn't reached is dragged along
-// its segment after the one before it, as a rope's is, not carried round
-// with it (follow-the-leader), so the outer half lags the inner and comes
-// over after it.
-function dragBlend(from: readonly Vec3[], goal: readonly Vec3[], w: (i: number) => number): Vec3[] {
-  const out: Vec3[] = [copy3(from[0])];
-  for (let i = 0; i < from.length - 1; i++) {
-    const a = sub3(from[i + 1], out[i]);
-    const c = sub3(goal[i + 1], goal[i]);
-    const [la, lc, l0] = [Math.hypot(a[0], a[1], a[2]), Math.hypot(c[0], c[1], c[2]), dist3(from[i + 1], from[i])];
-    const t = w(i + 1);
-    const dir = la > 1e-9 && lc > 1e-9 ? turnToward(scale3(a, 1 / la), scale3(c, 1 / lc), t) : lc > 1e-9 ? scale3(c, 1 / lc) : [0, 0, 0];
-    out.push(add3(out[i], scale3(dir as Vec3, l0 + (lc - l0) * t)));
-  }
-  return out;
-}
-
 // From `from` to `to` (camera px, root first, the same root), each
-// segment's direction turned w(i) of the way from from's to to's (past it
-// for w > 1), at to's segment lengths × k, laid from the root.
-function throwBack(from: readonly Vec3[], to: readonly Vec3[], w: (i: number) => number, k: number): Vec3[] {
+// segment's way turned w(i) of the way round the camera's z axis (past it
+// for w > 1), every one the same way round: the chord's turn taken `sense`
+// (+1 counter-clockwise on screen, −1 clockwise; 0 the short way), each
+// segment's own turn about the chord the short way. Its rise toward the
+// camera goes from its from's to its to's; its length is `lengths`[i],
+// laid from to's root. A slerp in 3D between two ways nearly opposite each
+// other (a limb thrown back up from P, or whipped down from its coil) goes
+// round whichever side its last bit of noise says, and flipped the whole
+// limb across its root between two steps (442 px on the hero's f132).
+function swing(from: readonly Vec3[], to: readonly Vec3[], w: (i: number) => number, sense: number, lengths: readonly number[]): Vec3[] {
+  const n = to.length;
+  const [ga, gb] = [chordAngle(from), chordAngle(to)];
+  const turn = turnWay(gb - ga, sense);
   const out: Vec3[] = [copy3(to[0])];
-  for (let i = 0; i < to.length - 1; i++) {
+  for (let i = 0; i < n - 1; i++) {
     const a = sub3(from[i + 1], from[i]);
     const c = sub3(to[i + 1], to[i]);
-    const [la, lc] = [Math.hypot(a[0], a[1], a[2]), Math.hypot(c[0], c[1], c[2])];
-    if (lc < 1e-9) {
-      out.push(copy3(out[i]));
-      continue;
-    }
-    const dir = la > 1e-9 ? turnToward(scale3(a, 1 / la), scale3(c, 1 / lc), w(i + 1)) : scale3(c, 1 / lc);
-    out.push(add3(out[i], scale3(dir, lc * k)));
+    const [aa, ca] = [Math.atan2(a[1], a[0]), Math.atan2(c[1], c[0])];
+    const [ea, ec] = [Math.atan2(a[2], Math.hypot(a[0], a[1])), Math.atan2(c[2], Math.hypot(c[0], c[1]))];
+    const k = w(i + 1);
+    const ang = aa + k * (turn + wrap(ca - gb - (aa - ga)));
+    const rise = ea + k * (ec - ea);
+    const l = lengths[i];
+    const p = out[i];
+    out.push([p[0] + l * Math.cos(rise) * Math.cos(ang), p[1] + l * Math.cos(rise) * Math.sin(ang), p[2] + l * Math.sin(rise)]);
   }
   return out;
 }
+
+// His torso's similarity from body a to body b on screen (scale, lean and
+// place: what carries a held drawing between drawings, impact/scene.ts
+// torsoSimilarity), as a map of screen points.
+function carried(a: Body3D, b: Body3D): (p: Vec2) => Vec2 {
+  const k = b.unit / a.unit;
+  const [c, s] = [k * Math.cos(b.roll - a.roll), k * Math.sin(b.roll - a.roll)];
+  return (p) => {
+    const [x, y] = [p[0] - a.x, p[1] - a.y];
+    return [b.x + c * x - s * y, b.y + s * x + c * y];
+  };
+}
+
+// The way a limb's chord points on screen (camera x, y), root to tip.
+const chordAngle = (p: readonly Vec3[]) => Math.atan2(p[p.length - 1][1] - p[0][1], p[p.length - 1][0] - p[0][0]);
+
+// An angle taken `sense` round (+1 counter-clockwise, −1 clockwise, 0 the short way).
+function turnWay(a: number, sense: number): number {
+  const short = wrap(a);
+  if (sense === 0 || short === 0 || Math.sign(short) === Math.sign(sense)) return short;
+  return short + 2 * Math.PI * Math.sign(sense);
+}
+const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 
 // A damped spring's step response at u (0 before it sets off): past 1 by
 // about a fifth at u = recoilPeak, back under it, and within 1 % of it by u = 1.
@@ -503,6 +651,70 @@ function recoilSpring(u: number): number {
   const wd = Math.PI / STRIKE.recoilPeak;
   const w0 = wd / Math.sqrt(1 - zeta * zeta);
   return 1 - Math.exp(-zeta * w0 * u) * (Math.cos(wd * u) + ((zeta * w0) / wd) * Math.sin(wd * u));
+}
+
+// The height (px, up −d̂) a point `up` px above the floor line is kept at:
+// `pad` at least, eased in over FLOOR_BAND px (a softplus), so a curve the
+// floor stops has its bottom rounded, never folded flat along the line.
+export function floorHeight(up: number, pad: number): number {
+  const x = (up - pad) / FLOOR_BAND;
+  return pad + FLOOR_BAND * (x > 30 ? x : Math.log1p(Math.exp(x)));
+}
+const FLOOR_BAND = 12; // px
+
+// `nodes` (camera px) with every point past the root kept `pad` px above
+// the floor line through P on screen (normal d̂, pointing down into the
+// floor), by floorHeight: lifted straight back up −d̂, at its own depth.
+export function aboveFloor(b: Body3D, nodes: readonly Vec3[], P: Vec2, d: Vec2, pad: number): Vec3[] {
+  return nodes.map((p, i) => {
+    if (i === 0) return copy3(p);
+    const xy = project(b, p).xy;
+    const up = -((xy[0] - P[0]) * d[0] + (xy[1] - P[1]) * d[1]);
+    const lift = floorHeight(up, pad) - up;
+    return lift > 1e-3 ? unproject(b, [xy[0] - d[0] * lift, xy[1] - d[1] * lift], p[2]) : copy3(p);
+  });
+}
+
+// The whip's dragged outer part as a whip's loop, not a pigtail: root to
+// tip, a joint the front hasn't passed (w < 1) turns no more than
+// STRIKE.whipJoint on screen, and the outer quarter's joints no more than
+// STRIKE.whipCurl in all; a segment over it is turned back toward the one
+// before it about the view axis, the rest of the chain carried with it.
+function curlLimited(nodes: readonly Vec3[], fr: readonly number[], w: (i: number) => number): Vec3[] {
+  const out = nodes.map(copy3);
+  const joint = (STRIKE.whipJoint * Math.PI) / 180;
+  let left = (STRIKE.whipCurl * Math.PI) / 180;
+  for (let i = 1; i < out.length - 1; i++) {
+    const [ax, ay] = [out[i][0] - out[i - 1][0], out[i][1] - out[i - 1][1]];
+    const [bx, by] = [out[i + 1][0] - out[i][0], out[i + 1][1] - out[i][1]];
+    if (Math.hypot(ax, ay) < 1e-6 || Math.hypot(bx, by) < 1e-6) continue;
+    const turn = Math.atan2(ax * by - ay * bx, ax * bx + ay * by);
+    const outer = fr[i] >= 0.75;
+    const most = w(i + 1) >= 1 ? Infinity : outer ? Math.min(joint, Math.max(0, left)) : joint;
+    const kept = Math.sign(turn) * Math.min(Math.abs(turn), most);
+    if (outer) left -= Math.abs(kept);
+    if (kept === turn) continue;
+    // Turn every node past i about node i on screen (the camera's z axis) by kept − turn.
+    const [c, s] = [Math.cos(kept - turn), Math.sin(kept - turn)];
+    for (let j = i + 1; j < out.length; j++) {
+      const [dx, dy] = [out[j][0] - out[i][0], out[j][1] - out[i][1]];
+      out[j] = [out[i][0] + c * dx - s * dy, out[i][1] + s * dx + c * dy, out[j][2]];
+    }
+  }
+  return out;
+}
+
+// The whip's inner half bowed on screen to STRIKE.whipInnerBow of its chord
+// when it looks straighter (bowedOnScreen on it alone, its side), the outer
+// half carried along with the inner half's end.
+function bowInner(b: Body3D, nodes: readonly Vec3[], side: 1 | -1, fr: readonly number[]): Vec3[] {
+  const half = nodes.length >> 1;
+  const inner = nodes.slice(0, half + 1);
+  if (!(sagittaRatio(inner.map((p) => project(b, p).xy)) < STRIKE.whipInnerBow)) return nodes.map(copy3);
+  const end = fr[half] > 0 ? fr[half] : 1;
+  const bowed = bowedOnScreen(b, inner, side, fr.slice(0, half + 1).map((t) => t / end), STRIKE.whipInnerBow);
+  const by = sub3(bowed[half], nodes[half]);
+  return [...bowed, ...nodes.slice(half + 1).map((p) => add3(p, by))];
 }
 
 // `nodes` (camera px, root first) bowed on screen to `side` when they look
@@ -551,46 +763,6 @@ export function sagittaRatio(pts: readonly Vec2[]): number {
   return m / c;
 }
 
-// The released limb in camera px at arc fractions `fr`: a circular arc
-// `length` long from the root to `end` (straight when it can't be), bowing
-// out of his back and to `side` on screen, so the length a slammed
-// limb gets back goes into a bow clear of him. The arc is kept to 0.75 of a
-// full turn: past that, `end` is moved out along the chord.
-function releaseBow(b: Body3D, root: Vec3, end: Vec3, length: number, side: 1 | -1, fr: readonly number[]): Vec3[] {
-  let e = sub3(end, root);
-  let c = Math.hypot(e[0], e[1], e[2]);
-  e = c > 1e-9 ? scale3(e, 1 / c) : [0, 1, 0];
-  const most = Math.sin(BOW_MAX) / BOW_MAX; // the shortest chord over length the arc may have
-  if (length > 0 && c < most * length) c = most * length;
-  if (length > 0 && c > length) c = length; // too far to reach: straight at its length, toward `end`
-  // The bow's way: his back's outward normal and the chord's screen normal
-  // toward `side`, equally, square to the chord.
-  const back = sub3(toCamera(b, [0, TORSO.cy, -1]), toCamera(b, [0, TORSO.cy, 0]));
-  const screen: Vec3 = [-e[1] * side, e[0] * side, 0];
-  let m = add3(scale3(back, 1 / (Math.hypot(back[0], back[1], back[2]) || 1)), scale3(screen, 1 / (Math.hypot(screen[0], screen[1]) || 1)));
-  m = sub3(m, scale3(e, dot3(m, e)));
-  const ml = Math.hypot(m[0], m[1], m[2]);
-  m = ml > 1e-9 ? scale3(m, 1 / ml) : [-e[1], e[0], 0];
-  // The half-angle θ with sin θ/θ = c/length (bisection: it falls from 1 on (0, π)).
-  const ratio = length > 0 ? Math.min(1, c / length) : 1;
-  let lo = 0;
-  let hi = BOW_MAX;
-  for (let k = 0; k < 48 && hi - lo > 1e-9; k++) {
-    const mid = (lo + hi) / 2;
-    if (Math.sin(mid) / mid > ratio) lo = mid;
-    else hi = mid;
-  }
-  const th = (lo + hi) / 2;
-  const mid = add3(root, scale3(e, c / 2));
-  return fr.map((t, i): Vec3 => {
-    if (i === 0) return copy3(root);
-    if (th < 1e-6) return add3(root, scale3(e, c * t));
-    const rho = c / (2 * Math.sin(th));
-    const a = -th + 2 * th * t;
-    return add3(mid, add3(scale3(e, rho * Math.sin(a)), scale3(m, rho * (Math.cos(a) - Math.cos(th)))));
-  });
-}
-const BOW_MAX = 0.75 * Math.PI; // the released bow's largest half-angle
 
 // A camera-px point turned on screen about R by `angle`, at its own depth.
 function turnAbout(b: Body3D, R: Vec2, q: Vec3, angle: number): Vec3 {
@@ -635,8 +807,21 @@ function curveNodes(b: Body3D, root: Vec3, P: Vec2, side: 1 | -1, liftPx: number
     }
     fine.push(k === 0 ? copy3(S) : unproject(b, at, z));
   }
-  const plain = readOff(b, fine, fr);
-  return { nodes: route ? route.nodes(readOff(b, route.fine(fine), fr)) : plain, length: polyLength(plain) };
+  // The ripple's other half: each node a quarter wave behind it along the
+  // chord, so every point rides a small ellipse and the pinned rope is never
+  // still (read off by arc length, a ripple across C alone stops at its crests).
+  const along = (nodes: Vec3[]): Vec3[] =>
+    ripple
+      ? nodes.map((p, i) => {
+          if (i === 0 || i === nodes.length - 1) return p;
+          const t = fr[i];
+          const w = STRIKE.rippleAlong * ripple.amp * Math.sin(Math.PI * t) * Math.cos(ripple.phase - 2 * Math.PI * STRIKE.rippleWaves * t);
+          const xy = project(b, p).xy;
+          return unproject(b, [xy[0] + ny * w, xy[1] - nx * w], p[2]);
+        })
+      : nodes;
+  const plain = along(readOff(b, fine, fr));
+  return { nodes: route ? route.nodes(along(readOff(b, route.fine(fine), fr))) : plain, length: polyLength(plain) };
 }
 const STEM_SAMPLES = 6; // the fine curve's pieces along the stem
 
@@ -681,6 +866,20 @@ function readOff(b: Body3D, fine: readonly Vec3[], fr: readonly number[]): Vec3[
     return mix3(fine[k], fine[k + 1], w);
   });
 }
+
+// A chain with each node's depth the median of its own and DEPTH_CALM
+// neighbours' each way (the root's and the tip's kept).
+function calmDepths(pts: readonly Vec3[]): Vec3[] {
+  const n = pts.length;
+  return pts.map((p, i): Vec3 => {
+    if (i === 0 || i === n - 1) return copy3(p);
+    const zs: number[] = [];
+    for (let j = Math.max(0, i - DEPTH_CALM); j <= Math.min(n - 1, i + DEPTH_CALM); j++) zs.push(pts[j][2]);
+    zs.sort((a, b) => a - b);
+    return [p[0], p[1], zs[zs.length >> 1]];
+  });
+}
+const DEPTH_CALM = 2;
 
 // The depth (camera z) along a chain at arc fraction t, linear between its nodes.
 function depthAt(pts: readonly Vec3[]): (t: number) => number {

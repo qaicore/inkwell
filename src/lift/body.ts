@@ -171,31 +171,39 @@ function nearSurface(q: Vec3, d: Vec3, a: number, b: number, c: number, cy: numb
 }
 
 function rotate(b: Body3D, [x, y, z]: Vec3): Vec3 {
+  const { cp, sp, cy, sy, cr, sr } = trigOf(b);
   // Bend: the top of the spine (−y) tips toward his chest (+z).
-  const cp = Math.cos(b.pitch);
-  const sp = Math.sin(b.pitch);
   [y, z] = [cp * y + sp * z, -sp * y + cp * z];
   // Turn: at yaw π/2 his right side (−x) faces the camera.
-  const cy = Math.cos(b.yaw);
-  const sy = Math.sin(b.yaw);
   [x, z] = [cy * x + sy * z, -sy * x + cy * z];
   // Lean on screen, clockwise.
-  const cr = Math.cos(b.roll);
-  const sr = Math.sin(b.roll);
   return [cr * x - sr * y, sr * x + cr * y, z];
 }
 
 function unrotate(b: Body3D, [x, y, z]: Vec3): Vec3 {
-  const cr = Math.cos(b.roll);
-  const sr = Math.sin(b.roll);
+  const { cp, sp, cy, sy, cr, sr } = trigOf(b);
   [x, y] = [cr * x + sr * y, -sr * x + cr * y];
-  const cy = Math.cos(b.yaw);
-  const sy = Math.sin(b.yaw);
   [x, z] = [cy * x - sy * z, sy * x + cy * z];
-  const cp = Math.cos(b.pitch);
-  const sp = Math.sin(b.pitch);
   [y, z] = [cp * y - sp * z, sp * y + cp * z];
   return [x, y, z];
+}
+
+// The cos and sin of a body's pitch, yaw and roll, kept for the angles last
+// asked for: the points of a limb or a scan on one body ask for the same
+// ones over and over.
+const trig = { pitch: NaN, yaw: NaN, roll: NaN, cp: NaN, sp: NaN, cy: NaN, sy: NaN, cr: NaN, sr: NaN };
+function trigOf(b: Body3D): typeof trig {
+  if (Object.is(b.pitch, trig.pitch) && Object.is(b.yaw, trig.yaw) && Object.is(b.roll, trig.roll)) return trig;
+  trig.pitch = b.pitch;
+  trig.yaw = b.yaw;
+  trig.roll = b.roll;
+  trig.cp = Math.cos(b.pitch);
+  trig.sp = Math.sin(b.pitch);
+  trig.cy = Math.cos(b.yaw);
+  trig.sy = Math.sin(b.yaw);
+  trig.cr = Math.cos(b.roll);
+  trig.sr = Math.sin(b.roll);
+  return trig;
 }
 
 const dot = (a: Vec3, b: Vec3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];

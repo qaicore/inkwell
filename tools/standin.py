@@ -3,7 +3,9 @@
 # server (tools/standin-server.ts) runs it as
 #   python standin.py <clip> <model> <clip width> <clip height> <mask width> <mask height>
 # and sends what it prints straight back to the page: a 4-byte length, a JSON
-# header with each frame's body points, then every frame's mask.
+# header with each frame's body points (all 33: the page keeps the 15 that
+# move with the body for the tracking, and the lot for the limbs' dummy),
+# then every frame's mask.
 import json
 import os
 import shutil
@@ -20,8 +22,6 @@ from mediapipe.tasks.python import vision
 
 MODEL_URL = ('https://storage.googleapis.com/mediapipe-models/pose_landmarker/'
              'pose_landmarker_full/float16/latest/pose_landmarker_full.task')
-# The landmarks that move with the body: head, shoulders and hips.
-CORE = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 23, 24]
 FPS = 30
 
 clip, model = sys.argv[1], Path(sys.argv[2])
@@ -62,9 +62,9 @@ with vision.PoseLandmarker.create_from_options(options) as landmarker:
         if result.pose_landmarks:
             points = result.pose_landmarks[0]
             bodies.append({
-                'x': [points[k].x * width for k in CORE],
-                'y': [points[k].y * height for k in CORE],
-                'c': [1.0 if points[k].visibility is None else points[k].visibility for k in CORE],
+                'x': [p.x * width for p in points],
+                'y': [p.y * height for p in points],
+                'c': [1.0 if p.visibility is None else p.visibility for p in points],
             })
         else:
             bodies.append(None)

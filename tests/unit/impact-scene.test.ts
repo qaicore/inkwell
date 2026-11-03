@@ -229,6 +229,21 @@ describe('portrait', () => {
     for (let i = 0; i < frame.data.length; i += 4) if (frame.data[i] !== PLATE || frame.data[i + 1] !== PLATE) lit++;
     expect(lit).toBeGreaterThan(1000);
   });
+
+  // Round 4's integration: the released limbs are kept above the floor and
+  // the clip's bottom edge (lift.ts animate3d), which took a 16:9 clip's
+  // height when the scene gave none, so on a 1080×1920 clip every point but
+  // the roots went flat on y 606, two thirds of the way up the frame.
+  it('keeps the released limbs by P and on the clip`s own frame (f93–130)', () => {
+    const s = sceneOf({ portrait: true });
+    const { clip, P } = s.setup;
+    const frames = s.frames3d();
+    for (let f = 93; f <= 130; f++) {
+      for (const p of frames[f].placed) for (const q of p.points) expect(q[1], `f${f} limb ${p.id}`).toBeLessThanOrEqual(clip.height);
+    }
+    // Just let go (f93), every tip is still low by P, under the frame's middle.
+    for (const p of frames[93].placed) expect(p.points.at(-1)![1], `limb ${p.id} (P ${P[0]}, ${P[1]})`).toBeGreaterThan(clip.height / 2);
+  });
 });
 
 describe('the turn', () => {
