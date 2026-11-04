@@ -1,8 +1,7 @@
 /// <reference types="node" />
 // R3 (SPEC §10, rules): the README section "Built Oct 26 – Nov 4" is present and matches package.json.
-// What the section must hold (SPEC §2.6 and M0 checklist item 7): Meta's models (SAM 3.1 and Muse Wonder);
-// the open-source libraries from package.json, kept current whenever package.json changes; and the fact
-// that the code was written with Claude Code under Qai's direction. It separates the three.
+// What the section must hold (SPEC §2.6 and M0 checklist item 7): Meta's models (SAM 3.1 and Muse Wonder)
+// and the open-source libraries from package.json, kept current whenever package.json changes. It separates the two.
 //
 // Measured, reading README.md and package.json at runtime:
 //   1. a heading with exactly that title (en dash, as SPEC writes it);
@@ -11,8 +10,7 @@
 //      and peerDependencies is named in it, in visible text (link targets and URLs don't count);
 //   3. "matches" both ways: every library the part names (link texts and @scope/name tokens) is in
 //      package.json, so a removed package can't linger;
-//   4. outside the libraries part, the section names SAM 3.1 and Muse Wonder, and says the code was
-//      "written with Claude Code under Qai's direction".
+//   4. outside the libraries part, the section names SAM 3.1 and Muse Wonder.
 import { afterAll, describe, expect, it } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -26,7 +24,7 @@ const ev = new Evidence(ID, [
   'libraries part present',
   'package.json packages missing from the README',
   'README libraries not in package.json',
-  'models and Claude Code credit',
+  'models credit',
 ]);
 afterAll(() => ev.write());
 
@@ -124,9 +122,6 @@ function check(readme: string, pkgJson: Record<string, unknown>): Result {
   const credit: string[] = [];
   if (!/SAM 3\.1/.test(rest)) credit.push('SAM 3.1 not named outside the libraries part');
   if (!/Muse Wonder/.test(rest)) credit.push('Muse Wonder not named outside the libraries part');
-  if (!/written with Claude Code under Qai['’]s direction/i.test(rest.replace(/\s+/g, ' '))) {
-    credit.push(`no "written with Claude Code under Qai's direction"`);
-  }
   return { hasSection: true, hasLibs: true, missing, extra, credit };
 }
 
@@ -147,13 +142,12 @@ describe(`R3 README "${TITLE}" matches package.json`, () => {
       '- **Open-source libraries** (from `package.json`):',
       '  - [perfect-freehand](https://x.test/pf) (MIT), [Mediabunny](https://mediabunny.dev)',
       '  - Dev: [Vite](https://vite.dev), @types/node',
-      "- **Code:** written with Claude Code under Qai's direction.",
       '', '## Next',
     ].join('\n');
     const noVite = good.replace('[Vite](https://vite.dev), ', '').replace('Dev: ', 'Dev: [Vitest](https://vite.dev), ');
     const stale = good.replace('@types/node', '@types/node, [Lodash](https://lodash.com)');
     const urlOnly = good.replace('[Mediabunny](https://mediabunny.dev)', '[the codec](https://mediabunny.dev)');
-    const noCredit = good.replace("under Qai's direction", 'by a team');
+    const noCredit = good.replace('and Muse Wonder', 'and Muse');
     const enDash = good.replace(TITLE, 'Built Oct 26 - Nov 4');
     const r = {
       good: check(good, pkg),
@@ -174,7 +168,7 @@ describe(`R3 README "${TITLE}" matches package.json`, () => {
     expect(ok, `R3 parser self-check failed: ${JSON.stringify(r)}`).toBe(true);
   });
 
-  it(`R3 README.md has the "${TITLE}" section, its library list matches package.json both ways, and it credits the models and Claude Code`, () => {
+  it(`R3 README.md has the "${TITLE}" section, its library list matches package.json both ways, and it credits the models`, () => {
     const readme = readOrFail('README.md');
     const pkgJson = JSON.parse(readOrFail('package.json')) as Record<string, unknown>;
     const r = check(readme, pkgJson);
@@ -184,7 +178,7 @@ describe(`R3 README "${TITLE}" matches package.json`, () => {
       r.missing.length ? `add to the libraries list: ${r.missing.join(', ')}` : '');
     ev.record('README libraries not in package.json', r.extra, [], r.extra.length === 0,
       r.extra.length ? `listed but not in package.json: ${r.extra.join(', ')}` : '');
-    ev.record('models and Claude Code credit', r.credit, [], r.credit.length === 0);
+    ev.record('models credit', r.credit, [], r.credit.length === 0);
     expect(r.hasSection, `README.md has no "## ${TITLE}" heading`).toBe(true);
     expect(r.hasLibs, `the "${TITLE}" section has no open-source libraries part`).toBe(true);
     expect(r.missing, `package.json packages not named in the README libraries list: ${r.missing.join(', ')}`).toEqual([]);

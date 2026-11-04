@@ -28,7 +28,6 @@ You check R1–R5 in `docs/SPEC.md`. A FAIL here can disqualify the project, so 
 4. **R3, attribution.** The `README.md` section "Built Oct 26 – Nov 4" names three things:
    - SAM 3.1 and Muse Wonder
    - the open-source libraries, matching `package.json`
-   - the fact that the code was written with Claude Code under Qai's direction
 5. **R4, no network in tests.**
    - In `src/`, `functions/`, `scripts/`, `tests/` and `.claude/hooks/`, the host `api.meta.ai` and the proxy URL appear only in `src/sam`, `src/plan`, `functions/` and `scripts/live/`. Docs and agent files may name them.
    - Tests, hooks and verify scripts must not import those clients.

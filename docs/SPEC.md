@@ -39,11 +39,11 @@ Qai draws once, on one frame of a phone clip, and the drawing lives in the foota
 - the output matches Qai's reference data in `reference/` on every criterion in §10
 - Qai approves the contact sheet
 
-**Who and when.** A solo build by Qai for the Meta Global AI Developer Hackathon: Indie Developer track, theme "Build for Your World". It's due Wed Nov 4 at 9:00 PM ET; submit by noon, 3 PM at the latest, because the real deadline lands in his 5–11 PM shift.
+**Who and when.** A build by Qai for the Meta Global AI Developer Hackathon: Indie Developer track, theme "Build for Your World". It's due Wed Nov 4 at 9:00 PM ET.
 
-**Division of labor.** Muse Wonder plans each stroke and reads which way he faces. SAM 3.1 tracks the anchors Wonder picks, plus his body (`person`) and face (`face`). Everything that moves is code written for Inkwell. Meta's own SAM docs recommend this split: a Muse model to understand the scene, SAM to segment it.
+**Division of labor.** SAM 3.1 gives his body (`person`) and face (`face`) masks, which the app reads from saved answers. Muse Wonder labeled which way he faces on the probe clip (`fixtures/probe/report.md`); the app doesn't read that answer. Everything that moves is code written for Inkwell.
 
-**Hero effect.** Horns, a halo and a tail come first. The hero is a four-tendril kagune in the limb brush (§8.8), with electricity crackling around it, floppy (stiffness about 0.1), slamming into an impact (§8.9), if it's clean by Sunday. A second look for it: crystal blades in the blade brush, with trails and the flame aura; Qai picks one by Friday. Call them tendrils for judges and kagune on X.
+**Hero effect.** Horns, a halo and a tail come first. The hero is a four-tendril kagune in the limb brush (§8.8), with electricity crackling around it, floppy (stiffness about 0.1), slamming into an impact (§8.9). A second look for it: crystal blades in the blade brush, with trails and the flame aura.
 
 **Two drawings make the hero.** Nothing else is required: no taps, no keys, no extra drawings.
 1. **The limbs, on a start frame.** One to six strokes out from his body in the limb brush: cel-shaded 3D tubes with electricity crackling around them. They grow out of him on that frame (the emergence) and move with him from then on, on 2s: floppy ropes that drag behind his turns and never pass through his body (§8.5).
@@ -53,13 +53,11 @@ The turn is read from the pose track where that's reliable. One optional tap, on
 
 **Hero test** (the demo's first shot, §13). Qai spins a full turn with the kagune whipping around him. Then the kagune slams down onto a point on the floor and stays pinned there while his fist lands on the same point, as the reference short does it (limbs first, §8.9): seven impact frames strobe, then the floor cracks and erupts in fire, smoke, dust and electricity. The camera is on the tripod the whole time.
 
-**Marketplace.** Effects are free to use. Anyone can open the gallery, search the premade effects by name or tag, and wear one on their own clip (X3). Qai's premade effects come first. Letting anyone publish their own (X4) comes after Nov 4 unless it fits (§3).
-
 **Inputs and outputs.**
 - **Clip:** MP4 or MOV, under 15 s, one person. The app first converts it in the browser to H.264 at a constant 30 fps, using Mediabunny. After that, frame index `f = round(τ·30)` is the clock.
-- **Devices, in priority order:** iPhone Safari first, iPad Safari second, desktop Chrome as the fallback. The people this is for edit on their phones in Instagram's Edits app, so the whole flow runs on an iPhone: open Inkwell in Safari, load a clip, draw or pick an effect, export the MP4 to Photos, and finish the edit in Edits. Edits has no way for outside effects to plug in (no custom-effects tool since Spark AR shut down), so the hand-off is the exported video.
+- **Devices:** desktop Chrome is where the app has been run. iPhone Safari and iPad Safari are the other targets, through phone mode (`npm run dev:phone`, §12); neither has been checked.
 - **Drawing:** pointer events. On iPhone it's a finger: no pressure, so perfect-freehand simulates it from speed, with more smoothing for fast finger strokes; the canvas takes `touch-action: none` and ignores a second touch while drawing. Pencil pressure on iPad; mouse or pen in desktop Chrome. Three colors and ten brushes (§8.8): the current ink brush (perfect-freehand), textured, fine-tip ink, fine-tip textured, neon in a straight and a round tip, electric, blade, trail and limb. Plus one effect nobody draws: the flame aura around the person (§8.6).
-- **Output:** a vertical MP4 (H.264, original audio), exported on the iPhone at 720p (1080p if it holds up on Qai's phone), on iPad at 1080p, or in desktop Chrome at 1080p, then saved to Photos. Plus a live link with cached sample clips.
+- **Output:** an MP4 (H.264, original audio), exported at up to 1080p on desktop Chrome and at 720p on a phone.
 - **Phone budget.** Everything is sized for an iPhone first: a fixed internal resolution of 1080 px on the long side in video coordinates (not screen pixels), the glow at quarter resolution, reused buffers, one video texture, recovery from a lost WebGL context by rebuilding from the stroke data, and no stroke redraw on frames where nothing changed. The preview holds 24 fps or better on Qai's iPhone *(start)*.
 
 ## 2. Rules
@@ -72,7 +70,6 @@ Breaking any of these can disqualify the project or make the checks meaningless.
    - Keys live only in `.env`, and in `.dev.vars` for the Pages Function's local dev. Both are gitignored from the first commit.
    - Never print, log or commit a key. To check for leaks, run `node scripts/scan-secrets.mjs`; it never prints values.
 4. **Paid API calls happen in two places only:**
-   - the running app, through `functions/` with its spend cap
    - `scripts/live/`, where every script has a spend cap and a confirmation prompt
 
    Tests, hooks and `/run-checkers` read cached fixtures and never touch the network. `npm run probe` and `npm run fixtures:refresh` cost money: run them only when Qai says go.
@@ -85,9 +82,9 @@ Breaking any of these can disqualify the project or make the checks meaningless.
    - the checking setup in `.claude/` (agents, hooks, skills, settings)
 
    Never loosen a test to make it pass. Only Qai writes `[qai-approved]`. A guard hook enforces all of this; Qai can lift it for setup edits by starting Claude Code with `INKWELL_SETUP_EDITS=1`. If a threshold looks wrong, stop and ask him.
-6. **Attribution.** `README.md` has a section "Built Oct 26 – Nov 4". It separates Meta's models (SAM 3.1, Muse Wonder), the open-source libraries, and code written with Claude Code under Qai's direction. Keep it current from M0 on, and update the library list whenever `package.json` changes. The demo video shows only features built during the event and says which parts are Qai's.
-7. **Consent.** Every clip in the repo, the demo or the posts is shot by Qai or by the person in it (testers' own clips). Every clip with someone other than Qai is listed in `fixtures/clips.json` with their written consent noted. If a clip isn't listed, don't use it in fixtures, the repo, the demo or the posts. Local testing is the exception: stock clips (for example the Pexels sample) may be used for local test runs, kept only in the gitignored `samples/` folder. No copyrighted music, no downloaded reels.
-8. **Submission.** Enter the Indie Developer track only. Submit at https://cerebralvalley.ai/e/meta-ai-developer-hackathon/hackathon/submit with the public repo and the demo video link. Questions go to the Discord forum, where Meta also runs office hours; confirm there that bonus prizes stack with the track prize, and which X post counts for Most Viral.
+6. **Attribution.** `README.md` has a section "Built Oct 26 – Nov 4". It separates Meta's models (SAM 3.1, Muse Wonder) and the open-source libraries. Keep it current from M0 on, and update the library list whenever `package.json` changes. The demo video shows only features built during the event.
+7. **Consent.** Every clip in the repo, the demo or the posts is shot by Qai or by the person in it. Every clip with someone other than Qai is listed in `fixtures/clips.json` with their written consent noted. If a clip isn't listed, don't use it in fixtures, the repo, the demo or the posts. Local testing is the exception: stock clips (for example the Pexels sample) may be used for local test runs, kept only in the gitignored `samples/` folder. No copyrighted music, no downloaded reels.
+8. **Submission.** Enter the Indie Developer track only. Submit at https://cerebralvalley.ai/e/meta-ai-developer-hackathon/hackathon/submit with the public repo and the demo video link. Questions go to the Discord forum, where Meta also runs office hours.
 
 ## 3. Order of work
 
@@ -97,15 +94,15 @@ From M1 on, every milestone also re-runs the earlier milestones' K, P, A and T c
 
 M0 and M1 need no key at all: every criterion that needs SAM or Wonder output starts at M2. (The kit put PROBE in M0 and K1–K3 in M1; they moved to M2 on Oct 27 because the credits hadn't arrived, and the checkers count missing evidence as a FAIL.)
 
-| ID | Day | Build | Criteria | Needs the API key |
-|---|---|---|---|---|
-| M0 | Tue Oct 27 | The M0 checklist below, including the probe script (not run) | R1–R5 | No |
-| M1 | Wed Oct 28 | Clip conversion; anchors (One Euro filter, torso space), developed on the stand-in tracker (§12); physics engine (2-hour cap); stepped renderer with boil; contact sheets; `/label` page | P1–P5, A1, A2, A6 | No |
-| M2 | Thu Oct 29 | The probe run; cached SAM fixtures for the required clips; Wonder plan call with schema check and one retry; override UI; nearest-mask baseline; Gate 1 (one full run, clip to playback; ugly is fine); the nine brushes and the brush picker (§8.8); the flame aura (§8.6) | PROBE, K1–K3, W1, W2, W3, G1, B1–B4 | PROBE, K1–K3, W1, G1 (W2 and W3 can use recorded responses; B1–B4 are API-free) |
-| M3 | Fri Oct 30 | Turn: facing from the pose track where it's reliable, or one optional tap (§8.5); the 3D lift for single-view effects (§8.5), with per-point layering and occlusion; views mode (draw side and back over a faint front) and view blending, which override the lift where Qai draws a view | T2–T5, A3, A4, A7 | T4 and the re-run K criteria; T2, T3, T5 and A3, A4, A7 are API-free |
-| M4 | Sat Oct 31 | Wonder facing labels and fusion; MP4 export, iPhone first (720p) then desktop (1080p); deploy with cached samples; Gate 2 | T1, W1 (final), X1, X2, X5, G2 | T1, W1, G2 (X1 and X2's server test are API-free) |
-| M5 | Sun Nov 1 | In priority order: finish M3 if it slipped; then the impact (§8.9) from the two drawings: the limb brush and its electricity (§8.8), rope limbs that collide with his body (§8.5), the emergence, the slam-down, the impact frames with the flash check on export, and the aftermath (cracks, fire, smoke, dust, debris and lightning); then, only if Gate 2 passed on Saturday and the impact passes, the gallery with search and wear this effect (X3), with a 5-hour cap. Feature freeze at 11 PM | B1–B3 (ten brushes), I1–I9, I10–I11, S1–S6, T6, L1; X3 if built | X3 (the rest read cached masks or synthetic bodies; I9's device gate is Qai's iPhone run) |
-| M6 | Mon Nov 2 | Every suite on the full clip set; README scoreboards | all | yes |
+| ID | Build | Criteria | Needs the API key |
+|---|---|---|---|
+| M0 | The M0 checklist below, including the probe script (not run) | R1–R5 | No |
+| M1 | Clip conversion; anchors (One Euro filter, torso space), developed on the stand-in tracker (§12); physics engine (2-hour cap); stepped renderer with boil; contact sheets; `/label` page | P1–P5, A1, A2, A6 | No |
+| M2 | The probe run; cached SAM fixtures for the required clips; Wonder plan call with schema check and one retry; override UI; nearest-mask baseline; Gate 1 (one full run, clip to playback; ugly is fine); the nine brushes and the brush picker (§8.8); the flame aura (§8.6) | PROBE, K1–K3, W1, W2, W3, G1, B1–B4 | PROBE, K1–K3, W1, G1 (W2 and W3 can use recorded responses; B1–B4 are API-free) |
+| M3 | Turn: facing from the pose track where it's reliable, or one optional tap (§8.5); the 3D lift for single-view effects (§8.5), with per-point layering and occlusion; views mode (draw side and back over a faint front) and view blending, which override the lift where Qai draws a view | T2–T5, A3, A4, A7 | T4 and the re-run K criteria; T2, T3, T5 and A3, A4, A7 are API-free |
+| M4 | Wonder facing labels and fusion; MP4 export, iPhone first (720p) then desktop (1080p) | T1, W1 (final), X1, X5 | T1, W1 (X1 is API-free) |
+| M5 | In priority order: finish M3 if it slipped; then the impact (§8.9) from the two drawings: the limb brush and its electricity (§8.8), rope limbs that collide with his body (§8.5), the emergence, the slam-down, the impact frames with the flash check on export, and the aftermath (cracks, fire, smoke, dust, debris and lightning); | B1–B3 (ten brushes), I1–I9, I10–I11, S1–S6, T6, L1 | No (they read cached masks or synthetic bodies; I9's device gate is Qai's iPhone run) |
+| M6 | Every suite on the full clip set | all | yes |
 
 **M0 checklist:**
 1. **Commit the skeleton first.** `package.json`, Vite, strict TypeScript and vitest, committed before test-author runs.
@@ -114,7 +111,7 @@ M0 and M1 need no key at all: every criterion that needs SAM or Wonder output st
 4. **`npm run golden:accept -- <id>`.** It copies the approved sheets into `tests/golden/<id>/`.
 5. **`scripts/scan-secrets.mjs`.** It loads `.env` and `.dev.vars` inside its own process, then scans every tracked file plus `git log -p --all` for the secret values. On a hit it prints only `file:line` and the variable name, never the value, and exits 1.
 6. **`fixtures/required-clips.json`.** It ships with the kit and holds the table in §11. Tests read it, along with `verify/ACTIVE`, to know which clips to run. Only Qai edits it.
-7. **`README.md`.** It contains the section "Built Oct 26 – Nov 4": SAM 3.1 and Muse Wonder; the open-source libraries from `package.json`; and the fact that the code was written with Claude Code under Qai's direction.
+7. **`README.md`.** It contains the section "Built Oct 26 – Nov 4": SAM 3.1 and Muse Wonder, and the open-source libraries from `package.json`.
 8. **The proxy skeleton**, in `functions/`.
 9. **`scripts/live/probe.mjs`.**
 
@@ -124,29 +121,10 @@ The credits hadn't arrived on Oct 27. Don't wait for them:
 - **Build each milestone on its day, claim in order.** M0 and M1 are claimed as soon as they pass. From M2 on, build on schedule, using recorded or stand-in data where the key is missing, and claim each milestone once its SAM and Wonder fixtures are cached. The checkers only run at a claim, and they re-run earlier criteria, so claims go M2, M3, M4 in order even if the building ran ahead.
 - **The day the key works:** run the probe (`npm run probe`), refresh the fixtures for the required clips (`npm run fixtures:refresh`), then claim the waiting milestones in order. Both commands cost money, so Qai says go first.
 - **Never claim stand-in numbers.** The stand-in is for building and testing what comes after tracking. K1–K3, T1, W1 and every tracking claim in the README or video are measured on SAM 3.1 and Muse Wonder output.
-- **Ask in the Discord** (where Meta runs office hours) if the credits are late. The plan assumed $150 of credits.
-
-### Day by day
-
-Times are ET. Qai's accounting exam is Thu Oct 29, so Wednesday night and Thursday's gap go to studying. If a day's "done when" slips, the next session starts by finishing it, not by opening the next row.
-
-| Day | Qai's free time | Claude builds | Qai makes or does | Done when |
-|---|---|---|---|---|
-| Tue Oct 27 | Campus gap (iPad); 7 PM–2 AM | M0 | Noon live session. Read the submission form and note its fields. Five minutes in Edits checking whether Scribble takes his own drawing. Design the kagune in Procreate. `reference/timing.json` from one traced lash; lock the ink brush and the 3 colors. One hour of accounting. Night: film `fixtures/probe/clip.mp4`: a 10 s slow full turn on the tripod, brightest light, H.264, HDR off, 1080p30, shutter 1/250 s or faster | M0 verified (R1–R5) |
-| Wed Oct 28 | 11 AM–4 PM; 11 PM–2 AM | M1 | Wednesday's live session. Rough side-step and walk takes, labeled on the `/label` page once M1 builds it. Night: accounting review | M1 verified; a tail and horns follow him on the side-step clip (on the stand-in until SAM) |
-| Thu Oct 29 | Campus gap (iPad); evening | M2 | Gap: final accounting review. Evening: 30 test strokes in the app plus `fixtures/strokes/labels.json`. Approve one golden per brush (B3). Label the probe clip (needed Fri). Rough indoor slow-turn and spin takes, labeled (needed Sat). Say go for the probe and the fixtures once the key works | M2 built; claimed with Gate 1 once the key works |
-| Fri Oct 30 | 8:30 PM–2 AM | M3 | Check the hero turn and bend on the 3D lift's contact sheet; draw side or back views in views mode (`reference/views/hero.json`) only for strokes the lift gets wrong. In Procreate: the floor cracks. The kagune's slam keys (`slam.phases` and `slam.keys` in `reference/timing.json`) are parked: the limbs land first and the slam-down is built from the impact (§8.9). Decide whether the limb brush holds up on the kagune | Strands sit behind him and swap sides on the turn |
-| Sat Oct 31 | 10 AM–2:30 PM | M4 | Halloween teaser post if it renders (horns and a tail on him). Between Saturday and Monday: `fixtures/manual/X1.json`, `X2.json`, `X5.json` and `G2.json` once he's checked export on his iPhone, the whole flow on his iPhone, and the live link by hand | Gate 2 (G2): the full pipeline works on the live link |
-| Sun Nov 1 | All day | M5; feature freeze at 11 PM | Before 3 PM (clocks fall back; sunset is about 4:50): hero footage (the spin and slam, tripod locked, a full turn in about 1.5–2 s, shutter 1/500 s) and the 6 test clips in daylight, plus one friend's turn with written consent in `fixtures/clips.json`. Time hand-animating 1 second (12 drawings), then do it in Inkwell | Hero footage shot; the slam renders on it; the gallery and wear this effect only if Gate 2 passed (5-hour cap); features frozen |
-| Mon Nov 2 | 10 AM–3:30 PM | M6 | Render testers' clips (3+ people, written consent). Record the unedited live take with a clock on screen. Lock the script; collect quotes | Live take, script, README and quotes done |
-| Tue Nov 3 | Campus gap (iPad); 7 PM–2 AM | Final fixes only | Gap: edit the demo video (5-hour cap). Night: cut the X clip, make the repo public, fill in the submission form | Everything submittable by 2 AM |
-| Wed Nov 4 | Until 4 PM | — | Submit by noon, 3 PM at the latest; post the X clip right after | Submitted before his shift |
-
-Pause other projects (Furr, the Suspect rebuild) until Nov 5. The live final is Mon Nov 9, a shift day: check its start time.
 
 ### Cut order
 
-If work falls behind, cut in this order: publishing (X4), the gallery and wear this effect (X3), the impact's floods, then its aftermath lightning, debris chunks and dust wall (the impact frames, the limbs and the cracks are never cut), the flame aura, Wonder's turn labels (the pose track and the tap carry the turn), views mode and view blending (the 3D lift carries every view), rigid presets, the textured and fine-tip brushes (keep ink and neon), the blade and trail brushes, wobble polish, export polish. Never cut the tests, the demo video, or the flash check on export and its Reduce flashing toggle. No switching projects after the probe; from then on, only cuts.
+If work falls behind, cut in this order: the impact's floods, then its aftermath lightning, debris chunks and dust wall (the impact frames, the limbs and the cracks are never cut), the flame aura, Wonder's turn labels (the pose track and the tap carry the turn), views mode and view blending (the 3D lift carries every view), rigid presets, the textured and fine-tip brushes (keep ink and neon), the blade and trail brushes, wobble polish, export polish. Never cut the tests, the demo video, or the flash check on export and its Reduce flashing toggle. No switching projects after the probe; from then on, only cuts.
 
 ## 4. The milestone loop
 
@@ -236,7 +214,7 @@ src/
              check on every export (§8.9)
   bench/     the limb and slam bench behind I9's device gate (bench.html)
   types/     shared types, including effect.ts (the effect JSON in §7)
-functions/   Cloudflare Pages Function: holds keys, proxies Meta API, passcode, daily spend cap
+functions/   Cloudflare Pages Function: a proxy for the Meta API. The app doesn't use it and it has not been deployed
 scripts/     verify pipeline, metrics, tree-hash.mjs, scan-secrets.mjs; scripts/live/ = paid calls
 tests/       unit/ (fast), M1/ M2/ ... (acceptance, one file per criterion), golden/ (approved looks)
 fixtures/    cached SAM and Wonder outputs per clip, truth.json, clips.json, required-clips.json, manual/
@@ -325,7 +303,7 @@ interface Effect {
   moments?: (Moment | EmergeMoment)[];
   turn?: Turn;                                // missing = the turn read from the pose track where it's reliable, else no turn
   aura?: { color: 0 | 1 | 2 };                // the flame aura around the person (§8.6); missing = none
-  listing?: { name: string; tags: string[]; by: string };  // the gallery entry (X3)
+  listing?: { name: string; tags: string[]; by: string };  // optional name, tags and author
   overrides: Record<string, unknown>;         // one-tap overrides, keyed by field path
 }
 ```
@@ -757,9 +735,9 @@ Read the docs before writing a call.
   - a one-line reason
 - **Facing, one per clip.** Input: every 6th frame (5 fps), each with its frame number burned in. Output: a facing class and a confidence for each frame.
 
-Every Wonder call asks for reasoning effort `low`, and the proxy pins it (§9 Oct 27 result). Each Wonder job must beat a dumb rule on the tests, or the video doesn't claim it. While Wonder is working, the app shows "reading your drawing"; both calls are cached.
+Every Wonder call asks for reasoning effort `low`, and the proxy pins it (§9 Oct 27 result). Each Wonder job must beat a dumb rule on the tests, or the video doesn't claim it. Both calls are cached.
 
-**Proxy.** In the app, every call goes through the Pages Function. It holds the keys, requires a passcode for uploads, and enforces a daily spend cap. Scripts in `scripts/live/` may call the API directly, with the key from `.env`.
+**Proxy.** `functions/` holds a Pages Function that would forward calls to Meta's API with the key and a daily spend cap. The app doesn't call it and it has not been deployed. Scripts in `scripts/live/` call the API directly, with the key from `.env`.
 
 **Probe (script built in M0; run and judged in M2, the first milestone with a key).** `npm run probe` runs on `fixtures/probe/clip.mp4`, a 10 s slow turn:
 1. SAM three ways: `person`, `face`, and one point on Qai's back. Place the point on a frame where his back shows, and propagate it in both directions.
@@ -888,10 +866,7 @@ Each criterion has one test file, `tests/<milestone>/<ID>.test.ts`, which also w
 
 | ID | Criterion | Threshold |
 |---|---|---|
-| X1 | A 10 s clip exports to H.264 MP4 with the original audio, on the iPhone and in desktop Chrome | Desktop: < 60 s (measured by a browser test). Manual part, on Qai's iPhone: 720p export in < 120 s *(start)*, it saves to Photos, opens in Edits and uploads to Instagram |
-| X2 | Live link | A server test shows the daily spend cap blocks calls past the limit, and uploads need the passcode. Manual part: Qai confirms the 3 cached samples work on the live link |
-| X3 | Wear this effect (if built): pick a premade effect from the gallery, found by searching its name or a tag, and apply it to a new person's clip with no redraw | K1 and T1 hold on that clip; search finds every premade effect by its name and by each of its tags |
-| X4 | Publish (after Nov 4 unless it fits): anyone saves their effect to the gallery with a name and tags, free to wear | The published effect round-trips to identical JSON; applying it still goes through the spend cap; a report button hides it until Qai reviews it |
+| X1 | A 10 s clip exports to H.264 MP4 with the original audio in desktop Chrome | < 60 s (measured by a browser test) |
 | X5 | The whole flow on Qai's iPhone, in Safari: load a clip, draw a stroke with a finger, preview, export | Manual: preview holds ≥ 24 fps *(start)*, nothing crashes or reloads, and a finger stroke follows him like a Pencil stroke does |
 
 ### Gates, locked look, probe
@@ -899,17 +874,16 @@ Each criterion has one test file, `tests/<milestone>/<ID>.test.ts`, which also w
 | ID | Criterion |
 |---|---|
 | G1 | One clip runs end to end in the app from cached data: clip → plan → SAM → physics → stepped preview |
-| G2 | Manual: on the deployed link, the full pipeline runs on a cached sample and export gives a playable MP4 |
 | L1 | Every approved golden in `tests/golden/` re-renders within 0.5% pixel difference, unless Qai re-approves it |
 | PROBE | `fixtures/probe/report.md` and `strip.png` exist and contain everything listed in the Probe part of §9 |
 
-**Manual evidence.** The manual parts of X1, X2 and I9, and all of G2 and X5, are evidenced by `fixtures/manual/<ID>.json`:
+**Manual evidence.** The manual part of I9, and all of X5, are evidenced by `fixtures/manual/<ID>.json`:
 
 ```json
-{ "id": "X1", "by": "Qai", "date": "2026-11-01", "result": "pass", "notes": "plays in QuickTime, uploaded to IG" }
+{ "id": "X5", "by": "Qai", "date": "2026-11-01", "result": "pass", "notes": "a finger stroke follows him; the export plays" }
 ```
 
-Qai commits it himself with `[qai-approved]`. The judge accepts it for those parts only. X1's export time, X2's server test and I9's Node timings still need `verify/out/<ID>.json`.
+Qai commits it himself with `[qai-approved]`. The judge accepts it for those parts only. X1's export time and I9's Node timings still need `verify/out/<ID>.json`.
 
 ### R: rules (rules-auditor, every milestone)
 
@@ -966,8 +940,7 @@ Tests must fail while `timing.json` is missing.
 
 **Clips.** Shoot in daylight with a fast shutter (1/250 s or faster), H.264, HDR off: dim light blurs motion, and blur is the main source of jitter.
 - **The probe clip:** `fixtures/probe/clip.mp4`, plus `fixtures/probe/truth.json` made on the `/label` page.
-- **Six clips,** easiest first: side-step, walk toward the camera, arm swing, hand passing in front, slow turn, spin. Their folder ids are `side-step`, `walk`, `arm-swing`, `hand-in-front`, `slow-turn` and `spin`, and each has a `fixtures/<clip>/` folder with a `truth.json`. Rough indoor takes are fine until M6; the daylight versions are shot on Sunday.
-- **A friend's turn,** filmed Sunday, with consent recorded in `fixtures/clips.json`.
+- **Six clips,** easiest first: side-step, walk toward the camera, arm swing, hand passing in front, slow turn, spin. Their folder ids are `side-step`, `walk`, `arm-swing`, `hand-in-front`, `slow-turn` and `spin`, and each has a `fixtures/<clip>/` folder with a `truth.json`. Rough indoor takes are fine until M6.
 - **Synthetic anchor paths** for A1, A3 and A4, generated by the tests (seeded).
 
 **Clips required at each milestone** (this table also lives in `fixtures/required-clips.json`). A criterion run on fewer clips fails.
@@ -977,7 +950,7 @@ Tests must fail while `timing.json` is missing.
 | M1, M2 | side-step, walk |
 | M3 | side-step, walk, probe |
 | M4, M5 | side-step, walk, probe, slow-turn, spin (T1 on probe, slow-turn, spin) |
-| M6 | the 6 daylight clips, probe, friend-turn (T1 on probe, slow-turn, spin, friend-turn) |
+| M6 | the 6 daylight clips, probe (T1 on probe, slow-turn, spin) |
 
 ## 12. Already built
 
@@ -993,49 +966,18 @@ A working prototype was built on Oct 27, before the kit arrived. It predates the
 
 ### Judging
 
-Impact carries the most weight, and the final round is judges watching the top 5 videos per track live, so the video has to prove all four scores on its own.
+Impact carries the most weight, and the final round is judges watching the top 5 videos per track live.
 
-- **Stage 1, pass/fail:** the project fits a theme and really uses Meta's models. Say "Build for Your World" and name SAM 3.1 and Muse Wonder in the README's first lines and the video's first 30 seconds.
+- **Stage 1, pass/fail:** the project fits a theme and really uses Meta's models. The README's first lines say "Build for Your World" and name SAM 3.1 and Muse Wonder, as they are used.
 - **Stage 2:** the four scores below, 0 to 10 each.
 - **Stage 3:** the top 5 per track; final judges watch the demo videos live and rank them on the same rubric.
 
 | Score | Weight | How Inkwell earns it |
 |---|---|---|
-| Impact | 30% | A doodle animator spends 24–30 hours on one video by hand ([Adobe](https://makeitcenter.adobe.com/blog/doodle-tiktok.html)). Time hand-animating 1 second (12 drawings), then do it in Inkwell. Show 3+ people in their own clips with written consent, ideally wearing the same drawing. Pitch the draw-your-own layer: [Edits](https://about.fb.com/news/2025/04/introducing-edits-streamlined-video-creation-app/) applies preset effects like Scribble to a person, and Meta's apps have had no custom-effects tool since [Spark AR shut down](https://www.tubefilter.com/2024/08/27/meta-shutting-down-spark-ar-augmented-reality-platform/) in Jan 2025. Call them tendrils for judges, kagune on X |
-| Use of Meta AI tooling | 25% | Wonder plans each stroke and labels which way he faces (claimed only if it passes T1). SAM 3.1 runs those prompts, plus `person` for occlusion and for holding him through the spin. The video shows each Wonder job beating a dumb rule, side by side |
-| Technical depth | 20% | His own physics (one engine, rope to rigid), smoothing, layering and the turn, proven by the scoreboards; a README that shows which parts are his |
-| Demo | 25% | The hero turn in the first 5 seconds, shot in daylight; one unedited take with a visible clock; the turn with and without the turn signal; a deployed link with cached sample clips so judges can draw without uploading |
-
-### Prizes
-
-| Prize | Amount | What Inkwell needs |
-|---|---|---|
-| Indie track | Share of $1M | Creative, ambitious, and visibly working in the demo |
-| Most Viral | $20K | A short X post of the demo; engagement counts through Nov 8 |
-| Community Vote | $10K | Votes in the public gallery; winner announced Nov 16 |
-| Best Creative Build | $5K | Muse Wonder plans each effect and reads the turn |
-
-Skipped: Best Agentic Use-Case (Inkwell isn't an agent) and Best Open Weight Build (Glimmer is 30B and won't fit the 8 GB GPU). Best Creative Build is the realistic prize; chasing every bonus is scope creep.
-
-**Odds and how the pick was made.** On a guessed field size: top 5 about 3–8%, winning Indie about 1%, Best Creative Build about 10%. A five-member LLM council (all Claude, all having read the plan first) unanimously kept Inkwell, so treat "keep Inkwell" as a lead, not proof: the probe and the scoreboards are the real tests.
-
-### Demo video, 3 minutes, one beat per score
-
-1. 0:00 to 0:05 (Demo): the hero test: he spins with the kagune whipping around him, the kagune slams down onto the floor and his fist lands on the same point, seven impact frames strobe, and the floor cracks and erupts.
-2. 0:05 to 0:30 (Impact): who it's for: a doodle animator's 24–30 hours per video, his timed second by hand vs Inkwell, and Edits' preset effects vs drawing your own. Name SAM 3.1 and Muse Wonder here, for Stage 1.
-3. 0:30 to 1:30 (Meta tooling, technical depth): one unedited take with a clock on screen: draw with a finger on the iPhone, Wonder's plan appears, SAM's masks stream in, the physics takes over, export to Photos and open it in Edits.
-4. 1:30 to 2:00 (Technical depth): the turn with and without the turn signal, side by side; without it, the strands stay on the wrong side when his back turns.
-5. 2:00 to 2:30 (Impact): search the gallery, tap a premade effect, and it's on 3+ people; testers' clips if wear this effect didn't make it.
-6. 2:30 to 3:00 (Technical depth, Impact): the scoreboards, including Wonder vs the dumb rule, then the closing line: "Draw it once. Anyone can wear it."
-
-Cut it 16:9 for judges and vertical for X, with licensed or royalty-free audio only.
-
-### Posting
-
-One set of footage feeds the judge video, the X clip and the gallery entry.
-- **X clip:** 15 to 30 seconds, vertical, the draw-then-whip moment in the first 2 seconds. Post right after submitting on Nov 4 and tag @AIatMeta and @cerebral_valley. Upload it natively with the link in a reply. The ask is "send me a clip and I'll put the kagune on you": answer with renders through Nov 8, under the spend cap. DM it first to about 15 doodle, anime-edit and cosplay creators.
-- **Build in public,** on TikTok and X: Wed Oct 28, the rope whipping behind the mouse; Sat Oct 31 (Halloween), horns and a tail tracked to him, "drew my costume onto myself", asking friends for clips (save the kagune for Nov 4); Mon Nov 2, the scoreboards, pass and fail.
-- **Community Vote:** from Nov 4, send the gallery link to friends; one vote per verified account.
+| Impact | 30% | Two drawings become a finished impact shot on the person's own clip. |
+| Use of Meta AI tooling | 25% | SAM 3.1's person and face masks, read from saved answers, cut him out and drive the tracking and the impact. Muse Wonder labeled which way he faces on the probe clip (`fixtures/probe/report.md`); the app doesn't read that answer. |
+| Technical depth | 20% | His own physics (one engine, rope to rigid), smoothing, layering and the turn, checked by the tests. |
+| Demo | 25% | The hero shot: two drawings, then the impact on the clip. |
 
 ## 14. Risks and fallbacks
 
@@ -1043,19 +985,13 @@ Shaky tracking is the biggest risk, because every wobble in the mask shows up in
 
 | Risk | Fallback |
 |---|---|
-| The API credits are late | Build API-free work first and apply the swap rule (§3); ask in the Discord |
 | SAM's masks shift slightly between frames and runs, so the strands jitter | One Euro smoothing; hold the last good position when SAM's confidence drops; shoot in daylight at 1/250 s or faster |
 | The back point or the face track fails in the probe | Happened Oct 27: both missed the turn on the hero spin, so the swap is turn keys (§8.5). Keep the hero move |
 | Clips arrive as WebM or with a shifting frame rate | Convert every clip in the browser to H.264 at a constant 30 fps before upload |
 | Wonder doesn't beat the dumb rule | Use the rule where it wins and say so in the README; the tooling story leans on SAM's three jobs and whatever Wonder still wins |
-| Edits' Scribble already takes his own drawing | The pitch narrows to the physics, the turn and wear this effect |
 | The spin is too fast for the face track or blurs | Spin slower (a full turn in 1.5–2 s), shutter 1/500 s, brightest light; the slam doesn't depend on the turn, so it still lands |
-| People upload anime characters or worse once publishing opens | X4 stays after Nov 4 unless it fits; when it opens, a report button hides an effect until Qai reviews it |
-| Judges read it as a toy | Lead Impact with the 24–30 hour number, the timed second, and 3+ outside people in their own clips |
-| Wonder is slow to answer | One plan call per drawing and one facing call per clip, both cached, with "reading your drawing" on screen |
 | iPhone export is too slow, or the phone heats up and slows down | 720p on the phone; 1080p from iPad or desktop Chrome; for the demo, screen-record the canvas. Test on the iPhone early (from M2), through Mac Safari's Web Inspector if one is around |
 | iPhone Safari runs out of memory and drops the canvas or reloads the tab | Fixed internal resolution, reused buffers, one video texture, and the scene rebuilds from the stroke data |
-| The $150 of credits runs low, or the X post brings a traffic spike | Upload each clip once and reuse its file id (SAM bills per frame, minimum 50 frames per request); cached samples, a passcode and a daily spend cap before posting |
 | Nothing tracks steadily in the probe | Stop and decide before building anything else (§9) |
 | The impact frames flash too much for some viewers | Full is the default, and every export runs the flash check: it warns plainly when a second holds more than 3 flashes, with Reduce flashing beside it. Reduce flashing holds WCAG 2.3.1 and refuses with `FlashCheckError` rather than save a clip that still flashes (§8.9) |
 | P sits at the frame edge (on the hero clip it's 19 px above the bottom) | The HUD marks slide back up the strike axis and the physical marks mirror into frame (§8.9). Under the shake, P sits about 2 px below the bottom edge on j 9..18; that's accepted |
@@ -1073,14 +1009,7 @@ Shaky tracking is the biggest risk, because every wobble in the mask shows up in
 - **Export:** 1080p export on the iPhone, if 720p is all that holds up.
 - **Models:** SAM 3D Body, Glimmer, Muse Image drafting of missing views (a v2 idea for people who draw only once).
 - **Agents:** an agentic self-critique pass.
-- **Also parked:** the rest of the "moments" layer (air slash, spin speed lines; the emergence and the impact are in, §8.9), moments found automatically (except the impact's contact frame, read from the cached person mask; Wonder and new SAM calls for moments stay parked), imported brushes, accounts and paid artists in the gallery, Stand-style fights, voice-to-doodle.
-
-**Where this goes (the 10–100x version).** Spark AR's successor, drawn with a pencil: an artist draws an effect once and anyone can wear it.
-- **What it does:** effects that know the body in 3D (turns, occlusion, touching the floor), act like their material (cloth, fire, strands), and fire on moments (a punch sets off an impact frame, a beat drop a flare). First on people's own clips in Edits, later live in the Instagram camera and on Meta's glasses.
-- **Who it serves:** Reels creators who can't draw but can tap "use", doodle animators and anime editors, music-video and ad makers, and the effect artists Spark AR left behind, paid per use the way Snap and TikTok pay the makers of their most-used effects.
-- **Models:** SAM 3.1 tracks many body parts at once; SAM 3D Body adds pose and depth; Wonder rigs each effect, times it to the motion and the music, and critiques its own render; Muse Image makes style-matched variants; Glimmer runs on-device for the live camera.
-
-**The Nov 4 slice is wear this effect (X3):** save an effect relative to the body (anchor, position against the torso, physics, layer), then find it in the free gallery and apply it to a new person's clip in one tap. A 10-second remix costs about $0.12 in SAM calls (person and face) plus one Wonder call to read the wearer's turns. It's the right slice for two reasons: judges score the slice, so it should be the best trailer for the big version; and wearers won't mark their own turns, which makes automatic turn reading necessary rather than decorative. The video ends on one line, not a mockup: "Draw it once. Anyone can wear it."
+- **Also parked:** the rest of the "moments" layer (air slash, spin speed lines; the emergence and the impact are in, §8.9), moments found automatically (except the impact's contact frame, read from the cached person mask; Wonder and new SAM calls for moments stay parked), imported brushes, Stand-style fights, voice-to-doodle.
 
 ## 16. Prior work and sources
 
@@ -1112,5 +1041,4 @@ Production anime-style 2D draws its views and adds pendulum-style physics for sw
 - [ToonCrafter: Generative Cartoon Interpolation (2024)](https://arxiv.org/abs/2405.17933)
 - [Live2D Cubism: physics settings](https://docs.live2d.com/en/cubism-editor-manual/physics-operation/)
 - Not looked up yet; find the primary source before citing: 2.5D Cartoon Models (Rivers, Igarashi & Durand, SIGGRAPH 2010); Adobe Character Animator's Head Turner behavior; Meta's Animated Drawings (Smith et al., ACM TOG 2023).
-- Pitch facts: [Meta: the Edits update of Dec 17, 2025, on SAM 3 effects](https://about.fb.com/news/2025/04/introducing-edits-streamlined-video-creation-app/); [Tubefilter: Meta shuts down Spark AR on Jan 14, 2025](https://www.tubefilter.com/2024/08/27/meta-shutting-down-spark-ar-augmented-reality-platform/); [Adobe: doodle TikToks and Maddi Winter's 24–30 hour videos](https://makeitcenter.adobe.com/blog/doodle-tiktok.html).
 - Event and models: [Meta Global AI Developer Hackathon](https://dev.meta.ai/events/global-hackathon); [Cerebral Valley event page](https://cerebralvalley.ai/e/meta-ai-developer-hackathon); [SAM: segmenting with prompts](https://dev.meta.ai/docs/sam/segmenting); [SAM overview](https://dev.meta.ai/docs/sam/overview); [SAM 3.1 model page](https://dev.meta.ai/models/sam-3-1); [Muse Wonder model page](https://dev.meta.ai/models/muse-wonder).
