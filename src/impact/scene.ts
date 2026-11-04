@@ -1438,8 +1438,8 @@ function sceneOf(rig: Rig, step: number): ImpactScene {
 
   // The parts the masses draw on clip frame c, in stack order: the cracks,
   // the fire or the cluster, then the dust over its base, then the front FX's
-  // wisps, debris and the particles, then the A5–6 flash. The A5–6 veil goes
-  // under the limbs, in the floods slot, so they stay solid through it. The
+  // wisps, debris and the particles. The A5–6 veil and flash go under all of
+  // that, in the floods slot, so the limbs and masses stay solid in them. The
   // keys are the clocks' (cheap): each says what the drawing shows, its fade
   // apart. The veil and the flash cut the person out of the frame's own mask,
   // so they are drawn per frame.
@@ -1490,7 +1490,7 @@ function sceneOf(rig: Rig, step: number): ImpactScene {
       });
     }
     const fl = j >= 9 ? flashShapes(ectx, c, washOpts) : null;
-    if (fl) out.push({ name: 'flash', slot: 'flash', key: `flash:${c}`, alpha: 1, box: () => ({ x0: 0, y0: 0, x1: W, y1: H }), paint: (ctx, mk) => paintFlash(ctx, mk, fl, ectx.personMask(c), W, H) });
+    if (fl) out.push({ name: 'flash', slot: 'floods', key: `flash:${c}`, alpha: 1, box: () => ({ x0: 0, y0: 0, x1: W, y1: H }), paint: (ctx, mk) => paintFlash(ctx, mk, fl, ectx.personMask(c), W, H) });
     return out;
   };
 

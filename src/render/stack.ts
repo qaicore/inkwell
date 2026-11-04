@@ -5,7 +5,7 @@
 //    4 fire  } masses behind him:        then the dust over the cluster's base
 //    5 dust  } none since round 3     11 fx: the thin front FX,
 //    6 floods, each with its wash's      face-cut from j 9
-//      glow, and the A5–6 dust veil   12 flash: the A5–6 flash, with its person-shaped hole
+//      glow, the A5–6 veil and flash  12 flash: none since round 5
 //    7 limbsBehind, with the far arcs 13 glow: far by 'screen' and a tint, near by 'lighter'
 // The masses stand in front of him uncut (judge round 2: he crouches over P,
 // and a cut left holes in the smoke); fire and dust stay empty for a layer
