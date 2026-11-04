@@ -27,7 +27,7 @@ import { maskNear, type Mask, type PointSet, type Pose } from '../track/tracking
 import { toFrameMask, type SamMask } from '../sam/cache.ts';
 import type { Tier } from '../impact/contracts.ts';
 import type { FloorEstimate } from '../impact/floor-estimate.ts';
-import { createImpactScene, type ImpactClip, type ImpactScene } from '../impact/scene.ts';
+import { createImpactScene, type ImpactClip, type ImpactScene, type SceneOptions } from '../impact/scene.ts';
 
 // One line as drawn, in clip pixels. Its first point is its root, the end
 // that gets attached to the body.
@@ -285,7 +285,9 @@ export interface ClipData {
   masks: (Mask | null)[] | null; // the tracking's person masks; null without tracking
   faces: (SamMask | null)[] | null; // SAM's face masks, from the cache; null without them
   bodies: (PointSet | null)[] | null; // the stand-in's landmarks, for the turn and the bend; null without
+  skeleton?: (PointSet | null)[] | null; // the stand-in's 33 landmarks, for the limbs' crash-test dummy; missing = `bodies` (head and neck alone)
   units: (number | null)[] | null; // torso heights (torsoHeights)
+  id?: string; // names this data on every thread, for the physics' key (impact/scene.ts); missing = the object itself
 }
 
 // The clip as the scene reads it: the person mask, or the nearest within 15
@@ -308,7 +310,9 @@ export function impactClip(data: ClipData, poses: readonly Pose[]): ImpactClip {
     },
     poses,
     bodies: data.bodies,
+    skeleton: data.skeleton ?? null,
     units: data.units,
+    source: data.id ?? data,
   };
 }
 
@@ -335,6 +339,7 @@ export interface SceneSetup {
   boil?: BoilParams;
   make?: MakeScratch; // missing = browserScratch
   strokes?: (clip: number) => DrawnStroke[]; // the other strokes on a clip frame, clip px (animateStrokes')
+  physics?: SceneOptions['physics']; // worked out elsewhere, or 'wait' for it (lift/sim-worker.ts); missing = worked out here
 }
 
 // The impact scene for the preview or the export: every stroke animated
@@ -352,6 +357,7 @@ export function impactScene(effect: Effect, clip: ImpactClip, setup: SceneSetup)
     boil: setup.boil,
     strokes: (c) => scaleStrokes(setup.strokes?.(c) ?? [], scale),
     drawStroke,
+    physics: setup.physics,
   });
   scale = scene.scale;
   return scene;

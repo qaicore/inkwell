@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 import type { LimbControl, StrikeController, StrikeStep, Vec3 } from '../../src/impact/contracts.ts';
 import { project, toCamera, type Body3D } from '../../src/lift/body.ts';
 import { animate3d, liftStroke, type Frame3D, type Lifted } from '../../src/lift/lift.ts';
-import { bulgeSide, limbsFirst, speedExempt, strikeController, strikeCurve, strikePhase, strikeStem, whipFrom, type StrikeOptions } from '../../src/lift/strike.ts';
+import { STRIKE, bulgeSide, limbsFirst, speedExempt, strikeController, strikeCurve, strikePhase, strikeStem, whipFrom, type StrikeOptions } from '../../src/lift/strike.ts';
 import type { Vec2 } from '../../src/types/effect.ts';
 
 const I = 84;
@@ -210,11 +210,14 @@ describe('the orders', () => {
   const strokes = strokesOn(bodies[DRAWN]);
   const fresh = () => strikeController(options());
 
+  // Round 4 R1: the release lays its throw for easeDrawings (24) at the
+  // longest, f93–152, and hands back as soon as the throw is done (the lift
+  // run below), so f113 still has orders and f153 none.
   it('gives no orders before the coil, after the release has eased out, or to a stroke that is not a limb', () => {
     const ctl = fresh();
     expect(ordersAt(ctl, bodies[69], strokes, 69, 4).orders.every((o) => o === null)).toBe(true);
-    expect(ordersAt(ctl, bodies[113], strokes, 113, 1).orders.every((o) => o === null)).toBe(true);
-    for (const [f, sub] of [[70, 1], [75, 4], [76, 2], [80, 3], [93, 1], [102, 4]]) {
+    expect(ordersAt(ctl, bodies[129], strokes, RELEASE + (STRIKE.easeDrawings * 30) / 12, 1).orders.every((o) => o === null)).toBe(true);
+    for (const [f, sub] of [[70, 1], [75, 4], [76, 2], [80, 3], [93, 1], [102, 4], [113, 1]]) {
       const { orders } = ordersAt(ctl, bodies[f], strokes, f, sub);
       expect(orders.slice(0, 4).every((o) => o !== null), `f${f}`).toBe(true);
       expect(orders[4], `f${f}`).toBeNull();
@@ -285,8 +288,9 @@ describe('the orders', () => {
       expect(o.pin![2] - S[2]).toBeCloseTo(0.25 * UNIT, 9); // z lifted 0.25 unit at the tip
       expect(o.restScale!).toBeCloseTo(polyLength(target) / polyLength(l.target), 12);
       // Every node past the stem lies on C (from the stem's end), bowed the
-      // way the drawn limb bows, but for the ripple running down it:
-      // 0.05·|P − R| at most, and there.
+      // way the drawn limb bows, but for the ripple running down it (round 4
+      // R1): across it ripple·|P − R| within rippleMin..rippleMax px, and
+      // along it rippleAlong of that, at most, and there.
       const R = project(b, l.target[0]).xy;
       const RS = project(b, S).xy;
       const side = bulgeSide(l.target.map((q) => project(b, q).xy));
@@ -294,54 +298,78 @@ describe('the orders', () => {
       const stem = dist2(R, RS);
       const off = target.filter((q) => dist2(project(b, q).xy, R) > stem + 1).map((q) => Math.min(...curve.map((c) => dist2(c, project(b, q).xy))));
       expect(off.length).toBeGreaterThan(target.length - 6);
-      expect(Math.max(...off)).toBeLessThan(0.05 * dist2(P, R) + 0.5);
+      const amp = Math.min(STRIKE.rippleMax, Math.max(STRIKE.rippleMin, STRIKE.ripple * dist2(P, R)));
+      expect(Math.max(...off)).toBeLessThan(amp * (1 + STRIKE.rippleAlong) + 0.5);
       expect(Math.max(...off)).toBeGreaterThan(1);
     });
   });
 
-  it('lets go on the release: no pin, the drawn length back within the frame, a bow of it handing back to the drawing`s own target, and the recoil −d̂·1.5 unit/s·t_i ± 0.4 across on its first step only', () => {
+  // Round 5 S1 (decisions 15(f), 19(e)): the release is laid on the chain,
+  // pinned to its own tip, as the whip and the pin are. The tension let go
+  // flings it most of the way to its idle curve on the first drawing; from
+  // f96 no drawing moves a node more than throwPx; it is at rest and
+  // handed back by about f116 (this synthetic body stands still under it).
+  it('lets go on the release: the tip flung up out of P on the first drawing, the chain laid on the throw at its drawn length, throwPx a drawing from f96, stiffening back to its own, and handed back when the throw is done', () => {
     const ctl = fresh();
     const pinned = ordersAt(ctl, bodies[93], strokes, 92, STEPS).orders; // the chains on C, on the same body
     const chains = pinned.slice(0, 4).map((o) => o!.target!);
     chains.push(strokes[4].points.map((q) => toCamera(bodies[93], q)));
     const { at, orders } = ordersAt(ctl, bodies[93], strokes, 93, 1, chains);
-    const across: Vec2 = [-DHAT[1], DHAT[0]];
-    const laterals: number[] = [];
     at.limbs.slice(0, 4).forEach((l, i) => {
       const o = orders[i]!;
-      expect(o.pin).toBeNull();
-      // Half the way from the chain's length to the drawn length on each step.
-      const scale = pinned[i]!.restScale!;
-      expect(o.restScale!).toBeCloseTo(scale + (1 - scale) * 0.5, 9);
-      // The target: the drawn length, from the root, held near stiffness 1.
       const target = o.target!;
       expect(target).toHaveLength(l.target.length);
       expect(target[0]).toEqual(l.target[0]);
-      expect(Math.abs(polyLength(target) / polyLength(l.target) - 1)).toBeLessThan(0.02); // the pull out of P stretches it a little
+      expect(o.pin).toEqual(target.at(-1)); // laid on the chain, on its own tip ...
+      expect(o.impulse).toBeUndefined(); // ... with no kick
+      const tip = project(bodies[93], o.pin!).xy;
+      expect((P[0] - tip[0]) * DHAT[0] + (P[1] - tip[1]) * DHAT[1]).toBeGreaterThan(0); // up out of P, not along the floor
+      // The drawn length, laid from the root (the floor's lift by P stretches it 2 % here), and the rest lengths with it.
+      expect(Math.abs(polyLength(target) / polyLength(l.target) - 1)).toBeLessThan(0.03);
+      expect(o.restScale!).toBeCloseTo(polyLength(target) / polyLength(l.target), 9);
       expect(o.stiffness!).toBeGreaterThan(0.99);
-      const impulse = o.impulse!;
-      expect(impulse).toHaveLength(l.target.length);
-      expect(Math.hypot(...impulse[0])).toBe(0); // the root's share
-      const tip = impulse.at(-1)!;
-      expect(tip[2]).toBe(0);
-      expect(tip[0] * DHAT[0] + tip[1] * DHAT[1]).toBeCloseTo(-1.5 * UNIT, 9);
-      const lateral = (tip[0] * across[0] + tip[1] * across[1]) / (1.5 * UNIT);
-      expect(Math.abs(lateral)).toBeLessThanOrEqual(0.4);
-      laterals.push(lateral);
-      // Each node's share of it grows along the chain.
-      for (let j = 1; j < impulse.length; j++) expect(Math.hypot(...impulse[j])).toBeGreaterThan(Math.hypot(...impulse[j - 1]));
     });
-    expect(new Set(laterals.map((x) => x.toFixed(9))).size).toBe(4); // seeded per limb
-    for (const sub of [2, 3, 4]) expect(ordersAt(ctl, bodies[93], strokes, 93, sub).orders.every((o) => !o?.impulse)).toBe(true);
-    const done = ordersAt(ctl, bodies[112], strokes, 112, STEPS).orders; // the end of the ease
-    expect(done.slice(0, 4).map((o) => o!.restScale)).toEqual([1, 1, 1, 1]);
-    for (const o of done.slice(0, 4)) expect(o!.stiffness).toBeCloseTo(0.1, 9);
+    // On through the throw, step by step on the same body: the first drawing
+    // is well on its way off P, no drawing from f96 moves a node more than
+    // throwPx (the budget grows over the frames to the next
+    // drawing), the stiffness falls to the stroke's own, and the orders stop
+    // once it is done, by about f116.
+    const seen = (o: LimbControl) => o.target!.map((q) => project(bodies[93], q).xy);
+    const lastStiff = orders.slice(0, 4).map((o) => o!.stiffness!);
+    const shown: (Vec2[] | null)[] = [null, null, null, null];
+    const handed: number[] = [0, 0, 0, 0]; // the frame each limb is handed back on
+    const starts = new Set(Array.from({ length: 80 }, (_, k) => Math.ceil((k * 30) / 12)));
+    for (let f = 93; f <= 152 && handed.some((h) => h === 0); f++) {
+      for (let sub = f === 93 ? 2 : 1; sub <= STEPS; sub++) {
+        ordersAt(ctl, bodies[93], strokes, f, sub).orders.slice(0, 4).forEach((o, i) => {
+          if (handed[i]) return expect(o, `limb ${i + 1} f${f}.${sub}: handed back on f${handed[i]}`).toBeNull();
+          if (!o) return void (handed[i] = f);
+          lastStiff[i] = o.stiffness!;
+          if (sub !== STEPS || !starts.has(f)) return;
+          const pts = seen(o);
+          if (f === 93) expect(dist2(pts.at(-1)!, P), `limb ${i + 1} off P on the first drawing`).toBeGreaterThan(50);
+          const was = shown[i];
+          if (was && f > 95) {
+            const most = Math.max(...pts.slice(1).map((p, j) => dist2(p, was[j + 1])));
+            expect(most, `f${f} limb ${i + 1}`).toBeLessThanOrEqual(STRIKE.throwPx + 0.5);
+          }
+          shown[i] = pts;
+        });
+      }
+    }
+    for (const [i, f] of handed.entries()) {
+      expect(f, `limb ${i + 1} handed back after the throw`).toBeGreaterThan(93);
+      expect(f, `limb ${i + 1} handed back by about f116`).toBeLessThanOrEqual(120);
+    }
+    for (const s of lastStiff) expect(s).toBeLessThan(0.2);
   });
 
-  it('draws the lateral from the seed: the same seed gives the same recoil, another seed another', () => {
-    const recoil = (seed: number) => ordersAt(strikeController(options({ seed })), bodies[93], strokes, 93, 1).orders.slice(0, 4).map((o) => o!.impulse!.at(-1)!);
-    expect(recoil(SEED)).toEqual(recoil(SEED));
-    expect(recoil(SEED + 1)).not.toEqual(recoil(SEED));
+  it('draws the ripple from the seed and nothing else: the same seed gives the same orders, another seed another ripple', () => {
+    const pin = (seed: number) => ordersAt(strikeController(options({ seed })), bodies[80], strokes, 80, 3).orders.slice(0, 4).map((o) => o!.target!);
+    const thrown = (seed: number) => ordersAt(strikeController(options({ seed })), bodies[93], strokes, 93, 1).orders.slice(0, 4).map((o) => o!.target!);
+    expect(pin(SEED)).toEqual(pin(SEED));
+    expect(pin(SEED + 1)).not.toEqual(pin(SEED));
+    expect(thrown(SEED)).toEqual(thrown(SEED));
   });
 
   it('refuses a schedule that is not whole frames with land < release, or a unit that is not positive', () => {
@@ -381,13 +409,18 @@ describe('the strike in the lift (land 77, release 93)', () => {
     // The rest length then: the lift's own, at the share of it the limb was drawn at (decision 15).
     const strokes = strokesOn(bodies[DRAWN]);
     const share = strokes.map((s) => Math.min(1, s.drawn! / s.points.slice(1).reduce((sum, q, k) => sum + dist3(s.points[k], q), 0)));
+    // Round 4 R1: the release lays its throw on the chain up to easeDrawings
+    // (24) after it, at its rest lengths (restScale, one for the chain), so
+    // P2 holds through it too; the limbs are the lift's again after it.
     const late = withAfter(run(160).log).filter((s) => s.at.f >= RELEASE + EASE);
+    const handBack = RELEASE + (STRIKE.easeDrawings * 30) / 12;
     let worst = 0;
     for (const s of late) {
-      expect(s.orders.every((o) => o === null)).toBe(true); // the limbs are the lift's again
+      if (s.at.f >= handBack) expect(s.orders.every((o) => o === null), `f${s.at.f}`).toBe(true); // the limbs are the lift's again
       s.at.limbs.forEach((l, i) => {
+        const scale = s.orders[i]?.restScale ?? (LIMBS.includes(l.id) ? share[i] : 1);
         for (let j = 0; j + 1 < l.target.length; j++) {
-          const rest = dist3(l.target[j], l.target[j + 1]) * (LIMBS.includes(l.id) ? share[i] : 1);
+          const rest = dist3(l.target[j], l.target[j + 1]) * scale;
           worst = Math.max(worst, Math.abs(dist3(s.after[i][j], s.after[i][j + 1]) - rest) / rest);
         }
       });

@@ -58,12 +58,13 @@ import {
   type ImpactCue,
   type Step,
 } from './flow';
-import { PREVIEW_SIZE, startRenderAhead, type RenderAhead, type SceneData } from './render-worker';
-import { personAndFace, samTracking, type SamSource } from './pipeline';
+import { HOLD_MS, PREVIEW_SIZE, startRenderAhead, type RenderAhead, type SceneData } from './render-worker';
+import { personAndFace, samTrackingSliced, type SamSource } from './pipeline';
 import { applyOverride, applyPlan, isOverridden, OVERRIDE_FIELDS, type OverrideField } from './overrides';
 import { renderPlanPanel } from './plan-panel';
 import { cachedAnswer, sha256Hex } from '../sam/client';
-import { masksFromCache, samCacheFile, type SamMask } from '../sam/cache';
+import { samCacheFile, type SamMask } from '../sam/cache';
+import { maskReader } from '../sam/mask-worker';
 import { samShape } from '../track/anchor';
 import { planStrokes, type PlanInput, type PlanRequest, type PlanResult, type PlanTransport } from '../plan/plan';
 import { proxyTransport } from '../plan/request';
@@ -72,7 +73,8 @@ import type { Tier } from '../impact/contracts';
 import type { Masks } from '../impact/detect';
 import { estimateFloor, type FloorEstimate } from '../impact/floor-estimate';
 import { LADDER } from '../impact/ladder';
-import type { ImpactScene } from '../impact/scene';
+import { forgetPhysics, keepPhysics, packPhysics, unpackPhysics, type ImpactScene, type PackedPhysics } from '../impact/scene';
+import { startSim, type Sim } from '../lift/sim-worker';
 import { serializeEffect, type BrushId, type Effect, type Moment, type Vec2 } from '../types/effect';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -164,6 +166,7 @@ let makeTracking: ((mode: FollowMode) => Tracking) | null = null;
 let tracking: Tracking | null = null;
 let torsoUnits: (number | null)[] | null = null; // torso height per frame, from tracking's masks
 let standInBodies: (PointSet | null)[] | null = null; // the stand-in's landmarks: the impact's turn and bend
+let standInSkeleton: (PointSet | null)[] | null = null; // all 33 of them: the limbs' dummy's arms and legs (lift/collide.ts)
 let auraColor: 0 | 1 | 2 | null = null; // the flame aura's ink, or null when it's off
 const strokePoses = new Map<number, Pose[] | null>();
 
@@ -208,10 +211,27 @@ const invalidate = () => {
 // strokes from `animation`. It's built the first time a frame needs it and
 // dropped whenever the strokes, the flow or the tracking change. Its drawings
 // are made ahead of the frames that show them, in a worker where there is one
-// (render-worker.ts); the phone tier on an iPhone.
+// (render-worker.ts); the phone tier on an iPhone. Its physics is worked out
+// in another (lift/sim-worker.ts), so a rebuild never holds the page: until
+// it comes the scene shows the limbs as drawn, then it's built again with
+// it. What comes back is kept by its key (keepPhysics), and packed for the
+// render-ahead's worker; anything else he changes takes it as it is. The
+// export waits for its own there too. Without that worker (or once it
+// fails), the scenes work their physics out here.
 let renderAhead: RenderAhead | null = null;
+let sim: Sim | null = null;
+// The physics wanted of the worker: the preview's, and the export's, which
+// waits for it. The worker works out only the newest ask, so one is asked at
+// a time (`running`), the export's first, and the other once that comes.
+type Wanted = { key: string; data: SceneData };
+const wanted: { preview: Wanted | null; export: (Wanted & { done: (physics: PackedPhysics | null) => void }) | null } = { preview: null, export: null };
+let running = ''; // the key asked of the worker, until it comes
+let failedKey = ''; // the preview's physics whose run failed: not asked for again
+const packed = new Map<string, PackedPhysics>(); // what came back, by key, the newest last
+const PACKED_KEPT = 3; // as many as the scene keeps
 let preview: { scene: ImpactScene; effect: Effect } | null | undefined; // undefined: not built yet
 let clipData: ClipData | null = null; // what the scene reads of the clip, built once per tracking
+let clipDataCount = 0; // names each, for the physics' key on every thread
 let detector: Masks | null = null; // the tracking's masks as the detector reads them
 let limbPoses: { key: string; poses: Pose[] } | null = null; // the limbs' track (anchorTrack), by their ids
 let bodyKey = ''; // the turn the other strokes were animated with
@@ -256,6 +276,8 @@ async function openClip(file: Blob, name: string) {
   pause();
   setBusy(true);
   const startedAt = performance.now();
+  let opened: Clip | null = null;
+  let cacheRead: Promise<void> = Promise.resolve();
   try {
     const next = await loadClip(file, name, (p) => setStatus(`Converting to H.264 at 30 fps… ${percent(p)}`));
     clip?.input.dispose();
@@ -266,6 +288,11 @@ async function openClip(file: Blob, name: string) {
     strokes = [];
     makeTracking = null;
     standInBodies = null;
+    standInSkeleton = null;
+    forgetPhysics(); // the last clip's
+    packed.clear();
+    wanted.preview = null;
+    running = failedKey = '';
     forgetPlan();
     samRuns.clear();
     sam = () => null;
@@ -288,15 +315,22 @@ async function openClip(file: Blob, name: string) {
     layout();
     await seek(0);
     setStatus(`Converted in ${seconds(startedAt)} s. Draw limbs to start the impact, or draw on any frame.`);
-    void connectSamCache(next, file);
+    cacheRead = connectSamCache(next, file);
     void decodeEnvelope(next.file, next.start).then((heard) => {
       if (clip === next) envelope = heard;
     });
+    opened = next;
   } catch (err) {
     console.error(err);
     setStatus(`Couldn't open that clip: ${errorText(err)}`);
   } finally {
     setBusy(false);
+  }
+  // Dev only: the stand-in tracks every clip as it opens, no Track to press,
+  // once the cache is read, so the two don't share the page's time.
+  if (opened && trackStandIn) {
+    const tracked = opened;
+    void cacheRead.then(() => trackStandIn?.(tracked));
   }
 }
 
@@ -378,18 +412,42 @@ function pause() {
 // The finished frame, the tracking overlay if it's on, a limb root that just
 // snapped, then the stroke being drawn, on top of everything so you can see
 // it while you draw. With an impact the scene draws the frame at its own
-// internal size, and the drawings due next are asked for ahead.
+// internal size, and the drawings due next are asked for ahead. A scene
+// built here is drawn on the next frame, so building it and drawing it the
+// first time (its limbs and the other strokes, before the render-ahead has
+// them) are two tasks, not one long one (decision 20: none may hold the page
+// past 100 ms). Nor does the first paint of a rebuilt scene draw its limbs,
+// masses and posters here: it asks the render-ahead's worker for them and
+// holds the last frame on screen (or draws the plain frame, if the canvas
+// shows another) until they come (R5, S2). That's only for a parked frame:
+// playing has moved on before the worker answers, so holding there would drop
+// the effect from the clip. Playing draws what's missing here, and runs late
+// rather than plain.
+let shownImpact: number | null = null; // the output frame the canvas holds from the impact scene; null = the plain frame, or nothing
+let holdTimer = 0;
 function paint() {
   if (!clip) return;
-  ctx.imageSmoothingQuality = 'high';
+  if (preview === undefined && previewScene()) {
+    requestPaint();
+    return;
+  }
+  ctx.imageSmoothingQuality = playing ? 'low' : 'high'; // drawImage at 'high' is most of a played frame
   const impact = previewScene();
   let drawn = false;
-  if (impact) {
+  let held = false;
+  if (impact && renderAhead && !playing && !renderAhead.ready(frame)) {
+    // Its drawings are on their way: keep the frame the canvas holds if it's
+    // this one, else the plain frame. The worker's arrival paints again.
+    held = shownImpact === frame;
+    drawn = held;
+    if (!holdTimer) holdTimer = window.setTimeout(() => ((holdTimer = 0), requestPaint()), HOLD_MS + 100);
+  } else if (impact) {
     try {
       ctx.setTransform(view.width / impact.width, 0, 0, view.height / impact.height, 0, 0);
       impact.render(ctx as unknown as BrushTarget, frameBuffer, frame);
       renderAhead?.ahead(frame);
       drawn = true;
+      shownImpact = frame;
     } catch (err) {
       console.error(err);
       setStatus(`The impact preview failed, so this is the plain frame: ${errorText(err)}`);
@@ -400,7 +458,10 @@ function paint() {
   // Width and height are scaled separately, the same way pointFrom maps the
   // pointer, so the frame fills the canvas exactly.
   ctx.setTransform(view.width / clip.width, 0, 0, view.height / clip.height, 0, 0);
-  if (!drawn) renderFrame(ctx, frameBuffer, frame, clip.width, clip.height, plainScene(), { make: browserScratch, drawStroke });
+  if (!drawn) {
+    renderFrame(ctx, frameBuffer, frame, clip.width, clip.height, plainScene(), { make: browserScratch, drawStroke });
+    shownImpact = null;
+  }
   if (showTracking.checked && tracking) paintTracking(clip);
   paintRootFlash(clip);
   if (live) drawLive(ctx, live);
@@ -505,7 +566,7 @@ function loadAnchorRuns() {
     if (!file || samRuns.has(file)) continue;
     samRuns.set(file, null);
     void Promise.resolve(sam(file))
-      .then((json) => (json ? masksFromCache(json, opened.frameCount) : null))
+      .then((json) => (json ? readMasks(json, opened.frameCount) : null))
       .then((masks) => {
         if (!masks || clip !== opened) return;
         samRuns.set(file, masks);
@@ -536,7 +597,8 @@ function previewScene(): ImpactScene | null {
       const poses = limbTrack(clip);
       data = { effect, poses, tier: previewTier, size: renderAhead?.size ?? PREVIEW_SIZE, boil: timing.boil };
       try {
-        made = impactScene(effect, impactClip(clipDataOf(clip), poses), { tier: data.tier, size: data.size, boil: data.boil, strokes: (c) => animated()[c] ?? [] });
+        made = impactScene(effect, impactClip(clipDataOf(clip), poses), { tier: data.tier, size: data.size, boil: data.boil, strokes: (c) => animated()[c] ?? [], physics: sim ? 'wait' : undefined });
+        if (made && sim) data = { ...data, physics: physicsFor(made, data) };
       } catch (err) {
         console.error(err);
         setStatus(`Couldn't build the impact preview: ${errorText(err)}`);
@@ -548,7 +610,47 @@ function previewScene(): ImpactScene | null {
   return preview?.scene ?? null;
 }
 
-// The clip as the scene reads it, once per tracking: the worker gets a copy.
+// The physics the render-ahead's worker builds the page's scene with: what
+// came back for it, or 'wait' while the page's scene waits for it, wanted of
+// the worker (not after its run failed).
+function physicsFor(scene: ImpactScene, data: SceneData): PackedPhysics | 'wait' {
+  const key = scene.physicsKey;
+  if (!scene.waiting) {
+    wanted.preview = null;
+    let p = packed.get(key);
+    if (!p) keepPacked((p = packPhysics(scene.physics())));
+    return p;
+  }
+  wanted.preview = failedKey === key ? null : { key, data };
+  askSim();
+  return 'wait';
+}
+
+// The export's physics, from the worker: null when its run failed or the
+// worker stopped, where the export's scene works it out itself.
+function physicsAsked(key: string, data: SceneData): Promise<PackedPhysics | null> {
+  return new Promise((done) => {
+    wanted.export?.done(null);
+    wanted.export = { key, data, done };
+    askSim();
+  });
+}
+
+// Asks the worker for what's wanted, the export's first, unless it's asked already.
+function askSim() {
+  const next = wanted.export ?? wanted.preview;
+  if (!sim || !next || running === next.key) return;
+  running = next.key;
+  sim.run(next.key, next.data);
+}
+
+function keepPacked(p: PackedPhysics) {
+  packed.delete(p.key);
+  packed.set(p.key, p);
+  while (packed.size > PACKED_KEPT) packed.delete(packed.keys().next().value as string);
+}
+
+// The clip as the scene reads it, once per tracking: the workers get a copy.
 function clipDataOf(c: Clip): ClipData {
   if (!clipData) {
     clipData = {
@@ -558,9 +660,13 @@ function clipDataOf(c: Clip): ClipData {
       masks: tracking?.masks ?? null,
       faces: samRuns.get('sam-face.json') ?? null,
       bodies: standInBodies,
+      skeleton: standInSkeleton,
       units: torsoUnits,
+      id: `clip ${++clipDataCount}`,
     };
     renderAhead?.clip(clipData);
+    sim?.clip(clipData);
+    running = ''; // the worker drops what it was asked for the last one
   }
   return clipData;
 }
@@ -709,6 +815,9 @@ function paintRootFlash(c: Clip) {
 // Looks the clip up in the cache by its hashes. If SAM has been run on it
 // (and paid for once), its masks replace the stand-in: the person cutout and
 // what strokes follow.
+// A cached SAM run decoded off the page, a few workers at once (sam/mask-worker.ts).
+const readMasks = maskReader();
+
 async function connectSamCache(opened: Clip, source: Blob) {
   try {
     const hashes = [await sha256Hex(opened.file), await sha256Hex(source)];
@@ -716,11 +825,14 @@ async function connectSamCache(opened: Clip, source: Blob) {
     sourceSha = hashes[1];
     sam = (file) => cachedAnswer(hashes, file);
     const fromCache = { id: opened.name, sha256: hashes[0], frames: opened.frameCount, width: opened.width, height: opened.height, fps: FPS };
-    const { person, face } = await personAndFace(fromCache, sam);
+    const reading = (f: number) => clip === opened && setStatus(`Reading your clip… ${percent(f)}`);
+    const { person, face } = await personAndFace(fromCache, sam, (json, count) => (reading(0), readMasks(json, count, reading)));
     if (clip !== opened) return;
     samRuns.set('sam-person.json', person);
     samRuns.set('sam-face.json', face);
-    makeTracking = () => samTracking(person, opened.width, opened.height);
+    const cutouts = await samTrackingSliced(person, opened.width, opened.height, nextTask);
+    if (clip !== opened) return;
+    makeTracking = () => cutouts;
     useTracking();
     setStatus(`SAM 3.1 masks for this clip, from the cache: the person on ${person.filter(Boolean).length} of ${opened.frameCount} frames.`);
   } catch {
@@ -929,6 +1041,7 @@ function layout() {
   const cssHeight = Math.max(1, Math.floor(clip.height * fit));
   view.style.width = `${cssWidth}px`;
   view.style.height = `${cssHeight}px`;
+  shownImpact = null; // resizing clears the canvas
   view.width = Math.round(cssWidth * devicePixelRatio);
   view.height = Math.round(cssHeight * devicePixelRatio);
   paint();
@@ -1127,7 +1240,7 @@ async function exportVideo() {
   try {
     const opened = clip;
     const size = exportSize(opened.width, opened.height, isIPhone(navigator.userAgent));
-    const result = await exportClip(opened, exportPlan(opened, size), (p, what) => setStatus(`${what}… ${percent(p)}`));
+    const result = await exportClip(opened, await exportPlan(opened, size), (p, what) => setStatus(`${what}… ${percent(p)}`));
     const name = `${opened.name.replace(/\.[^.]+$/, '')}-inkwell.mp4`;
     URL.revokeObjectURL(downloadUrl);
     downloadUrl = URL.createObjectURL(result.video);
@@ -1158,13 +1271,19 @@ async function exportVideo() {
 
 // What the export draws, held as it is now: with an impact, its scene at the
 // export's size on the full tier with nothing cut, each ladder step its own
-// (degraded) copy of it; otherwise the plain frame, scaled.
-function exportPlan(c: Clip, size: { width: number; height: number; long: number }): ExportPlan {
+// (degraded) copy of it; otherwise the plain frame, scaled. The scene's
+// physics is worked out first, in the physics' worker where there is one.
+async function exportPlan(c: Clip, size: { width: number; height: number; long: number }): Promise<ExportPlan> {
   const effect = currentEffect();
   const others = animated();
-  const impact = hasImpact(effect)
-    ? impactScene(effect, impactClip(clipDataOf(c), limbTrack(c)), { tier: 'full', size: size.long, cuts: 0, boil: timing.boil, strokes: (f) => others[f] ?? [] })
-    : null;
+  const poses = limbTrack(c);
+  const setup = { tier: 'full' as const, size: size.long, cuts: 0, boil: timing.boil, strokes: (f: number) => others[f] ?? [] };
+  let impact = hasImpact(effect) ? impactScene(effect, impactClip(clipDataOf(c), poses), { ...setup, physics: sim ? 'wait' : undefined }) : null;
+  if (impact?.waiting) {
+    setStatus("Working out the limbs' physics…");
+    const physics = await physicsAsked(impact.physicsKey, { effect, poses, tier: setup.tier, size: setup.size, cuts: setup.cuts, boil: setup.boil });
+    impact = impactScene(effect, impactClip(clipDataOf(c), poses), { ...setup, physics: physics ?? undefined });
+  }
   const slam = (effect.moments ?? []).find((m): m is Moment => m.kind === 'slam');
   const plain = plainScene();
   const steps = new Map<number, ImpactScene>();
@@ -1277,24 +1396,27 @@ function useTracking() {
 }
 
 // Dev only: until SAM 3.1 is connected, MediaPipe's pose model stands in for
-// it. The import sits inside this check so production builds leave it out.
-// Its landmarks also give the impact his turn and bend.
+// it, on every clip as it opens (and again from Track). The import sits
+// inside this check so production builds leave it out. Its landmarks also
+// give the impact his turn and bend, and all 33 of them the limbs' dummy its
+// arms and legs (lift/collide.ts). SAM's masks, once they're read from the
+// cache, stay what strokes follow.
+let trackStandIn: ((tracked: Clip) => Promise<void>) | null = null;
 if (import.meta.env.DEV) {
-  trackButton.hidden = false;
-  trackButton.title = 'Dev only: MediaPipe pose stands in for SAM 3.1';
-  trackButton.addEventListener('click', async () => {
-    if (!clip || busy) return;
+  // There is no Track button to press (R5, S2): index.html's stays hidden.
+  trackStandIn = async (tracked) => {
+    if (clip !== tracked || busy) return;
     pause();
     setBusy(true);
-    const tracked = clip;
     const startedAt = performance.now();
     try {
       setStatus('Loading the stand-in tracker…');
       const { runStandIn, standInTracking } = await import('../track/standin');
       const standIn = await runStandIn(tracked, setStatus);
       if (clip !== tracked) return;
-      makeTracking = (mode) => standInTracking(standIn, mode, tracked);
+      if (!samRuns.get('sam-person.json')) makeTracking = (mode) => standInTracking(standIn, mode, tracked);
       standInBodies = standIn.bodies;
+      standInSkeleton = standIn.skeleton;
       useTracking();
       const found = standIn.bodies.filter(Boolean).length;
       const masked = standIn.masks.filter((mask) => mask && maskHasPerson(mask)).length;
@@ -1304,11 +1426,12 @@ if (import.meta.env.DEV) {
       );
     } catch (err) {
       console.error(err);
-      setStatus(`Tracking failed: ${errorText(err)}`);
+      // The effect still runs: on SAM's masks alone, with the egg for a body.
+      setStatus(`Tracking failed: ${errorText(err)}. ${samRuns.get('sam-person.json') ? 'The effect runs on the SAM masks alone.' : 'Without a tracker, the effect has nothing to follow.'}`);
     } finally {
       setBusy(false);
     }
-  });
+  };
 }
 
 followSelect.addEventListener('change', useTracking);
@@ -1473,10 +1596,61 @@ updateSheet();
 // preview is built again at its size, and the worker gets the clip.
 void startRenderAhead().then((ahead) => {
   renderAhead = ahead;
+  ahead.arrived = requestPaint;
   if (clipData) ahead.clip(clipData);
   dropPreview();
   paint();
 });
+
+// The physics' worker. Each physics that comes back is kept, a preview
+// waiting for it is built again and an export waiting for it goes on; then
+// what's still wanted is asked for. A preview's run that fails leaves its
+// limbs as drawn (it would fail here too), and an export's works it out on
+// the page, which says why; a worker that doesn't start leaves the physics to
+// the page.
+const exportWaits = (physics: PackedPhysics | null, key?: string) => {
+  const waiting = wanted.export;
+  if (!waiting || (key !== undefined && waiting.key !== key)) return;
+  wanted.export = null;
+  waiting.done(physics);
+};
+sim = startSim(
+  (physics) => {
+    keepPhysics(unpackPhysics(physics));
+    keepPacked(physics);
+    if (running === physics.key) running = '';
+    exportWaits(physics, physics.key);
+    if (wanted.preview?.key === physics.key) {
+      wanted.preview = null;
+      if (preview?.scene.waiting && preview.scene.physicsKey === physics.key) {
+        dropPreview();
+        paint();
+      }
+    }
+    askSim();
+  },
+  (key, message) => {
+    console.warn(`The limbs' physics failed in its worker: ${message}`);
+    if (key !== null) {
+      if (running === key) running = '';
+      exportWaits(null, key);
+      if (wanted.preview?.key === key) {
+        wanted.preview = null;
+        failedKey = key;
+        setStatus(`The limbs' physics failed, so they show as drawn: ${message}`);
+      }
+      askSim();
+      return;
+    }
+    sim?.dispose();
+    sim = null;
+    running = '';
+    wanted.preview = null;
+    exportWaits(null);
+    dropPreview();
+    paint();
+  },
+);
 
 // ?clip=<url> opens a clip on load, e.g. ?clip=/samples/test.mp4 in dev.
 const clipUrl = new URLSearchParams(location.search).get('clip');
@@ -1500,4 +1674,5 @@ const percent = (p: number) => `${Math.round(p * 100)}%`;
 const seconds = (since: number) => ((performance.now() - since) / 1000).toFixed(1);
 const megabytes = (bytes: number) => `${(bytes / 1e6).toFixed(1)} MB`;
 const errorText = (err: unknown) => (err instanceof Error ? err.message : String(err));
+const nextTask = () => new Promise<void>((resume) => void setTimeout(resume, 0));
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));

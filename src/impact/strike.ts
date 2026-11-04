@@ -109,13 +109,13 @@ export const STRIKE = {
   // 0.8 its far halo keeps the lens white bar the teeth, which stay pink
   // (green ≈ 140 of 255 on the hero); under 1.4 they whitened with the rest,
   // and under 0.5 the halo's red tint greyed a quarter of the white.
-  glow: [0.35, 0.6, 0.6, 0.35, 1.0, 0.5, 0.8],
+  glow: [0.35, 0.6, 0.6, 0.35, 1.0, 0.5, 0.4],
   beta: [0.6, 0.8] as const, // the pull toward the chord
   turnDeg: 3.5, // about P, per step
   line: 0.004, // the edge line, × S
   splash: [0, 2.0, 3.0, 1.1, 7.1, 15.5, 18.8], // % of the frame
   pieces: [0, 4, 5, 3, 3, 2, 5], // splash pieces per step, as measured
-  charge: [0, 0.11, 0.16, 0.06, 0.38, 0.82, 1.0], // the charge gain c
+  charge: [0, 0.11, 0.16, 0.06, 0.38, 0.82, 0.5], // the charge gain c
   bursts: [1, 4, 5], // the steps with a contact burst
   flares: [1, 4], // the steps with a white flare star at P
 } as const;

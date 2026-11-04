@@ -90,20 +90,45 @@ export function maskHas(mask: FrameMask, x: number, y: number): boolean {
 // with no match are null. A later record for the same object and frame
 // replaces an earlier one; point prompts can arrive out of order.
 export function framesFromRecords(records: readonly SegmentationRecord[], frameCount: number): (FrameMask | null)[] {
+  const steps = readFrames(records, frameCount);
+  for (;;) {
+    const step = steps.next();
+    if (step.done) return step.value;
+  }
+}
+
+// A share of the frames, for several threads at once: the frames f with
+// f % count === index. The rest come back null, undecoded.
+export interface Part {
+  index: number;
+  count: number;
+}
+const inPart = (frame: number, part?: Part) => !part || frame % part.count === part.index;
+
+// The same, a record at a time: yields how far it's got (records and frames
+// done of the total) after each, so a caller can hand the thread back between
+// them (the page's own fallback) or report progress (the worker). Decoding a
+// raster is the slow part, about 50 ms each on a PC and more on a phone.
+export function* readFrames(records: readonly SegmentationRecord[], frameCount: number, part?: Part): Generator<{ done: number; total: number }, (FrameMask | null)[]> {
+  const masks = recordsOfKind(records, 'mask');
+  const total = masks.length + frameCount;
   const byFrame = new Map<number, Map<string, FrameMask>>();
-  for (const record of recordsOfKind(records, 'mask')) {
+  let done = 0;
+  for (const record of masks) {
     const frame = frameIndexOf(record);
-    if (frame === undefined || frame < 0 || frame >= frameCount) continue;
-    const mask: FrameMask = {
-      objectId: record.objectId,
-      width: record.mask.width,
-      height: record.mask.height,
-      raster: decodeMaskToRaster(record.mask),
-      bounds: record.bounds,
-      confidence: record.confidence,
-    };
-    if (!byFrame.has(frame)) byFrame.set(frame, new Map());
-    byFrame.get(frame)!.set(record.objectId, mask);
+    if (frame !== undefined && frame >= 0 && frame < frameCount && inPart(frame, part)) {
+      const mask: FrameMask = {
+        objectId: record.objectId,
+        width: record.mask.width,
+        height: record.mask.height,
+        raster: decodeMaskToRaster(record.mask),
+        bounds: record.bounds,
+        confidence: record.confidence,
+      };
+      if (!byFrame.has(frame)) byFrame.set(frame, new Map());
+      byFrame.get(frame)!.set(record.objectId, mask);
+    }
+    yield { done: ++done, total };
   }
   const frames: (FrameMask | null)[] = [];
   for (let f = 0; f < frameCount; f++) {
@@ -117,6 +142,7 @@ export function framesFromRecords(records: readonly SegmentationRecord[], frameC
       }
     }
     frames.push(best);
+    yield { done: ++done, total };
   }
   return frames;
 }

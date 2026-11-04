@@ -5,8 +5,12 @@ import { followMask, followPoints, maskHasPerson, type Mask, type PointSet, type
 
 // DEV ONLY: a stand-in for SAM 3.1, so everything after tracking can be built
 // and tested before SAM is connected. MediaPipe's pose model runs in the
-// browser and finds a person mask and body landmarks on every frame. main.ts
-// only loads this file in dev, so it never ships. Delete it once SAM is in.
+// browser and finds a person mask and body landmarks on every frame: the 15
+// that move with the body (`bodies`, for the tracking, the turn and the
+// bend), and all 33 (`skeleton`, for the limbs' crash-test dummy, whose arms
+// and legs need the elbows, wrists, knees and ankles: lift/collide.ts).
+// main.ts only loads this file in dev, so it never ships. Delete it once SAM
+// is in.
 
 const WASM = '/node_modules/@mediapipe/tasks-vision/wasm';
 const MODEL =
@@ -16,9 +20,10 @@ const MASK_SIDE = 384; // long side of the frames the model sees; its masks come
 // The landmarks that move with the body rather than the arms and legs: the
 // head (nose, eyes, ears, mouth), the shoulders and the hips.
 const CORE = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 23, 24];
+const ALL = Array.from({ length: 33 }, (_, i) => i); // MediaPipe's pose landmarks
 const TORSO = { shoulders: [11, 12], hips: [13, 14] }; // their places in CORE
 
-export type StandIn = { masks: (Mask | null)[]; bodies: (PointSet | null)[] };
+export type StandIn = { masks: (Mask | null)[]; bodies: (PointSet | null)[]; skeleton: (PointSet | null)[] };
 export type FollowMode = 'points' | 'mask';
 
 // Runs the pose model over every frame: in the browser if it can, otherwise
@@ -49,6 +54,7 @@ async function runInBrowser(clip: Clip, width: number, height: number, report: (
     const sink = new CanvasSink(clip.track, { width, height, fit: 'fill', poolSize: 2 });
     const masks: (Mask | null)[] = new Array(clip.frameCount).fill(null);
     const bodies: (PointSet | null)[] = new Array(clip.frameCount).fill(null);
+    const skeleton: (PointSet | null)[] = new Array(clip.frameCount).fill(null);
     let i = 0;
     for await (const wrapped of sink.canvasesAtTimestamps(frameTimes(clip))) {
       if (wrapped) {
@@ -57,7 +63,8 @@ async function runInBrowser(clip: Clip, width: number, height: number, report: (
         landmarker.detectForVideo(wrapped.canvas, Math.round((i * 1000) / FPS), (result) => {
           const body = result.landmarks[0];
           const mask = result.segmentationMasks?.[0];
-          bodies[i] = body ? toPointSet(body, clip.width, clip.height) : null;
+          bodies[i] = body ? toPointSet(body, clip.width, clip.height, CORE) : null;
+          skeleton[i] = body && body.length >= ALL.length ? toPointSet(body, clip.width, clip.height, ALL) : null;
           masks[i] = mask ? toMask(mask) : null;
         });
       }
@@ -70,7 +77,7 @@ async function runInBrowser(clip: Clip, width: number, height: number, report: (
     const found = bodies.filter(Boolean).length;
     const masked = masks.filter((mask) => mask && maskHasPerson(mask)).length;
     if (found > 0 && masked < found / 10) throw new Error(`person masks came back empty (${masked} of ${found} frames)`);
-    return { masks, bodies };
+    return { masks, bodies, skeleton };
   } finally {
     landmarker.close();
   }
@@ -105,9 +112,10 @@ async function runOnDevServer(
 
 type DevServerHeader = { bodies: ({ x: number[]; y: number[]; c: number[] } | null)[]; hasMask: boolean[] };
 
-// The reply is a 4-byte header length, a JSON header (each frame's body points
-// in clip pixels, and whether it has a mask), then every frame's mask.
-function readDevServerReply(bytes: Uint8Array, frameCount: number, width: number, height: number): StandIn {
+// The reply is a 4-byte header length, a JSON header (each frame's 33 body
+// points in clip pixels, and whether it has a mask), then every frame's mask.
+// A frame of 15 points (an older tools/standin.py) is the CORE ones alone.
+export function readDevServerReply(bytes: Uint8Array, frameCount: number, width: number, height: number): StandIn {
   const headerLength = new DataView(bytes.buffer, bytes.byteOffset).getUint32(0, true);
   const header: DevServerHeader = JSON.parse(new TextDecoder().decode(bytes.subarray(4, 4 + headerLength)));
   const size = width * height;
@@ -115,12 +123,16 @@ function readDevServerReply(bytes: Uint8Array, frameCount: number, width: number
   if (bytes.length !== start + header.hasMask.length * size) throw new Error('the dev server sent back a broken reply');
   // Pad to the clip's length, in case the server decoded a frame fewer.
   const frames = Array.from({ length: frameCount }, (_, i) => i);
+  const points = (i: number, picked: readonly number[] | null): PointSet | null => {
+    const body = header.bodies[i];
+    if (!body) return null;
+    if (!picked) return { x: Float32Array.from(body.x), y: Float32Array.from(body.y), confidence: Float32Array.from(body.c) };
+    return { x: Float32Array.from(picked, (k) => body.x[k]), y: Float32Array.from(picked, (k) => body.y[k]), confidence: Float32Array.from(picked, (k) => body.c[k]) };
+  };
+  const full = (i: number) => (header.bodies[i]?.x.length ?? 0) >= ALL.length;
   return {
-    bodies: frames.map((i) => {
-      const body = header.bodies[i];
-      if (!body) return null;
-      return { x: Float32Array.from(body.x), y: Float32Array.from(body.y), confidence: Float32Array.from(body.c) };
-    }),
+    bodies: frames.map((i) => points(i, full(i) ? CORE : null)),
+    skeleton: frames.map((i) => (full(i) ? points(i, null) : null)),
     masks: frames.map((i) =>
       header.hasMask[i]
         ? { width, height, alpha: new Uint8ClampedArray(bytes.buffer, bytes.byteOffset + start + i * size, size) }
@@ -175,13 +187,14 @@ function webgl2Problem(): string | null {
   return canvas.getContext('webgl2') ? null : reason;
 }
 
-function toPointSet(landmarks: NormalizedLandmark[], width: number, height: number): PointSet {
+// The landmarks `picked` (CORE, or ALL), in clip px.
+function toPointSet(landmarks: NormalizedLandmark[], width: number, height: number, picked: readonly number[]): PointSet {
   const set = {
-    x: new Float32Array(CORE.length),
-    y: new Float32Array(CORE.length),
-    confidence: new Float32Array(CORE.length),
+    x: new Float32Array(picked.length),
+    y: new Float32Array(picked.length),
+    confidence: new Float32Array(picked.length),
   };
-  CORE.forEach((index, i) => {
+  picked.forEach((index, i) => {
     set.x[i] = landmarks[index].x * width;
     set.y[i] = landmarks[index].y * height;
     set.confidence[i] = landmarks[index].visibility ?? 1;

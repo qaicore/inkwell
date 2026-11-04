@@ -24,10 +24,11 @@
 // edge's normal: teeth 0.01–0.04 U deep every 0.02–0.08 U, slanted, never
 // axis-aligned steps. The A15–17 fields pale with depth, from core at the
 // edge to pale 0.15–0.3 U in; the A10–11 fields keep the saturated core
-// within 0.02–0.03 U of the edge, over a pale inside, mix(core, white,
+// within RIM_CORE of the edge, over a pale inside, mix(core, white,
 // 0.52–0.58) (#95fef6–#a2fef7, which the wash's glow brings to k24–25's
-// #aafffa–#b5fdfe). Floods go behind the person (slot 6); the veil goes in
-// the front FX (slot 10) and the flash above it (slot 11). In gentle mode the
+// #aafffa–#b5fdfe). Floods go behind the person (slot 6), and the veil with
+// them, under the limbs, so they stay solid through it;
+// the flash goes above the masses and FX (slot 11). In gentle mode the
 // veil and the flash stay under +0.10 L: their opacity is capped so no grey
 // background up to L 0.6 moves by 0.08 or more.
 //
@@ -435,12 +436,16 @@ export interface FloodSpec {
   field: 'rim' | 'deep'; // a paler rim over a saturated inside, or core at the edge paling with depth
 }
 
-// The measured floods (destruction §4.8, §6.9).
+// The measured floods (destruction §4.8, §6.9) were half-screen panels, 16–58 %
+// of the frame on the ±t sides; the judges (rounds 3–4) cut them as cyan panels
+// that do not belong. Each is now a soft low band along the floor (dir about
+// ±180, the floor side of P), 6–9 % of the frame, in the same layers and the
+// k24–25 tones, so the discharge still washes the floor.
 export const FLOODS: readonly FloodSpec[] = [
-  { wash: 1, A: 10, area: 0.16, dir: 60, field: 'rim' }, // the +t background beyond the cluster
-  { wash: 1, A: 11, area: 0.3, dir: 75, field: 'rim' }, // the floor in front of P and the far +t corner
-  { wash: 2, A: 15, area: 0.29, dir: -70, field: 'deep' }, // the −t floor and background
-  { wash: 3, A: 17, area: 0.58, dir: -95, field: 'deep' }, // everything on the −t side
+  { wash: 1, A: 10, area: 0.06, dir: 172, field: 'rim' },
+  { wash: 1, A: 11, area: 0.08, dir: -176, field: 'rim' },
+  { wash: 2, A: 15, area: 0.07, dir: 178, field: 'deep' },
+  { wash: 3, A: 17, area: 0.09, dir: -172, field: 'deep' },
 ];
 
 export const GENTLE_FLOOD_AREA = 0.22; // under the 25 % cap, with room for the lobes
@@ -517,7 +522,10 @@ export const FLOOD_BAND = [0.008, 0.027] as const; // U: the band's width along 
 // (under 0.003 U); the tip sits 20–35 % of the way along it, or 65–80 %, the
 // same way on one flood, so the teeth lean like barbs (k24–25).
 export const NOTCH = { spacing: [0.02, 0.08], depth: [0.01, 0.04], shallow: 0.003, lean: [0.2, 0.35] } as const;
-export const RIM_CORE = [0.02, 0.03] as const; // U: an A10–11 field keeps the saturated core this far in
+// U: an A10–11 field keeps the saturated core this far in. Measured at
+// 0.02–0.03 U on half-screen floods; thinned for the low bands FLOODS paints
+// now, where a rim that wide would be most of the band.
+export const RIM_CORE = [0.007, 0.01] as const;
 export const RIM_PALE = [0.52, 0.58] as const; // then mix(core, white, this): #95fef6–#a2fef7 unturned, #aafffa–#b5fdfe under the wash glow
 const STEP = 0.01; // U: the flood edge's sample spacing
 const floods = new Map<string, Pick<FloodDrawing, 'layers' | 'outline' | 'share' | 'glow'>>();

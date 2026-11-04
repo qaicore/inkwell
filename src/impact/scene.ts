@@ -13,7 +13,11 @@
 //     are lifted on the frame they were drawn on (their emerge moment's) and
 //     run through animate3d with the strike controller, limbs first (decision
 //     2): land I − 7, release I + 9. The physics runs once, for every frame,
-//     on first use.
+//     on first use, and is kept by exactly its inputs (physicsKeyOf), so a
+//     scene built again for anything else (Reduce flashing, the aftermath,
+//     the colours) takes it as it is. The app works it out in a worker
+//     (lift/sim-worker.ts) and hands it in (SceneOptions.physics); until it
+//     comes, the scene shows the limbs as drawn, riding him (drawnPhysics).
 //   - Limbs: a fresh tube drawing (WP3's tubes, WP4's arcs and pulses) on the
 //     frames limbDrawingAt marks 'tube'; between them in the strike window the
 //     last tube is stamped through the similarity about P that carries its
@@ -66,8 +70,8 @@ import type { BrushId, Effect, EmergeMoment, LimbSettings, Moment, Stroke } from
 import type { Mask, PointSet, Pose } from '../track/tracking.ts';
 import { goodStandIns, torsoBend } from '../track/bend.ts';
 import { anchorTransform, toPixels, type TorsoTransform } from '../track/torso.ts';
-import { liftBodies, type Body3D } from '../lift/body.ts';
-import { dummyBodies } from '../lift/collide.ts';
+import { inFront, liftBodies, project, toCamera, type Body3D } from '../lift/body.ts';
+import { dummyBodies, type Dummy } from '../lift/collide.ts';
 import { animate3d, liftStroke, type Frame3D, type Lifted } from '../lift/lift.ts';
 import { bulgeSide, limbsFirst, strikeController } from '../lift/strike.ts';
 import { buildTube, onMask, silhouette } from '../lift/tube.ts';
@@ -114,7 +118,9 @@ const EDGE_CROP = 1.2; // the crop traced for it, × that reach
 const SIGMA_REACH = 15; // frames either side of I to find his mask for σ
 const STANDING = 0.7; // × H: his height when there's no mask to read
 const TORSO_SHARE = 0.25; // × the clip's height: the torso without units (app/engine.ts's)
-const STORE_SIZE = 64; // parts kept, least recently used dropped
+// Parts kept, least recently used dropped. A desktop page keeps the whole clip's,
+// so the second time through plays from them; a phone hasn't the memory.
+const STORE_SIZE = typeof document !== 'undefined' && !/iPhone|iPad|Android/.test(navigator.userAgent) ? 640 : 64;
 const GLOW_SETS = 6; // limb drawings whose glow is kept blurred
 const AHEAD = 3; // frames jobs looks ahead
 const LIMB_PAD = 0.15; // × S round the limbs: their layers' box, before 2·r_max
@@ -174,6 +180,7 @@ export interface ImpactClip {
   bodies?: readonly (PointSet | null)[] | null; // the stand-in's landmarks, for the turn and the bend; missing = none
   skeleton?: readonly (PointSet | null)[] | null; // the stand-in's 33 landmarks, for the limbs' crash-test dummy (lift/collide.ts); missing = bodies' (head and neck alone)
   units?: readonly (number | null)[] | null; // his torso height per frame, clip px (torsoHeights); missing = 0.25 × the clip's height
+  source?: string | object; // what its masks, landmarks and torso heights come from, for the physics' key: clips with the same source read the same (a string names it on every thread); missing = the clip itself
   luma?(f: number): PlateLuma | null; // the plate's luma on frame f, clip px, for the limbs' outline classes; missing = the line tone all along
   audio?: unknown; // carried for the export: the freeze adds 26 frames of silence after I + 9 (WP13)
 }
@@ -190,6 +197,11 @@ export interface SceneOptions {
   clock?: () => number; // ms; only timings() reads it
   strokes?: (clip: number) => DrawnStroke[]; // the effect's other strokes on a clip frame, on the internal frame (the limbs and cracks are dropped)
   drawStroke?: ComposeDeps['drawStroke'];
+  // The physics worked out elsewhere (another scene's physics(), packed or
+  // not), or 'wait' while it is: the result kept for these inputs if there
+  // is one (keepPhysics), else the limbs as drawn (drawnPhysics). Missing =
+  // worked out here on first use, or taken from what's kept.
+  physics?: ScenePhysics | PackedPhysics | 'wait';
 }
 
 // One layer on a frame, for the tests and the sheets.
@@ -232,6 +244,9 @@ export interface ImpactScene {
   readonly degrade: Degrade;
   readonly cuts: Cuts;
   readonly sceneId: string;
+  readonly physicsKey: string; // exactly the physics' inputs (physicsKeyOf)
+  readonly waiting: boolean; // the limbs show as drawn until the physics comes (SceneOptions.physics 'wait')
+  physics(): ScenePhysics;
   turn(): TurnRead;
   bodies(): readonly Body3D[];
   frames3d(): readonly Frame3D[];
@@ -241,6 +256,7 @@ export interface ImpactScene {
   impact(o: number): ImpactFrame | null;
   render(ctx: BrushTarget, video: unknown, o: number): void; // video: the clip frame's image, or (clip) => it
   jobs(o: number): DrawingJob[];
+  missing(o: number): DrawingJob[]; // the drawings frame o itself still lacks (jobs(o) lists the frames after it); none = render(o) draws nothing on the page but the frame's own glows and cutout
   runJob(job: DrawingJob | string, make?: MakeScratch): DrawnLayer;
   put(layer: DrawnLayer): void;
   outputLength(): number;
@@ -257,13 +273,18 @@ interface LimbInfo {
   slam: boolean; // one of the limbs that slam down
 }
 
-interface Lift {
+// A scene's physics: the turn, the bodies and the limbs on every frame, as
+// plain data, so another thread can work it out and post it back.
+export interface ScenePhysics {
+  key: string; // its inputs (physicsKeyOf)
   bodies: Body3D[];
   frames: Frame3D[];
   start: number[]; // the first frame of the capture placed on each frame
   turn: TurnRead;
   ms: number; // the physics per frame, ms (with opts.clock)
+  drawn?: boolean; // the limbs as drawn, un-simulated (drawnPhysics): never kept
 }
+type Lift = ScenePhysics;
 
 interface Rig {
   effect: Effect;
@@ -289,6 +310,8 @@ interface Rig {
   newPath: (() => LinePath) | null;
   now: (() => number) | null;
   lift: Lift | null;
+  physicsKey: string;
+  waiting: boolean; // the physics is worked out elsewhere and isn't here: the limbs as drawn
   store: Map<string, DrawnPart>;
   glowSets: Map<string, Glow[]>;
   spare: Glow[];
@@ -350,6 +373,8 @@ export function createImpactScene(effect: Effect, clip: ImpactClip, opts: SceneO
     newPath: opts.newPath === undefined ? nativePath() : opts.newPath,
     now: opts.clock ?? null,
     lift: null,
+    physicsKey: '',
+    waiting: false,
     store: new Map(),
     glowSets: new Map(),
     spare: [],
@@ -361,8 +386,19 @@ export function createImpactScene(effect: Effect, clip: ImpactClip, opts: SceneO
     scenes: new Map(),
   };
   rig.base = slam && I !== null ? slamContext(rig, slam, I, crackIds) : null;
+  rig.physicsKey = physicsKeyOf(rig);
+  // The physics is settled here, so what a scene shows (and its id says)
+  // doesn't change with what's kept after it's made.
+  const given = opts.physics;
+  if (given === 'wait') {
+    rig.lift = keptPhysics(rig.physicsKey);
+    rig.waiting = rig.lift === null;
+  } else if (given) {
+    rig.lift = 'pts' in given ? unpackPhysics(given) : given;
+    if (rig.lift.key !== rig.physicsKey) throw new Error('createImpactScene: the physics handed in was worked out for other inputs');
+  }
   const poseDigest = clip.poses.map((p) => `${p.x.toFixed(2)},${p.y.toFixed(2)},${p.angle.toFixed(4)},${p.scale.toFixed(4)}`).join(';');
-  rig.sceneId = fnv1a32(JSON.stringify(effect), clip.width, clip.height, clip.frames, poseDigest, W, H, cuts.n).toString(16);
+  rig.sceneId = fnv1a32(JSON.stringify(effect), clip.width, clip.height, clip.frames, poseDigest, W, H, cuts.n, ...(rig.waiting ? ['drawn'] : [])).toString(16);
   return sceneOf(rig, opts.degrade ?? 0);
 }
 
@@ -460,11 +496,30 @@ function unitNear(units: readonly (number | null)[] | null, f: number): number |
   return null;
 }
 
-// The physics, once: the turn, the bodies, and the limbs on every frame.
+// The physics, once: the turn, the bodies, and the limbs on every frame;
+// what's kept for its inputs, or worked out here and kept.
 function liftOf(rig: Rig): Lift {
   if (rig.lift) return rig.lift;
+  if (rig.waiting) return (rig.lift = drawnPhysics(rig));
+  const kept = keptPhysics(rig.physicsKey);
+  if (kept) return (rig.lift = kept);
+  rig.lift = simulate(rig);
+  keepPhysics(rig.lift);
+  return rig.lift;
+}
+
+// His crash-test dummy on every frame (lift/collide.ts): the egg, and
+// capsules from the stand-in's landmarks: all 33 where the clip has them
+// (its skeleton: head, neck, arms and legs), else the 15 that move with the
+// body (head and neck alone); the egg alone without a pose.
+export function dummyOf(clip: ImpactClip, bodies: readonly Body3D[]): Dummy[] {
+  return dummyBodies({ bodies, joints: clip.skeleton ?? clip.bodies ?? null, mask: (f) => clip.personMask(f), width: clip.width, height: clip.height });
+}
+
+// The turn and the bodies on every frame: the physics' first part, quick,
+// which the limbs as drawn ride too.
+function bodiesOf(rig: Rig): { bodies: Body3D[]; turn: TurnRead; limbStrokes: Stroke[] } {
   const { clip, effect } = rig;
-  const t0 = rig.now?.() ?? 0;
   const n = clip.frames;
   const poses = clip.poses.length > 0 ? Array.from({ length: n }, (_, f) => clip.poses[Math.min(f, clip.poses.length - 1)]) : [];
   const stand = clip.bodies ? [...clip.bodies] : null;
@@ -482,6 +537,16 @@ function liftOf(rig: Rig): Lift {
   const unit0 = unitNear(clip.units ?? null, drawn) ?? TORSO_SHARE * clip.height;
   const bend = stand ? torsoBend(stand, drawn, FPS, good) : null;
   const bodies = poses.length > 0 ? liftBodies(poses, unit0, drawn, keys, bend) : [];
+  return { bodies, turn: { keys, from: read.from, checked }, limbStrokes };
+}
+
+// The physics itself: each limb lifted on the frame it was drawn on and run
+// through animate3d, the strike controller taking it round his body.
+function simulate(rig: Rig): Lift {
+  const { clip } = rig;
+  const t0 = rig.now?.() ?? 0;
+  const n = clip.frames;
+  const { bodies, turn, limbStrokes } = bodiesOf(rig);
   let frames: Frame3D[] = [];
   if (limbStrokes.length > 0 && bodies.length === n && n > 0) {
     const px = new Map<number, Vec2[]>();
@@ -493,7 +558,7 @@ function liftOf(rig: Rig): Lift {
     });
     const slamIds = limbStrokes.filter((st) => rig.limbs.get(st.id)?.slam).map((st) => st.id);
     // His body, for the limbs to collide with and go round (decision 17), and their root radius in clip px.
-    const dummies = dummyBodies({ bodies, joints: clip.skeleton ?? stand, mask: (f) => clip.personMask(f), width: clip.width, height: clip.height });
+    const dummies = dummyOf(clip, bodies);
     const radius = rig.R0 / rig.s;
     const I = rig.I;
     const control =
@@ -517,6 +582,7 @@ function liftOf(rig: Rig): Lift {
       dps: rig.dps,
       boil: rig.opts.boil ?? EXAMPLE_TIMING.boil,
       width: clip.width,
+      height: clip.height, // the floor's bottom edge after the release (missing, a 16:9 clip's: a portrait clip's limbs went flat 2/3 of the way up)
       emerge: new Map(limbStrokes.flatMap((st) => (rig.emerge.has(st.id) ? [[st.id, rig.emerge.get(st.id) as number] as const] : []))),
       control,
       slam: I !== null && rig.base ? { I, posters: rig.base.posters } : undefined,
@@ -524,11 +590,223 @@ function liftOf(rig: Rig): Lift {
       radius,
     });
   }
+  const ms = rig.now && n > 0 ? (rig.now() - t0) / n : 0;
+  return { key: rig.physicsKey, bodies, frames, start: startsOf(frames), turn, ms };
+}
+
+// The first frame of the capture placed on each frame.
+function startsOf(frames: readonly Frame3D[]): number[] {
   const start: number[] = [];
   frames.forEach((fr, f) => start.push(f > 0 && frames[f - 1].capture === fr.capture ? start[f - 1] : f));
-  const ms = rig.now && n > 0 ? (rig.now() - t0) / n : 0;
-  rig.lift = { bodies, frames, start, turn: { keys, from: read.from, checked }, ms };
-  return rig.lift;
+  return start;
+}
+
+// While the physics is worked out elsewhere: each limb lifted on the frame
+// it was drawn on and carried by his body as it was drawn, un-simulated,
+// from the first frame of its emergence drawing, drawn anew on 2s, each
+// frame marked as the physics marks it.
+function drawnPhysics(rig: Rig): Lift {
+  const { clip, I, base } = rig;
+  const n = clip.frames;
+  const { bodies, turn, limbStrokes } = bodiesOf(rig);
+  const frames: Frame3D[] = [];
+  if (limbStrokes.length > 0 && bodies.length === n && n > 0) {
+    const lifted = limbStrokes.map((st) => {
+      const f = drawnFrame(rig, st);
+      return liftStroke(st.id, strokePx(rig, st, f), [...st.views.front.pressure], bodies[f], st.kind, st.stiffness, st.wobble);
+    });
+    const born = limbStrokes.map((st) => {
+      const at = rig.emerge.get(st.id);
+      if (at === undefined) return 0;
+      let f = Math.max(0, at);
+      const k = drawingIndex(f, rig.dps);
+      while (f > 0 && drawingIndex(f - 1, rig.dps) === k) f--;
+      return f;
+    });
+    const slams = limbStrokes.some((st) => rig.limbs.get(st.id)?.slam);
+    const strike = I !== null && rig.slam && base && slams && I >= 0 && I < n ? limbsFirst(I) : undefined;
+    // A frame's limbs are placed when they're first read: the page shows a
+    // frame or two of them before the physics comes (decision 20).
+    const placedOn: Frame3D['placed'][] = [];
+    const place = (f: number): Frame3D['placed'] => {
+      const b = bodies[f];
+      return lifted.flatMap((l, j) => {
+        if (born[j] > f) return [];
+        const pts = l.points.map((q) => toCamera(b, q));
+        const seen = pts.map((p) => project(b, p));
+        return [
+          {
+            id: l.id,
+            points: seen.map(({ xy }) => xy),
+            z: pts.map((p) => p[2]),
+            pressure: l.pressure.map((p, i) => Math.min(1, p * seen[i].near)),
+            front: pts.map((p) => inFront(b, p)),
+            length: l.length,
+            depth: pts.reduce((sum, p) => sum + p[2], 0) / pts.length,
+          },
+        ];
+      });
+    };
+    let capture = -1;
+    let lastK = -1;
+    for (let f = 0; f < n; f++) {
+      const k = drawingIndex(f, rig.dps);
+      if (k !== lastK) [lastK, capture] = [k, capture + 1];
+      const drawing: LimbDrawing = I !== null && base ? limbDrawingAt(f, I, strike, base.posters) : 'grid';
+      frames.push({
+        f,
+        k,
+        capture,
+        drawing,
+        get placed() {
+          return (placedOn[f] ??= place(f));
+        },
+        sim: [],
+      });
+    }
+  }
+  return { key: rig.physicsKey, bodies, frames, start: startsOf(frames), turn, ms: 0, drawn: true };
+}
+
+// The physics' inputs, as one string: what it reads of the effect (the
+// limbs as drawn, when they emerge and which of them slam; the slam's I, P,
+// d, seed and posters; the turn, and its check; the drawings a second, the
+// boil and the limbs' root radius) and of the clip (its size, the anchor
+// track, and its source: the masks, the stand-in's landmarks and the torso
+// heights). Nothing else changes it: not the flash, the aftermath, the
+// colours or the tier's cuts but the resolution.
+function physicsKeyOf(rig: Rig): string {
+  const { clip, effect } = rig;
+  const limbs = effect.strokes
+    .filter((st) => rig.limbs.has(st.id))
+    .map((st) => ({
+      id: st.id,
+      anchor: st.anchor,
+      kind: st.kind,
+      stiffness: st.stiffness,
+      wobble: st.wobble,
+      points: st.views.front.points,
+      pressure: st.views.front.pressure,
+      emerge: rig.emerge.get(st.id) ?? null,
+      slam: rig.limbs.get(st.id)?.slam ?? false,
+    }));
+  const slam = rig.I !== null && rig.slam && rig.base ? { I: rig.I, xy: rig.slam.xy, dir: rig.slam.dir ?? null, seed: rig.base.seed, posters: rig.base.posters } : null;
+  const source = clip.source ?? clip;
+  return JSON.stringify({
+    source: typeof source === 'string' ? source : sourceId(source),
+    clip: [clip.width, clip.height, clip.frames],
+    poses: clip.poses.map((p) => [p.x, p.y, p.angle, p.scale]),
+    turn: effect.turn ?? null,
+    check: rig.opts.turn ?? null,
+    limbs,
+    slam,
+    dps: rig.dps,
+    boil: rig.opts.boil ?? EXAMPLE_TIMING.boil,
+    radius: rig.R0 / rig.s,
+  });
+}
+
+// A number for an object that names a clip's source on this thread.
+const sources = new WeakMap<object, number>();
+let nextSource = 1;
+function sourceId(o: object): number {
+  let id = sources.get(o);
+  if (id === undefined) sources.set(o, (id = nextSource++));
+  return id;
+}
+
+// The physics worked out, by key, the least recently used dropped past
+// PHYSICS_KEPT (each is a few MB). The limbs as drawn are never kept.
+const PHYSICS_KEPT = 3;
+const physicsKept = new Map<string, ScenePhysics>();
+export function keepPhysics(p: ScenePhysics): void {
+  if (p.drawn) return;
+  physicsKept.delete(p.key);
+  physicsKept.set(p.key, p);
+  while (physicsKept.size > PHYSICS_KEPT) physicsKept.delete(physicsKept.keys().next().value as string);
+}
+export function keptPhysics(key: string): ScenePhysics | null {
+  const hit = physicsKept.get(key);
+  if (!hit) return null;
+  physicsKept.delete(key);
+  physicsKept.set(key, hit);
+  return hit;
+}
+// Everything kept goes (a new clip, say).
+export function forgetPhysics(): void {
+  physicsKept.clear();
+}
+
+// The physics as a few flat arrays, to post between threads: a structured
+// clone copies them whole, where tens of thousands of small arrays take a
+// phone's main thread longer than a frame to clone. unpackPhysics gives the
+// same numbers back exactly.
+export interface PackedPhysics {
+  key: string;
+  turn: TurnRead;
+  ms: number;
+  start: Int32Array;
+  bodies: Float64Array; // x, y, unit, yaw, pitch, roll a frame
+  frames: Int32Array; // f, k, capture, drawing (its place in `drawings`), and how many placed and sim a frame
+  drawings: LimbDrawing[];
+  limbs: Float64Array; // id, points, length, depth a placed limb, then id, points a chain
+  pts: Float64Array; // x, y, z, pressure a placed point, then x, y, z a chain's
+  front: Uint8Array; // a placed point's
+}
+
+export function packPhysics(p: ScenePhysics): PackedPhysics {
+  const drawings: LimbDrawing[] = [];
+  const frames = new Int32Array(6 * p.frames.length);
+  const limbs: number[] = [];
+  const pts: number[] = [];
+  const front: number[] = [];
+  p.frames.forEach((fr, f) => {
+    let d = drawings.indexOf(fr.drawing);
+    if (d < 0) d = drawings.push(fr.drawing) - 1;
+    frames.set([fr.f, fr.k, fr.capture, d, fr.placed.length, fr.sim.length], 6 * f);
+    for (const pl of fr.placed) {
+      limbs.push(pl.id, pl.points.length, pl.length, pl.depth);
+      pl.points.forEach((xy, i) => {
+        pts.push(xy[0], xy[1], pl.z[i], pl.pressure[i]);
+        front.push(pl.front[i] ? 1 : 0);
+      });
+    }
+    for (const c of fr.sim) {
+      limbs.push(c.id, c.points.length);
+      for (const q of c.points) pts.push(q[0], q[1], q[2]);
+    }
+  });
+  const bodies = new Float64Array(6 * p.bodies.length);
+  p.bodies.forEach((b, f) => bodies.set([b.x, b.y, b.unit, b.yaw, b.pitch, b.roll], 6 * f));
+  return { key: p.key, turn: p.turn, ms: p.ms, start: Int32Array.from(p.start), bodies, frames, drawings, limbs: Float64Array.from(limbs), pts: Float64Array.from(pts), front: Uint8Array.from(front) };
+}
+
+export function unpackPhysics(q: PackedPhysics): ScenePhysics {
+  const bodies: Body3D[] = [];
+  for (let i = 0; i < q.bodies.length; i += 6) bodies.push({ x: q.bodies[i], y: q.bodies[i + 1], unit: q.bodies[i + 2], yaw: q.bodies[i + 3], pitch: q.bodies[i + 4], roll: q.bodies[i + 5] });
+  const frames: Frame3D[] = [];
+  let [l, p, b] = [0, 0, 0];
+  for (let i = 0; i < q.frames.length; i += 6) {
+    const placed: Frame3D['placed'] = [];
+    for (let k = 0; k < q.frames[i + 4]; k++, l += 4) {
+      const pl = { id: q.limbs[l], points: [] as Vec2[], z: [] as number[], pressure: [] as number[], front: [] as boolean[], length: q.limbs[l + 2], depth: q.limbs[l + 3] };
+      for (let j = 0; j < q.limbs[l + 1]; j++, p += 4, b++) {
+        pl.points.push([q.pts[p], q.pts[p + 1]]);
+        pl.z.push(q.pts[p + 2]);
+        pl.pressure.push(q.pts[p + 3]);
+        pl.front.push(q.front[b] === 1);
+      }
+      placed.push(pl);
+    }
+    const sim: Frame3D['sim'] = [];
+    for (let k = 0; k < q.frames[i + 5]; k++, l += 2) {
+      const chain: Frame3D['sim'][number] = { id: q.limbs[l], points: [] };
+      for (let j = 0; j < q.limbs[l + 1]; j++, p += 3) chain.points.push([q.pts[p], q.pts[p + 1], q.pts[p + 2]]);
+      sim.push(chain);
+    }
+    frames.push({ f: q.frames[i], k: q.frames[i + 1], capture: q.frames[i + 2], drawing: q.drawings[q.frames[i + 3]], placed, sim });
+  }
+  return { key: q.key, bodies, frames, start: Array.from(q.start), turn: q.turn, ms: q.ms };
 }
 
 // The limbs on clip frame f as tubes on the internal frame, far first.
@@ -1162,7 +1440,8 @@ function sceneOf(rig: Rig, step: number): ImpactScene {
 
   // The parts the masses draw on clip frame c, in stack order: the cracks,
   // the fire or the cluster, then the dust over its base, then the front FX's
-  // wisps, debris, the A5–6 veil and the particles, then the A5–6 flash. The
+  // wisps, debris and the particles. The A5–6 veil and flash go under all of
+  // that, in the floods slot, so the limbs and masses stay solid in them. The
   // keys are the clocks' (cheap): each says what the drawing shows, its fade
   // apart. The veil and the flash cut the person out of the frame's own mask,
   // so they are drawn per frame.
@@ -1194,7 +1473,7 @@ function sceneOf(rig: Rig, step: number): ImpactScene {
     out.push(massSpec('debris', 'fx', `debris:${mc.g}:${mc.start}:${chunkDrawing(ectx, c)}`, thin * mc.alpha, () => debrisShapes(ectx, c), W, H));
     const v = veilShapes(ectx, c, washOpts);
     if (v) {
-      out.push({ name: 'veil', slot: 'fx', key: `veil:${c}`, alpha: 1, box: () => boxOf([v.rings[0]], PART_PAD, W, H), paint: (ctx, mk) => paintVeil(ctx, mk, v, ectx.personMask(c), W, H) });
+      out.push({ name: 'veil', slot: 'floods', key: `veil:${c}`, alpha: 1, box: () => boxOf([v.rings[0]], PART_PAD, W, H), paint: (ctx, mk) => paintVeil(ctx, mk, v, ectx.personMask(c), W, H) });
     }
     const gc = groupClock(ectx, c);
     const pf = gc ? particles(ectx, c, { half: rig.cuts.halfParticles }) : null;
@@ -1213,7 +1492,7 @@ function sceneOf(rig: Rig, step: number): ImpactScene {
       });
     }
     const fl = j >= 9 ? flashShapes(ectx, c, washOpts) : null;
-    if (fl) out.push({ name: 'flash', slot: 'flash', key: `flash:${c}`, alpha: 1, box: () => ({ x0: 0, y0: 0, x1: W, y1: H }), paint: (ctx, mk) => paintFlash(ctx, mk, fl, ectx.personMask(c), W, H) });
+    if (fl) out.push({ name: 'flash', slot: 'floods', key: `flash:${c}`, alpha: 1, box: () => ({ x0: 0, y0: 0, x1: W, y1: H }), paint: (ctx, mk) => paintFlash(ctx, mk, fl, ectx.personMask(c), W, H) });
     return out;
   };
 
@@ -1570,6 +1849,9 @@ function sceneOf(rig: Rig, step: number): ImpactScene {
     degrade,
     cuts: rig.cuts,
     sceneId: rig.sceneId,
+    physicsKey: rig.physicsKey,
+    waiting: rig.waiting,
+    physics: () => liftOf(rig),
     turn: () => liftOf(rig).turn,
     bodies: () => liftOf(rig).bodies,
     frames3d: () => liftOf(rig).frames,
@@ -1598,6 +1880,7 @@ function sceneOf(rig: Rig, step: number): ImpactScene {
       }
       if (now) times.total = now() - t0;
     },
+    missing: (o) => jobsAt(o),
     jobs(o) {
       const out = new Map<string, DrawingJob>();
       const visit = (f: number) => {

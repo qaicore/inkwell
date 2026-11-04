@@ -57,6 +57,13 @@ export interface Contact {
   from: number;
 }
 
+// The air's drag on a heavy rope, on top of the damping: a node's velocity
+// over (1 + k × its speed, torso heights a step). It leaves a slow wave alone
+// and holds back a rope whipped round after his turn, so its tip trails on a
+// long curve instead of flipping across him in a drawing (170 px a frame on
+// the hero's f63).
+export const DRAG = { k: 0.5 };
+
 const PULL = 0.5;
 const TEAR = 1.1; // the most the shape pull may stretch a segment, × its rest length
 const FTL_DAMPING = 0.9;
@@ -64,6 +71,13 @@ const ROOT_HELD_FROM = 0.3;
 const BEND_STEP = 0.05; // rad a joint past the bend limit is turned back a step at most: pushed round his shoulder, the rope bends past it, and turning it back all at once would swing the rest of it over him
 const CURL = 0.1; // the share of each joint's way back to its drawn bend a step (curlBends): a bend wave carries, a swing can't straighten it
 const FOLD = (40 * Math.PI) / 180; // the sharpest a joint may bend (fold), radians
+// The base's hold (decision 15(a)): a tentacle is muscle at the root and hangs
+// at the tip. A pulled node's pull toward its place in the shape is at least
+// pull·(1 − t/span)² (t its share of the way along), so the base takes up his
+// turn as the drive turns it (lift.ts ROPE: quick at the root) and the rest
+// of the rope is dragged round after it, the tip last. A chain under no pull
+// (stiffness 0) is held by nothing.
+export const HOLD = { pull: 0.1, span: 0.45 };
 
 export interface Chain3 {
   kind: 'strand' | 'rigid';
@@ -116,7 +130,9 @@ export function stepChain3(chain: Chain3, target: Vec3[], unitPx: number, params
     const p = points[i];
     const q = prev[i];
     prev[i] = p;
-    points[i] = [p[0] + (p[0] - q[0]) * keep, p[1] + (p[1] - q[1]) * keep + fall, p[2] + (p[2] - q[2]) * keep];
+    const [vx, vy, vz] = [p[0] - q[0], p[1] - q[1], p[2] - q[2]];
+    const left = keep / (1 + (DRAG.k * Math.hypot(vx, vy, vz)) / unitPx);
+    points[i] = [p[0] + vx * left, p[1] + vy * left + fall, p[2] + vz * left];
   }
   prev[0] = points[0];
   points[0] = copy(target[0]);
@@ -164,11 +180,17 @@ export function stepChain3(chain: Chain3, target: Vec3[], unitPx: number, params
   // node left hanging, or caught on him (a limb threaded under his arm when
   // it lets go of P), would otherwise stretch the rope across the gap further
   // than the mending can close.
+  // The base holds (HOLD): pulled harder toward its place by the root.
   const k = PULL * stiffness * stiffness;
   if (k > 0) {
+    const total = rest.reduce((sum, r) => sum + r, 0);
+    let along = 0;
     for (let i = 1; i < n; i++) {
+      along += rest[i - 1];
+      const t = total > 0 ? along / total : 1;
+      const ki = pin ? k : Math.max(k, HOLD.pull * Math.max(0, 1 - t / HOLD.span) ** 2);
       const inside = contact && insideDepth(contact.dummy, shape[i], i < contact.from ? 0 : contact.radii[i]) > 0;
-      const p = inside ? points[i] : add(points[i], scale(sub(shape[i], points[i]), k));
+      const p = inside ? points[i] : add(points[i], scale(sub(shape[i], points[i]), ki));
       const d = sub(p, points[i - 1]);
       const l = Math.hypot(d[0], d[1], d[2]);
       points[i] = l > TEAR * rest[i - 1] ? add(points[i - 1], scale(d, (TEAR * rest[i - 1]) / l)) : p;
