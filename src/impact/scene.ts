@@ -105,6 +105,8 @@ import { emitLightning, lightningShapes, paintLightning, ribbons, type Lightning
 import { paintParticles, particles, particleShapes, type ParticleFrame } from './aftermath/particles.ts';
 import { boxOf, emitFlood, flashShapes, floodShapes, groupClock, krSpan, liftCap, paintFlash, paintFlood, paintVeil, veilShapes, type Box, type FloodDrawing, type WashOptions } from './aftermath/washes.ts';
 import { shapes as wispShapes, wispKind, wispOpacity } from './aftermath/wisps.ts';
+import { EMERGE } from '../render/electric.ts';
+import { drawTipProps } from './tipProp.ts';
 import { drawPoster } from './frames/draw.ts';
 import { drawOnEnd, posterFigure, traceMask, type PosterTarget } from './frames/figure.ts';
 import { posterAt, posterHotRamp, posterPlan, redSafeCool, type PosterPlan, type PosterSpec } from './frames/gentle.ts';
@@ -1409,6 +1411,7 @@ function sceneOf(rig: Rig, step: number): ImpactScene {
         drawArcs(b, side(far, false), tones, newPath);
         drawArcs(f, side(far, true), tones, newPath);
         drawLimb(b, f, tube, { S, k, palette: rig.palette, settings: rig.settings, age, pulses: spans, swing, outline, mask, maskScale, glow: steady });
+        if (rig.effect.props && (age === undefined || age >= EMERGE.grow)) drawTipProps({ props: rig.effect.props, tubeAt: (fr, id) => tubesAt(rig, fr).find((q) => q.id === id), make: mk, s, S, palette: rig.palette }, tube, b as unknown as CanvasRenderingContext2D, f as unknown as CanvasRenderingContext2D);
         drawArcs(b, side(near, false), tones, newPath);
         drawArcs(f, side(near, true), tones, newPath);
         for (const pop of pops) drawPops(sectionAt(tube, pop.s).front ? f : b, tube, [pop], tones);
