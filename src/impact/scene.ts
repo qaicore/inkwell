@@ -1438,7 +1438,8 @@ function sceneOf(rig: Rig, step: number): ImpactScene {
 
   // The parts the masses draw on clip frame c, in stack order: the cracks,
   // the fire or the cluster, then the dust over its base, then the front FX's
-  // wisps, debris, the A5–6 veil and the particles, then the A5–6 flash. The
+  // wisps, debris and the particles, then the A5–6 flash. The A5–6 veil goes
+  // under the limbs, in the floods slot, so they stay solid through it. The
   // keys are the clocks' (cheap): each says what the drawing shows, its fade
   // apart. The veil and the flash cut the person out of the frame's own mask,
   // so they are drawn per frame.
@@ -1470,7 +1471,7 @@ function sceneOf(rig: Rig, step: number): ImpactScene {
     out.push(massSpec('debris', 'fx', `debris:${mc.g}:${mc.start}:${chunkDrawing(ectx, c)}`, thin * mc.alpha, () => debrisShapes(ectx, c), W, H));
     const v = veilShapes(ectx, c, washOpts);
     if (v) {
-      out.push({ name: 'veil', slot: 'fx', key: `veil:${c}`, alpha: 1, box: () => boxOf([v.rings[0]], PART_PAD, W, H), paint: (ctx, mk) => paintVeil(ctx, mk, v, ectx.personMask(c), W, H) });
+      out.push({ name: 'veil', slot: 'floods', key: `veil:${c}`, alpha: 1, box: () => boxOf([v.rings[0]], PART_PAD, W, H), paint: (ctx, mk) => paintVeil(ctx, mk, v, ectx.personMask(c), W, H) });
     }
     const gc = groupClock(ectx, c);
     const pf = gc ? particles(ectx, c, { half: rig.cuts.halfParticles }) : null;
