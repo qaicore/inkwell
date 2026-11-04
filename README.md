@@ -2,7 +2,7 @@
 
 Draw on one frame of a clip, and the drawing lives in the footage.
 
-Built for the Meta Global AI Developer Hackathon (Oct 26 to Nov 4, 2026), Indie Developer track, theme "Build for Your World". You draw the limbs on a start frame and the impact on an end frame. Muse Wonder reads each stroke and decides what it attaches to, SAM 3.1's masks track those anchors along with your body, and Inkwell's own code does the rest: the limbs become 3D rope limbs with electricity on them that coil back and slam down on the impact point, the impact frames hit, and the destruction follows (cracks, debris, fire and lightning).
+Built for the Meta Global AI Developer Hackathon (Oct 26 to Nov 4, 2026), Indie Developer track, theme "Build for Your World". You draw the limbs on a start frame and the impact on an end frame. SAM 3.1's person masks, read from a saved answer, cut you out and track you, and Inkwell's own code does the rest: the limbs become 3D rope limbs with electricity on them that coil back and slam down on the impact point, the impact frames hit, and the destruction follows (cracks, debris, fire and lightning).
 
 ## Status
 
@@ -20,17 +20,28 @@ Also works:
 - Play it back at 30 fps. The strokes are held for 2 or 3 frames at a time, 12 drawings a second, like hand-drawn animation, with a line boil (**Wobble**) that redraws each one slightly differently. In dev, the app reads the drawings per second and the boil from `reference/timing.json`; until that exists, it uses the example file's numbers and says so in the header.
 - **Save strokes** downloads your strokes exactly as drawn, as `raw-strokes.json`, for `reference/` (A6 checks the stored points against them).
 - Export an MP4 (H.264, constant 30 fps, original audio). In dev, each export is also saved to `renders/`.
-- Tracking, with a stand-in until SAM 3.1 is connected. Each stroke's root (its first point) rides the body on every frame, and the stroke turns and scales with it. Strokes set to Behind are tucked behind the person, using a person mask.
+- Tracking, from SAM 3.1's cached masks, or a stand-in on a clip that has none. Each stroke's root (its first point) rides the body on every frame, and the stroke turns and scales with it. Strokes set to Behind are tucked behind the person, using a person mask.
   - The stand-in is MediaPipe's pose model, run in the browser. It only loads in dev (`npm run dev`) and is left out of production builds.
-  - It needs WebGL 2. When the browser won't give the page WebGL 2, the dev server runs the same model in Python instead. Set that up once with `npm run standin:setup`, which makes `.venv/` and installs MediaPipe. It also needs ffmpeg on your PATH.
+  - It needs WebGL 2. When the browser won't give the page WebGL 2, or the model hands back empty masks there, the dev server runs the same model in Python instead. Set that up once with `npm run standin:setup`, which makes `.venv/` and installs MediaPipe. It also needs ffmpeg on your PATH.
   - **Follow: body points** follows the head, shoulder and hip landmarks nearest each root.
   - **Follow: body mask, like SAM** uses only the person mask: its centre, lean and size. That's what SAM's "person" prompt will give. Everything after the mask (`src/track/tracking.ts`, `src/render/compose.ts`) is what SAM's masks will feed.
   - **Show tracking** tints the mask and rings each stroke's root.
 
-The app reads SAM 3.1's masks from cached answers (`src/sam/`) and asks Muse Wonder for a stroke plan, falling back to a nearest-mask rule when its answer fails the check (`src/plan/`). Live calls are paid and go through the proxy:
+The app reads SAM 3.1's masks from cached answers (`src/sam/`). A Muse Wonder stroke plan is built too (`src/plan/`, behind the **Plan** button), falling back to a nearest-mask rule when its answer fails the check, but the two-drawing flow doesn't use it. Live calls are paid:
 
 - `npm run probe` runs SAM 3.1 (`person`, `face`, one point on the back) and Muse Wonder's facing labels on `fixtures/probe/clip.mp4`, and writes `fixtures/probe/report.md` and `strip.png`. It costs money: it prints the cost and waits for a typed `yes`. For a 10 s clip that's at most $0.44, likely about $0.25.
-- `functions/` is the Cloudflare Pages Function the app calls: it holds the key, needs the passcode for uploads, and refuses calls past `DAILY_SPEND_CAP_USD` for the day.
+- `functions/` is the Cloudflare Pages Function for a deployed version: it holds the key, needs the passcode for uploads, and refuses calls past `DAILY_SPEND_CAP_USD` for the day.
+
+### Not built
+
+`docs/SPEC.md` is the original plan and promises more than this. Not built or not proven yet:
+
+- A gallery of effects, and wearing someone else's effect on your own clip.
+- A deployed link. The production build has no pose model and no masks, so the effect runs in dev only.
+- Wonder reading the turn. The turn comes from the pose model, or from the hand keys under More.
+- Timing on an iPhone. The speed numbers so far are from a PC.
+
+The clip SAM's cached masks belong to, `fixtures/probe/clip.mp4`, is gitignored, so a fresh clone has the masks but not the clip.
 
 ## Run it
 
@@ -63,7 +74,7 @@ Saving works from this computer. To save from another device in phone mode, open
 npm run dev:phone
 ```
 
-This serves the app over HTTPS on your Wi-Fi at port 5175; Vite prints the address as "Network", for example `https://192.168.1.74:5175`. Safari only allows video encoding on HTTPS pages, so phone mode uses a self-signed certificate. The first time, Safari warns that the connection isn't private: tap Show Details, then "visit this website". The phone and the computer must be on the same Wi-Fi. It runs alongside `npm run dev`.
+This serves the app over HTTPS on your Wi-Fi at port 5175; Vite prints the address as "Network", for example `https://192.168.1.20:5175`. Safari only allows video encoding on HTTPS pages, so phone mode uses a self-signed certificate. The first time, Safari warns that the connection isn't private: tap Show Details, then "visit this website". The phone and the computer must be on the same Wi-Fi. It runs alongside `npm run dev`.
 
 ## Files
 
@@ -100,7 +111,7 @@ node scripts/scan-secrets.mjs
 
 - **Meta's models** (called through Meta's API; none of their code is in the repo):
   - SAM 3.1 gives the person (and face) masks the strokes and the cutout follow. The app reads them from cached answers, and `npm run probe` makes the paid call.
-  - Muse Wonder plans each drawing: for every stroke, what it attaches to. If its answer fails the check, the nearest-mask rule is used.
+  - Muse Wonder's facing labels are part of the probe. Its stroke plan (for every stroke, what it attaches to, or the nearest-mask rule if its answer fails the check) is built, but the two-drawing flow doesn't call it.
 - **Open-source libraries** (all of `package.json`):
   - [perfect-freehand](https://github.com/steveruizok/perfect-freehand) (MIT) turns points into the stroke outline.
   - [Mediabunny](https://mediabunny.dev) (MPL-2.0) decodes and encodes the video.
