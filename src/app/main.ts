@@ -75,6 +75,7 @@ import { estimateFloor, type FloorEstimate } from '../impact/floor-estimate';
 import { LADDER } from '../impact/ladder';
 import { forgetPhysics, keepPhysics, packPhysics, unpackPhysics, type ImpactScene, type PackedPhysics } from '../impact/scene';
 import { startSim, type Sim } from '../lift/sim-worker';
+import { beatsOf, renderSfx, sfx } from './sfx';
 import { serializeEffect, type BrushId, type Effect, type Moment, type Vec2 } from '../types/effect';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -94,6 +95,8 @@ const flashWarning = $<HTMLElement>('flash-warning');
 const downloadLink = $<HTMLAnchorElement>('download');
 const shareButton = $<HTMLButtonElement>('share');
 const playButton = $<HTMLButtonElement>('play');
+const soundToggle = $<HTMLInputElement>('sound');
+soundToggle.addEventListener('change', () => (sfx.on = soundToggle.checked));
 const prevFrame = $<HTMLButtonElement>('prev-frame');
 const nextFrame = $<HTMLButtonElement>('next-frame');
 const scrub = $<HTMLInputElement>('scrub');
@@ -381,6 +384,8 @@ async function play() {
   playButton.textContent = 'Pause';
   const token = ++playToken;
   let from = targetFrame >= clip.frameCount - 1 ? 0 : targetFrame;
+  sfx.prime(); // in the click's own task, for iOS
+  sfx.begin(beatsOf(currentEffect(), flow.aftermath), from);
   while (token === playToken && clip) {
     const current = clip;
     const sink = new CanvasSink(current.track, { poolSize: 2 });
@@ -393,10 +398,12 @@ async function play() {
       if (token !== playToken) break;
       targetFrame = i;
       if (wrapped) showFrame(i, wrapped.canvas);
+      sfx.frame(i);
       i++;
     }
     if (i === from) break; // nothing to play
     from = 0;
+    sfx.begin(beatsOf(currentEffect(), flow.aftermath), 0);
   }
 }
 
@@ -404,6 +411,7 @@ function pause() {
   if (!playing) return;
   playing = false;
   playToken++;
+  sfx.stop();
   playButton.textContent = 'Play';
 }
 
@@ -1291,6 +1299,7 @@ async function exportPlan(c: Clip, size: { width: number; height: number; long: 
     width: size.width,
     height: size.height,
     I: impact && slam ? frameAt(slam.at) : null,
+    sfx: sfx.on && impact ? await renderSfx(beatsOf(effect, flow.aftermath), c.frameCount / 30 + 3) : null,
     flash: flow.flash,
     draw: (out, image, o, step) => {
       if (impact) {

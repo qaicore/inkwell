@@ -16,6 +16,7 @@
 // The audio is copied across as is, except under the freeze, where it's
 // re-encoded with the silence in.
 import { AudioSample, BufferTarget, CanvasSink, Conversion, Mp4OutputFormat, Output, Quality, VideoSample } from 'mediabunny';
+import { mixInto, type SfxTrack } from '../app/sfx';
 import { FPS, frameTime, retryInSoftware, type Clip } from '../video/clip';
 import { checkFlashes, downsampleFrame, FlashCheckError, flashSummary, guardRed, type CheckFrame, type FlashReport } from './flash';
 import { FREEZE_EXTRA, FREEZE_HOLD, POSTER_COUNT } from '../impact/clock';
@@ -31,6 +32,7 @@ export interface ExportPlan {
   I: number | null; // the contact frame; null without a slam
   flash: 'safe' | 'full'; // the Reduce flashing toggle ('safe'), slam or not: the slam's frames.flash when there is one
   draw(ctx: CanvasRenderingContext2D, image: CanvasImageSource, o: number, step: number): void;
+  sfx?: SfxTrack | null; // the generated sound effects, rendered; mixed into the clip's own sound when it has one
 }
 
 export interface ExportResult {
@@ -153,6 +155,28 @@ export function spliceAudio(sample: { timestamp: number; numberOfFrames: number;
   return out;
 }
 
+// The sample with the effects mixed in; the sample itself if that can't be done.
+function withSfx(sample: AudioSample, track: SfxTrack, t: number): AudioSample {
+  try {
+    const n = sample.numberOfFrames;
+    const planes: Float32Array[] = [];
+    for (let c = 0; c < sample.numberOfChannels; c++) {
+      const plane = new Float32Array(n);
+      sample.copyTo(plane, { planeIndex: c, format: 'f32-planar' });
+      planes.push(plane);
+    }
+    if (mixInto(planes, sample.sampleRate, t, track) === 0) return sample;
+    const data = new Float32Array(n * planes.length);
+    planes.forEach((p, c) => data.set(p, c * n));
+    const mixed = new AudioSample({ data, format: 'f32-planar', numberOfChannels: planes.length, sampleRate: sample.sampleRate, timestamp: sample.timestamp });
+    sample.close();
+    return mixed;
+  } catch (err) {
+    console.warn("Couldn't mix the sound effects into this stretch of audio.", err);
+    return sample;
+  }
+}
+
 // ---- Encoding ----------------------------------------------------------------------------------
 
 function canvasOf(width: number, height: number) {
@@ -221,21 +245,29 @@ async function encode(clip: Clip, plan: ExportPlan, step: number, collect: boole
         processedWidth: width,
         processedHeight: height,
       },
-      audio: silence
-        ? {
-            process: (sample) =>
-              spliceAudio(sample, silence, firstTimestamp ?? 0, inserted).map((seg) => {
-                if (seg.kind === 'silence') {
-                  inserted = true;
-                  const data = new Float32Array(seg.frames * sample.numberOfChannels);
-                  return new AudioSample({ data, format: 'f32-planar', numberOfChannels: sample.numberOfChannels, sampleRate: sample.sampleRate, timestamp: seg.timestamp });
-                }
-                const piece = seg.from === 0 && seg.to === sample.numberOfFrames ? sample.clone() : sample.trim(seg.from, seg.to);
-                piece.setTimestamp(seg.timestamp);
-                return piece;
-              }),
-          }
-        : undefined,
+      audio:
+        silence || plan.sfx
+          ? {
+              process: (sample) => {
+                const segs: AudioSegment[] = silence
+                  ? spliceAudio(sample, silence, firstTimestamp ?? 0, inserted)
+                  : [{ kind: 'audio', from: 0, to: sample.numberOfFrames, timestamp: sample.timestamp }];
+                return segs.map((seg) => {
+                  let out: AudioSample;
+                  if (seg.kind === 'silence') {
+                    inserted = true;
+                    const data = new Float32Array(seg.frames * sample.numberOfChannels);
+                    out = new AudioSample({ data, format: 'f32-planar', numberOfChannels: sample.numberOfChannels, sampleRate: sample.sampleRate, timestamp: seg.timestamp });
+                  } else {
+                    const piece = seg.from === 0 && seg.to === sample.numberOfFrames ? sample.clone() : sample.trim(seg.from, seg.to);
+                    piece.setTimestamp(seg.timestamp);
+                    out = piece;
+                  }
+                  return plan.sfx ? withSfx(out, plan.sfx, seg.timestamp - (firstTimestamp ?? 0)) : out;
+                });
+              },
+            }
+          : undefined,
       showWarnings: false,
     });
     if (!conversion.utilizedTracks.some((t) => t.type === 'video')) {
