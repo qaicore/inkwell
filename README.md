@@ -2,11 +2,17 @@
 
 Draw on one frame of a clip, and the drawing lives in the footage.
 
-Built for the Meta Global AI Developer Hackathon (Oct 26 to Nov 4, 2026), Indie Developer track, theme "Build for Your World". The plan: Muse Wonder reads each stroke and decides what it attaches to, SAM 3.1 tracks those anchors along with your body and face, and Inkwell's own physics moves the strokes.
+Built for the Meta Global AI Developer Hackathon (Oct 26 to Nov 4, 2026), Indie Developer track, theme "Build for Your World". You draw the limbs on a start frame and the impact on an end frame. Muse Wonder reads each stroke and decides what it attaches to, SAM 3.1's masks track those anchors along with your body, and Inkwell's own code does the rest: the limbs become 3D rope limbs with electricity on them that coil back and slam down on the impact point, the impact frames hit, and the destruction follows (cracks, debris, fire and lightning).
 
-## Status (Oct 27)
+## Status
 
-Works now:
+The impact flow (`src/app/flow.ts`), two drawings and nothing else:
+
+1. **Draw limbs** opens on the first frame where the person is fully in view. Draw 1 to 6 strokes from the body; a root off the person snaps onto it.
+2. **Draw impact** opens on a suggested frame (where the scrubber is parked, the audio onset or the person's sharpest stop). Draw 2 to 8 strokes where it lands; Done snaps the contact.
+3. The preview replays from 20 frames before the contact. **More** moves the contact a frame, sets the aftermath to 1.5 to 3 s, and overrides the turn if he turns around. **Reduce flashing** swaps the full impact frames for a gentler version, and the export checks its frames against the WCAG flash limits.
+
+Also works:
 
 - Open a clip with the file picker, drag and drop, or `?clip=<url>`. The browser converts it to H.264 at a constant 30 fps, keeps the first 15 s and scales it to 1920 px on the long side. Frame N in the app is frame N in that file, which is the file SAM will get.
 - Pause on any frame and draw with one ink brush: pen pressure, three colors, a size slider, undo and clear.
@@ -21,12 +27,10 @@ Works now:
   - **Follow: body mask, like SAM** uses only the person mask: its centre, lean and size. That's what SAM's "person" prompt will give. Everything after the mask (`src/track/tracking.ts`, `src/render/compose.ts`) is what SAM's masks will feed.
   - **Show tracking** tints the mask and rings each stroke's root.
 
-Not built yet: SAM 3.1 itself, stroke planning (Muse Wonder), and the turn (views drawn from the side and back).
-
-Built for the API, not run yet (the key hasn't arrived):
+The app reads SAM 3.1's masks from cached answers (`src/sam/`) and asks Muse Wonder for a stroke plan, falling back to a nearest-mask rule when its answer fails the check (`src/plan/`). Live calls are paid and go through the proxy:
 
 - `npm run probe` runs SAM 3.1 (`person`, `face`, one point on the back) and Muse Wonder's facing labels on `fixtures/probe/clip.mp4`, and writes `fixtures/probe/report.md` and `strip.png`. It costs money: it prints the cost and waits for a typed `yes`. For a 10 s clip that's at most $0.44, likely about $0.25.
-- `functions/` is the Cloudflare Pages Function the app will call: it holds the key, needs the passcode for uploads, and refuses calls past `DAILY_SPEND_CAP_USD` for the day.
+- `functions/` is the Cloudflare Pages Function the app calls: it holds the key, needs the passcode for uploads, and refuses calls past `DAILY_SPEND_CAP_USD` for the day.
 
 ## Run it
 
@@ -94,9 +98,11 @@ node scripts/scan-secrets.mjs
 
 ## Built Oct 26 – Nov 4
 
-- **Meta models:** SAM 3.1 and Muse Wonder. Neither is in the app yet; `npm run probe` is the first call to both.
-- **Open-source libraries** (from `package.json`):
+- **Meta's models** (called through Meta's API; none of their code is in the repo):
+  - SAM 3.1 gives the person (and face) masks the strokes and the cutout follow. The app reads them from cached answers, and `npm run probe` makes the paid call.
+  - Muse Wonder plans each drawing: for every stroke, what it attaches to. If its answer fails the check, the nearest-mask rule is used.
+- **Open-source libraries** (all of `package.json`):
   - [perfect-freehand](https://github.com/steveruizok/perfect-freehand) (MIT) turns points into the stroke outline.
   - [Mediabunny](https://mediabunny.dev) (MPL-2.0) decodes and encodes the video.
-  - Dev only, not shipped: [MediaPipe Tasks Vision](https://ai.google.dev/edge/mediapipe/solutions/vision/pose_landmarker) (Apache-2.0), the pose model standing in for SAM 3.1 while SAM isn't connected; [@meta-sam/parser](https://www.npmjs.com/package/@meta-sam/parser) (SAM License) reads SAM 3.1's streamed masks in the probe; the [OpenAI SDK](https://github.com/openai/openai-node) (`openai`, Apache-2.0), pointed at Meta's API, makes the probe's calls; [@vitejs/plugin-basic-ssl](https://github.com/vitejs/vite-plugin-basic-ssl) (MIT) for phone mode; [@napi-rs/canvas](https://github.com/Brooooooklyn/canvas) (MIT), the Node canvas that renders the engine's frames and contact sheets in tests and `npm run verify`; [Vite](https://vite.dev) (MIT); [Vitest](https://vitest.dev) (MIT) runs the tests; [TypeScript](https://www.typescriptlang.org) (Apache-2.0); @types/node (MIT).
-- **Code:** written with Claude Code under Qai's direction, from Oct 27.
+  - Dev only, not shipped: [MediaPipe Tasks Vision](https://ai.google.dev/edge/mediapipe/solutions/vision/pose_landmarker) (Apache-2.0), the pose model that gives the impact its body landmarks in dev, and the tracking on a clip with no cached SAM 3.1 person masks (the app reads cached masks first); [@meta-sam/parser](https://www.npmjs.com/package/@meta-sam/parser) (SAM License) reads SAM 3.1's streamed masks in the probe; the [OpenAI SDK](https://github.com/openai/openai-node) (`openai`, Apache-2.0), pointed at Meta's API, makes the probe's calls; [@vitejs/plugin-basic-ssl](https://github.com/vitejs/vite-plugin-basic-ssl) (MIT) for phone mode; [@napi-rs/canvas](https://github.com/Brooooooklyn/canvas) (MIT), the Node canvas that renders the engine's frames and contact sheets in tests and `npm run verify`; [Vite](https://vite.dev) (MIT); [Vitest](https://vitest.dev) (MIT) runs the tests; [TypeScript](https://www.typescriptlang.org) (Apache-2.0); @types/node (MIT).
+- **Code written with Claude Code under Qai's direction, from Oct 27:** everything else in the repo, including the brush, the physics, the 3D rope limbs and the strike, the electricity, the impact frames, the destruction, the tracking glue, the export and the tests.
