@@ -24,22 +24,13 @@ Also works:
   - The stand-in is MediaPipe's pose model, run in the browser. It only loads in dev (`npm run dev`) and is left out of production builds.
   - It needs WebGL 2. When the browser won't give the page WebGL 2, or the model hands back empty masks there, the dev server runs the same model in Python instead. Set that up once with `npm run standin:setup`, which makes `.venv/` and installs MediaPipe. It also needs ffmpeg on your PATH.
   - **Follow: body points** follows the head, shoulder and hip landmarks nearest each root.
-  - **Follow: body mask, like SAM** uses only the person mask: its centre, lean and size. That's what SAM's "person" prompt will give. Everything after the mask (`src/track/tracking.ts`, `src/render/compose.ts`) is what SAM's masks will feed.
+  - **Follow: body mask, like SAM** uses only the person mask: its centre, lean and size. It is the same kind of mask SAM 3.1's "person" prompt gives, and everything after the mask (`src/track/tracking.ts`, `src/render/compose.ts`) works from it.
   - **Show tracking** tints the mask and rings each stroke's root.
 
-The app reads SAM 3.1's masks from cached answers (`src/sam/`). A Muse Wonder stroke plan is built too (`src/plan/`, behind the **Plan** button), falling back to a nearest-mask rule when its answer fails the check, but the two-drawing flow doesn't use it. Live calls are paid:
+The app reads SAM 3.1's masks from cached answers (`src/sam/`). The two-drawing flow reads only saved masks. `src/plan/` holds a nearest-mask rule that assigns each stroke to a body part, behind the **Plan** button under More, and the two-drawing flow doesn't use it. Live calls are paid:
 
 - `npm run probe` runs SAM 3.1 (`person`, `face`, one point on the back) and Muse Wonder's facing labels on `fixtures/probe/clip.mp4`, and writes `fixtures/probe/report.md` and `strip.png`. It costs money: it prints the cost and waits for a typed `yes`. For a 10 s clip that's at most $0.44, likely about $0.25.
-- `functions/` is the Cloudflare Pages Function for a deployed version: it holds the key, needs the passcode for uploads, and refuses calls past `DAILY_SPEND_CAP_USD` for the day.
-
-### Not built
-
-`docs/SPEC.md` is the original plan and promises more than this. Not built or not proven yet:
-
-- A gallery of effects, and wearing someone else's effect on your own clip.
-- A deployed link. The production build has no pose model and no masks, so the effect runs in dev only.
-- Wonder reading the turn. The turn comes from the pose model, or from the hand keys under More.
-- Timing on an iPhone. The speed numbers so far are from a PC.
+- `functions/` is a proxy for Meta's API written as a Cloudflare Pages Function. The app doesn't use it and it has not been deployed.
 
 The clip SAM's cached masks belong to, `fixtures/probe/clip.mp4`, is gitignored, so a fresh clone has the masks but not the clip.
 
@@ -91,7 +82,7 @@ This serves the app over HTTPS on your Wi-Fi at port 5175; Vite prints the addre
 - `src/app/label.ts` and `label/index.html` are the `/label` page; `src/app/truth.ts` builds, checks and writes `truth.json`, and `src/app/take.ts` tells whether a saved `clip.mp4` is the take being labeled. `tools/fixtures-server.ts` saves them into `fixtures/` (dev only), and `tools/clips.ts` reads `fixtures/clips.json` with the same consent rule as R2.
 - `src/types/effect.ts` is the effect JSON (SPEC §7).
 - `vite.config.ts` runs the dev server and saves exports to `renders/`.
-- `functions/` is the Pages Function: `_lib/proxy.ts` is its logic (passcode, spend cap), `_lib/spend.ts` keeps the day's spend in a D1 database bound as `SPEND_DB`, `_lib/pricing.ts` has the Meta API prices, and `api/[[path]].ts` wires them to the real API.
+- `functions/` is the unused, undeployed proxy: `_lib/proxy.ts` is its logic, `_lib/spend.ts` keeps the day's spend in a D1 database bound as `SPEND_DB`, `_lib/pricing.ts` has the Meta API prices, and `api/[[path]].ts` wires them to the real API.
 - `scripts/live/` holds the only scripts that make paid calls: `probe.mjs`, and `meta.mjs`, which every paid call goes through (key, spend caps, the typed `yes`). `scripts/probe/` is the probe's free part: decoding masks, the numbers, the report and the strip.
 - `scripts/verify.mjs`, `scripts/golden-accept.mjs`, `scripts/scan-secrets.mjs` and `scripts/tree-hash.mjs` are the checking pipeline (below); from M1 on, `scripts/sheets.ts` draws the contact sheets for it. `scripts/lib/` holds what they share with the paid scripts: reading `.env` and the spend budget.
 
