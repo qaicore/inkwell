@@ -19,7 +19,7 @@ Also works:
 - Strokes move with physics (SPEC §8). Each one is a chain that lags behind the body, overshoots and settles. **Stiff** sets it for the next strokes: 0 hangs like a rope, 1 keeps the drawn shape. **Rigid** strokes follow the body exactly, like horns or a halo.
 - Play it back at 30 fps. The strokes are held for 2 or 3 frames at a time, 12 drawings a second, like hand-drawn animation, with a line boil (**Wobble**) that redraws each one slightly differently. In dev, the app reads the drawings per second and the boil from `reference/timing.json`; until that exists, it uses the example file's numbers and says so in the header.
 - **Save strokes** downloads your strokes exactly as drawn, as `raw-strokes.json`, for `reference/` (A6 checks the stored points against them).
-- **Sound** (on by default) adds a whoosh, a slam, electric crackle and a rumble, timed to the strike. They're generated in code with Web Audio, with no audio files.
+- **Sound** (under More, on by default) adds a whoosh, a slam, electric crackle and a rumble, timed to the strike. They're generated in code with Web Audio, with no audio files.
 - **Prop** (under More): strokes drawn on the limbs' frame become one rigid shape that rides on the tip of the nearest limb, into the slam and into the export.
 - Export an MP4 (H.264, constant 30 fps, the original audio plus the sound effects when the browser can encode them). In dev, each export is also saved to `renders/`.
 - Tracking, from SAM 3.1's cached masks, or a stand-in on a clip that has none. Each stroke's root (its first point) rides the body on every frame, and the stroke turns and scales with it. Strokes set to Behind are tucked behind the person, using a person mask.

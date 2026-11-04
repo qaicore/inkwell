@@ -233,7 +233,7 @@ export class Sfx {
 }
 
 export const sfx = new Sfx();
-if (import.meta.env.DEV) (window as unknown as { __sfx: Sfx }).__sfx = sfx; // dev only: the browser check reads the beat log
+if (import.meta.env.DEV && typeof window !== 'undefined') (window as unknown as { __sfx: Sfx }).__sfx = sfx; // dev only: the browser check reads the beat log
 
 // ---- The export -------------------------------------------------------------
 
