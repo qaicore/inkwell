@@ -419,7 +419,10 @@ function pause() {
 // past 100 ms). Nor does the first paint of a rebuilt scene draw its limbs,
 // masses and posters here: it asks the render-ahead's worker for them and
 // holds the last frame on screen (or draws the plain frame, if the canvas
-// shows another) until they come (R5, S2).
+// shows another) until they come (R5, S2). That's only for a parked frame:
+// playing has moved on before the worker answers, so holding there would drop
+// the effect from the clip. Playing draws what's missing here, and runs late
+// rather than plain.
 let shownImpact: number | null = null; // the output frame the canvas holds from the impact scene; null = the plain frame, or nothing
 let holdTimer = 0;
 function paint() {
@@ -428,11 +431,11 @@ function paint() {
     requestPaint();
     return;
   }
-  ctx.imageSmoothingQuality = 'high';
+  ctx.imageSmoothingQuality = playing ? 'low' : 'high'; // drawImage at 'high' is most of a played frame
   const impact = previewScene();
   let drawn = false;
   let held = false;
-  if (impact && renderAhead && !renderAhead.ready(frame)) {
+  if (impact && renderAhead && !playing && !renderAhead.ready(frame)) {
     // Its drawings are on their way: keep the frame the canvas holds if it's
     // this one, else the plain frame. The worker's arrival paints again.
     held = shownImpact === frame;

@@ -118,7 +118,9 @@ const EDGE_CROP = 1.2; // the crop traced for it, × that reach
 const SIGMA_REACH = 15; // frames either side of I to find his mask for σ
 const STANDING = 0.7; // × H: his height when there's no mask to read
 const TORSO_SHARE = 0.25; // × the clip's height: the torso without units (app/engine.ts's)
-const STORE_SIZE = 64; // parts kept, least recently used dropped
+// Parts kept, least recently used dropped. A desktop page keeps the whole clip's,
+// so the second time through plays from them; a phone hasn't the memory.
+const STORE_SIZE = typeof document !== 'undefined' && !/iPhone|iPad|Android/.test(navigator.userAgent) ? 640 : 64;
 const GLOW_SETS = 6; // limb drawings whose glow is kept blurred
 const AHEAD = 3; // frames jobs looks ahead
 const LIMB_PAD = 0.15; // × S round the limbs: their layers' box, before 2·r_max
