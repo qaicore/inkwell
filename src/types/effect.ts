@@ -106,8 +106,11 @@ export interface Turn {
   keys?: [number, number][]; // [seconds, degrees], nudged by hand, in time order; they win over the tap's
 }
 
+import type { TipProp } from '../impact/tipProp.ts';
+
 export interface Effect {
   version: 1;
+  props?: TipProp[]; // things drawn on a limb's tip (impact/tipProp.ts); missing = none
   brush: BrushSettings; // the ink brush
   brushes?: Partial<Record<Exclude<BrushId, 'ink'>, BrushSettings>>; // missing = the §8.8 defaults
   palette: [string, string, string];

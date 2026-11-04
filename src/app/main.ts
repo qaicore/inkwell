@@ -70,6 +70,7 @@ import { planStrokes, type PlanInput, type PlanRequest, type PlanResult, type Pl
 import { proxyTransport } from '../plan/request';
 import { drawPlanMarks, PLAN_IMAGE_LONG_SIDE, strokeColor } from '../plan/numbered';
 import type { Tier } from '../impact/contracts';
+import { addPropStroke, livePropsOf, newPropState, undoPropStroke } from '../impact/tipProp';
 import type { Masks } from '../impact/detect';
 import { estimateFloor, type FloorEstimate } from '../impact/floor-estimate';
 import { LADDER } from '../impact/ladder';
@@ -132,6 +133,7 @@ const auraToggle = $<HTMLInputElement>('flame-aura');
 const stiffnessSlider = $<HTMLInputElement>('stiffness');
 const stiffnessValue = $<HTMLOutputElement>('stiffness-value');
 const rigidToggle = $<HTMLInputElement>('rigid');
+const propToggle = $<HTMLInputElement>('prop');
 const brushSelect = $<HTMLSelectElement>('brush');
 const planButton = $<HTMLButtonElement>('plan');
 const planPanel = $<HTMLElement>('plan-panel');
@@ -150,6 +152,7 @@ let frames: CanvasSink | null = null; // for seeking; playback makes its own
 let frame = 0; // the frame on screen
 let targetFrame = 0; // the frame asked for last; the arrow keys step from it
 let strokes: Stroke[] = [];
+let propState = newPropState(); // props drawn on limb tips (impact/tipProp.ts)
 let live: Stroke | null = null; // the stroke being drawn right now
 let livePointer = -1; // the finger or pen drawing it; any other touch is ignored
 let nextStrokeId = 1;
@@ -286,6 +289,7 @@ async function openClip(file: Blob, name: string) {
     frameBuffer.width = clip.width;
     frameBuffer.height = clip.height;
     strokes = [];
+    propState = newPropState();
     makeTracking = null;
     standInBodies = null;
     standInSkeleton = null;
@@ -907,7 +911,9 @@ function numberedFrame(request: PlanRequest): string {
 const currentEffect = (): Effect => {
   const { moments, turn } = flowMoments(flow);
   const effect = effectOf(strokes, { ...clipMotion(clip!), moments: withFloor(moments, slamFloor(clip!, moments)), turn }, undefined, overrides);
-  return auraColor === null ? effect : { ...effect, aura: { color: auraColor } };
+  const props = livePropsOf(propState.props, new Set(strokes.filter(isLimb).map((s) => s.id)));
+  const withProps = props ? { ...effect, props } : effect;
+  return auraColor === null ? withProps : { ...withProps, aura: { color: auraColor } };
 };
 
 // The slam's floor (impact/floor-estimate.ts): read once per P, contact and
@@ -1127,6 +1133,17 @@ function finishStroke(e: PointerEvent) {
   // resample along: drop it.
   const distinct = new Set(drawn.points.map(([x, y]) => `${x},${y}`)).size;
   if (distinct >= 2 && clip) {
+    const note = propToggle.checked ? addPropStroke(propState, { id: drawn.id, frame: drawn.frame, color: Number(drawn.color) as 0 | 1 | 2, size: drawn.size, points: drawn.points }, strokes.filter(isLimb)) : undefined;
+    if (note !== undefined) {
+      if (note) setFlow({ ...flow, message: note });
+      else {
+        dropPreview();
+        if (flow.message) setFlow({ ...flow, message: null });
+      }
+      updateButtons();
+      requestPaint();
+      return;
+    }
     const full = fullDrawing(drawn);
     if (full) setFlow({ ...flow, message: full });
     else {
@@ -1162,7 +1179,13 @@ function snapLimbRoot(c: Clip, stroke: Stroke) {
 // The last stroke goes; on the limbs or the impact sheet, the last one of
 // that drawing. Undoing a limb or an impact stroke undoes what its Done read.
 function undo() {
-  if (busy || strokes.length === 0) return;
+  if (busy) return;
+  if (undoPropStroke(propState, strokes[strokes.length - 1]?.id ?? -1)) {
+    dropPreview();
+    requestPaint();
+    return;
+  }
+  if (strokes.length === 0) return;
   const of = flow.step === 'limbs' ? isLimb : flow.step === 'impact' ? isCrack : () => true;
   let i = strokes.length - 1;
   while (i >= 0 && !of(strokes[i])) i--;
@@ -1526,8 +1549,10 @@ undoButton.addEventListener('click', undo);
 planButton.addEventListener('click', planDrawing);
 saveEffectButton.addEventListener('click', saveEffect);
 saveDrawingsButton.addEventListener('click', saveDrawings);
+propToggle.addEventListener('change', () => (propState.open = null)); // a new prop each time it's turned on
 clearButton.addEventListener('click', () => {
   strokes = [];
+  propState = newPropState();
   forgetPlan();
   invalidate();
   limbPoses = null;
