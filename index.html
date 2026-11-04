@@ -5,392 +5,58 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Inkwell</title>
     <style>
-      :root {
-        color-scheme: dark;
-        --bg: #121214;
-        --panel: #1b1b1f;
-        --line: #2d2d34;
-        --text: #ececf1;
-        --muted: #9a9aa6;
-        --accent: #e8203a;
-        --warn: #e0b45a;
-        --touch: 44px; /* the least a finger can hit */
-      }
-      * {
-        box-sizing: border-box;
-      }
-      [hidden] {
-        display: none !important;
-      }
-      html,
-      body {
-        margin: 0;
-        height: 100%;
-      }
-      body {
-        display: grid;
-        grid-template-rows: auto 1fr auto;
-        height: 100dvh; /* the part a phone's toolbars leave visible */
-        background: var(--bg);
-        color: var(--text);
-        font: 13px/1.4 system-ui, sans-serif;
-        -webkit-user-select: none;
-        user-select: none;
-      }
-      header,
-      footer {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        gap: 8px 14px;
-        padding: 8px max(12px, env(safe-area-inset-right)) 8px max(12px, env(safe-area-inset-left));
-        background: var(--panel);
-        border: 0 solid var(--line);
-      }
-      header {
-        border-bottom-width: 1px;
-        padding-top: max(8px, env(safe-area-inset-top)); /* clear of an iPhone's notch */
-      }
-      footer {
-        border-top-width: 1px;
-        padding-bottom: max(8px, env(safe-area-inset-bottom)); /* and of its home bar */
-      }
-      /* The bottom sheet: one row a part, the step bars in place of the main row. */
-      #sheet {
-        flex-direction: column;
-        align-items: stretch;
-        gap: 8px;
-      }
-      .row {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        gap: 8px 10px;
-      }
-      .prompt {
-        flex: 1 1 100%;
-        font-size: 14px;
-      }
-      button,
-      input,
-      select,
-      .button {
-        touch-action: manipulation; /* no double-tap zoom on controls */
-      }
-      .brand {
-        font-weight: 700;
-        letter-spacing: 0.02em;
-      }
-      .spacer {
-        flex: 1;
-      }
-      #clip-info,
-      #status,
-      output,
-      .note,
-      .label {
-        color: var(--muted);
-        font-variant-numeric: tabular-nums;
-      }
-      #timing-note {
-        color: var(--warn);
-      }
-      button,
-      .button,
-      select {
-        font: inherit;
-        color: var(--text);
-        text-decoration: none;
-        background: #2a2a31;
-        border: 1px solid #3a3a43;
-        border-radius: 6px;
-        padding: 5px 10px;
-        cursor: pointer;
-      }
-      select {
-        padding: 4px 6px;
-      }
-      button:disabled,
-      .button:has(input:disabled) {
-        opacity: 0.45;
-        cursor: default;
-      }
-      /* The sheet's own controls: a finger's worth every way. */
-      .big {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        gap: 8px;
-        min-width: var(--touch);
-        min-height: var(--touch);
-        padding: 8px 14px;
-        font-size: 15px;
-      }
-      .primary {
-        background: var(--accent);
-        border-color: var(--accent);
-        font-weight: 600;
-      }
-      .toggle {
-        cursor: pointer;
-      }
-      .toggle input {
-        width: 20px;
-        height: 20px;
-        margin: 0;
-      }
-      #sheet-message {
-        margin: 0;
-        padding: 8px 10px;
-        border: 1px solid var(--accent);
-        border-radius: 6px;
-        font-size: 14px;
-      }
-      #stage {
-        position: relative;
-        display: grid;
-        place-items: center;
-        min-height: 0;
-        overflow: hidden;
-        padding: 12px;
-      }
-      #view {
-        touch-action: none;
-        cursor: crosshair;
-        background: #000;
-        box-shadow: 0 0 0 1px var(--line);
-      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; }
+      body { -webkit-user-select: none; user-select: none; }
+      .spacer { display: none; }
+      /* Layout the skin does not own; the look is all in skin.css. */
+      .prompt { flex: 1 1 100%; font-size: 14px; }
+      .group { display: flex; align-items: center; gap: 8px; }
+      #view { touch-action: none; cursor: crosshair; background: #000; }
       #drop {
-        position: absolute;
-        inset: 12px;
-        display: grid;
-        place-content: center;
-        gap: 4px;
-        text-align: center;
-        color: var(--muted);
-        border: 2px dashed var(--line);
-        border-radius: 12px;
+        position: absolute; inset: 12px; display: grid; place-content: center; gap: 4px;
+        text-align: center; color: var(--muted); padding: 16px;
+        background: var(--loop) center / 100% 100% no-repeat; opacity: .8;
       }
-      #drop.over {
-        border-color: var(--accent);
-        color: var(--text);
-      }
-      .stepper #scrub {
-        flex: 1;
-        min-width: 120px;
-        min-height: var(--touch);
-      }
-      .group {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-      }
-      .swatch {
-        appearance: none;
-        width: 22px;
-        height: 22px;
-        margin: 0;
-        border-radius: 50%;
-        background: var(--color);
-        box-shadow: inset 0 0 0 1px #ffffff40;
-        cursor: pointer;
-      }
-      .swatch:checked {
-        outline: 2px solid var(--text);
-        outline-offset: 2px;
-      }
-      #more-panel {
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-        max-height: 40dvh;
-        overflow-y: auto;
-        overscroll-behavior: contain;
-        padding-top: 8px;
-        border-top: 1px solid var(--line);
-      }
-      #turn-keys {
-        flex-basis: 100%;
-      }
-      /* The snap's toast, over the top of the stage. */
-      #toast {
-        position: fixed;
-        z-index: 4;
-        left: 50%;
-        top: calc(max(8px, env(safe-area-inset-top)) + 64px);
-        transform: translateX(-50%);
-        max-width: calc(100vw - 32px);
-        padding: 10px 16px;
-        border-radius: 22px;
-        background: #000000d0;
-        border: 1px solid var(--line);
-        font-size: 14px;
-        pointer-events: none;
-      }
-      /* The export sheet: under the header, inside the safe area. */
+      #drop.over { color: var(--text); opacity: 1; }
+      #turn-keys { flex-basis: 100%; }
       #export-sheet {
-        position: fixed;
-        z-index: 3;
-        top: calc(max(8px, env(safe-area-inset-top)) + 48px);
-        right: max(12px, env(safe-area-inset-right));
-        width: min(360px, calc(100vw - 24px));
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-        padding: 12px;
-        background: var(--panel);
-        border: 1px solid var(--line);
-        border-radius: 10px;
+        position: fixed; z-index: 3; top: var(--export-top, 120px);
+        right: max(12px, env(safe-area-inset-right)); width: min(360px, calc(100vw - 24px));
+        display: flex; flex-direction: column; gap: 8px; padding: 22px 14px 14px;
+        background: var(--rule) center top / 100% 12px no-repeat, var(--panel);
       }
-      #export-sheet p {
-        margin: 0;
-      }
-      .warning {
-        padding: 8px 10px;
-        color: var(--warn);
-        border: 1px solid var(--warn);
-        border-radius: 6px;
-      }
-      /* The plan: out of the grid, over the stage. A sheet from the bottom on a
-         phone (below), a column on the right otherwise. */
+      #export-sheet p { margin: 0; }
       #plan-panel {
-        position: fixed;
-        z-index: 2;
-        right: 0;
-        top: 56px;
-        bottom: 56px;
-        width: min(320px, 100vw);
-        overflow-y: auto;
-        overscroll-behavior: contain;
-        padding: 10px 12px;
-        background: var(--panel);
-        border-left: 1px solid var(--line);
-        -webkit-user-select: text;
-        user-select: text;
+        position: fixed; z-index: 2; right: 0; top: var(--export-top, 120px); bottom: 0;
+        width: min(320px, 100vw); overflow-y: auto; overscroll-behavior: contain;
+        padding: 22px 12px 10px; background: var(--rule) center top / 100% 12px no-repeat, var(--panel);
+        -webkit-user-select: text; user-select: text;
       }
-      #plan-panel[hidden] {
-        display: none;
-      }
-      .plan-head {
-        margin: 0 0 8px;
-        font-weight: 600;
-      }
-      .plan-note {
-        margin: 0 0 8px;
-        padding: 6px 8px;
-        border: 1px solid var(--accent);
-        border-radius: 6px;
-      }
-      .plan-row {
-        padding: 8px 0;
-        border-top: 1px solid var(--line);
-      }
-      .plan-row h3 {
-        margin: 0 0 6px;
-        font-size: 13px;
-      }
+      .plan-head { margin: 0 0 8px; font-weight: 700; }
+      .plan-row h3 { margin: 0 0 6px; font-size: 13px; }
       .plan-row h3::before {
-        content: '';
-        display: inline-block;
-        width: 10px;
-        height: 10px;
-        margin-right: 6px;
-        border-radius: 50%;
-        background: var(--stroke);
+        content: ''; display: inline-block; width: 10px; height: 10px; margin-right: 6px;
+        border-radius: 50%; background: var(--stroke);
       }
-      .plan-field {
-        display: grid;
-        grid-template-columns: 64px 1fr 28px;
-        align-items: center;
-        gap: 6px;
-        min-height: 36px; /* a finger's worth */
-      }
-      .plan-field span {
-        color: var(--muted);
-      }
-      .plan-dot {
-        grid-column: 3;
-        padding: 0;
-        min-width: 28px;
-        min-height: 28px;
-        color: var(--accent);
-        background: none;
-        border: 0;
-        font-size: 20px;
-      }
-      .plan-reason {
-        margin: 6px 0 0;
-        color: var(--muted);
-      }
-      /* Fingers: every control a finger's worth. */
-      @media (pointer: coarse) {
-        button,
-        .button,
-        select,
-        .tools label.group {
-          min-height: var(--touch);
-        }
-        button {
-          min-width: var(--touch);
-        }
-        .swatch {
-          width: var(--touch);
-          height: var(--touch);
-        }
-      }
-      /* Phones: tighter rows, so the video gets the room. */
+      .plan-field { display: grid; grid-template-columns: 64px 1fr 44px; align-items: center; gap: 6px; min-height: 44px; }
+      .plan-dot { grid-column: 3; padding: 0; background: none; color: var(--accent); font-size: 20px; }
       @media (max-width: 600px) {
-        #plan-panel {
-          top: auto;
-          left: 0;
-          width: auto;
-          max-height: 45dvh;
-          border-left: 0;
-          border-top: 1px solid var(--line);
-          padding-bottom: max(10px, env(safe-area-inset-bottom));
-        }
-        body {
-          font-size: 12px;
-        }
-        header,
-        footer {
-          gap: 6px 10px;
-        }
-        button,
-        .button,
-        select {
-          padding: 5px 8px;
-        }
-        .big {
-          padding: 8px 12px;
-        }
-        #clip-info,
-        .spacer,
-        .size-word {
-          display: none;
-        }
-        #status,
-        #timing-note {
-          order: 1; /* its own line, under the buttons */
-          flex-basis: 100%;
-        }
-        #stage {
-          padding: 6px;
-        }
-        .stepper #scrub {
-          min-width: 0;
-        }
-        #size {
-          width: 64px;
-        }
+        :root { --export-top: 215px; }
+        #plan-panel { top: auto; left: 0; width: auto; max-height: 45dvh; padding-bottom: max(10px, env(safe-area-inset-bottom)); }
       }
     </style>
+    <link rel="stylesheet" href="/src/app/skin.css" />
   </head>
   <body>
-    <header>
-      <span class="brand">Inkwell</span>
+    <header class="topbar">
+      <div class="wordmark" role="img" aria-label="Inkwell"><svg class="squid" viewBox="52 12 166 238" aria-hidden="true"><g class="arms"><g class="arm arm1" style="transform-origin:112px 154px"><path d="M112.01 154 Q114.33 160.71 113.59 164.43 T111.7 171.25 109.05 177.11 105.04 183.5 99.85 190.36 94.52 196.49 89.43 201.98 84.48 206.81 79.28 211.51 74.41 216.36 70.26 221.73 67.97 228.12 69.87 233.76 75.28 235.66 80.24 232.7 78.97 227.05 76 224 76 224 78.27 224.74 83.09 227.55 85.18 233.1 82.86 239.31 77.93 243.23 71.46 244.15 64.96 242.09 60.02 237.46 57.46 230.97 57.49 223.61 60.03 216.57 64.08 210.1 68.39 204.68 73.18 199.64 77.97 194.51 82.34 189.38 86.92 183.63 91.26 177.62 95.28 171.1 98.94 164.99 103.01 159.46 108.68 155.28 Z" fill="#e8203a"/></g><g class="arm arm2" style="transform-origin:123px 156px"><path d="M123.01 156 Q127.4 161.84 127.81 165.73 T128.07 173.01 127.49 179.5 126.2 186.83 124.46 195.06 122.79 202.77 121.45 209.98 120.36 216.91 119.46 223.48 119.12 229.89 120.17 236.04 122.61 241.45 124 244 124 244 121.03 241.62 115.76 236.12 112.54 229.94 111.24 223.41 110.74 216.27 110.82 208.77 111.41 200.98 112.3 193.05 113.13 185.03 113.75 177.94 114.59 171.59 116.34 164.57 120.25 158.42 Z" fill="#e8203a"/></g><g class="arm arm3" style="transform-origin:134px 156px"><path d="M134.01 156 Q140.15 160.23 141.82 163.86 T144.45 170.82 145.96 177.28 147.15 184.63 148.37 192.97 149.29 201.11 149.7 208.91 149.48 216.22 148.58 222.94 146.47 229.74 142.74 236.05 137.38 240.28 131.71 239.88 128.08 235.99 127 234 127 234 130.19 235.97 135.02 235.33 137.41 229.44 138.32 222.64 138.4 216.05 137.98 209.75 136.94 202.88 135.38 195.32 133.57 187.28 131.92 180.17 130.74 173.79 130.24 166.43 132.1 159.22 Z" fill="#e8203a"/></g><g class="arm arm4" style="transform-origin:145px 154px"><path d="M145.01 153.99 Q151.91 155.66 154.64 158.23 T159.38 163.15 163.74 168.55 168.38 174.07 173.16 178.85 178.26 183.37 183.38 187.49 188.52 191.2 193.93 194.87 199.24 198.97 204.07 203.47 208.37 208.28 211.71 213.8 213.11 220.18 212.25 226.49 209.1 232.4 203.33 236.71 196.39 237.66 190.41 235.14 186.9 229.89 186.66 223.57 191.66 219.18 196 218 196 218 194.17 219.02 191.76 223.28 193.73 228.26 198.99 228.46 202.35 223.81 201.27 217.9 196.78 212.67 191.04 208.09 185.33 204.36 179.53 200.92 173.51 196.97 167.61 192.6 161.66 187.75 155.74 182.05 150.97 176.45 147.57 171.04 144.8 164.54 144.29 157.49 Z" fill="#e8203a"/></g></g><path d="M103.99 150 Q98.7 143.33 97.17 138.29 T94.78 128.66 93.51 119.65 93.02 111.01 93.09 102.62 93.61 94.33 94.43 86.21 95.77 76.64 97.91 65.99 100.63 56.29 103.71 47.57 106.94 39.6 110.44 31.6 115.07 23.54 122.82 17.5 133 17.52 141.18 24.11 146.07 32.86 149.54 40.94 152.69 48.9 155.67 57.72 158.26 67.58 160.27 78.47 161.56 88.2 162.32 96.35 162.66 104.58 162.38 112.97 161.31 121.72 159.35 130.51 156.74 138.61 153.67 146.19 152 150 152 150 150.87 144.02 149.23 133.88 148.34 125.44 147.46 115.38 146.22 103.99 144.44 92.85 142.15 82.22 139.55 72.83 136.62 64.63 133.35 57.09 129.87 49.7 126.58 41.56 129.45 36.09 131.86 38.5 128.06 45.88 124.54 53.34 121.25 60.63 118.15 68.4 115.4 77.14 112.96 87.19 110.9 98.16 109.52 109.32 108.94 118.92 108.74 127.44 108.17 137.13 105.87 146.17 Z" fill="#f4f1ea"/>
+  <path d="M112 66.01 Q107.38 67.78 104.44 66.8 T99.75 64.13 96.37 59.96 93.37 54.74 92 52 92 52 94.01 53.25 98.26 55.64 102.96 57.45 107.85 59.74 111.15 63.67 Z" fill="#f4f1ea"/>
+  <path d="M144 65.99 Q145.7 61.35 148.15 59.74 T153.04 57.45 157.74 55.64 161.99 53.25 164 52 164 52 162.63 54.74 159.63 59.96 156.25 64.13 151.56 66.8 146.31 66.89 Z" fill="#f4f1ea"/>
+  <path d="M116 129.3 L114.94 130 L114.13 132 L114.94 134 L116 134.7 L118 134.7 L119.06 134 L119.87 132 L119.06 130 L118 129.3 Z" fill="#f4f1ea"/>
+  <path d="M138 129.3 L136.94 130 L136.13 132 L136.94 134 L138 134.7 L140 134.7 L141.06 134 L141.87 132 L141.06 130 L140 129.3 Z" fill="#f4f1ea"/></svg><svg class="word" viewBox="21 14 358 141" aria-hidden="true"><path d="M34.01 24 Q40.33 32.72 41.49 38.88 T42.97 50.48 43.33 61.11 43.27 71.47 42.74 82.34 41.32 93.83 38.89 104.9 35.72 115.59 34 121 34 121 32.01 115.68 28.33 105.15 25.39 94.14 23.55 82.56 22.83 71.44 22.88 60.81 23.62 50.02 25.69 38.44 30.59 28.18 Z" fill="#f4f1ea"/><path d="M62.01 64 Q68.18 72.46 69.3 76.19 T70.89 83.53 71.03 90.72 69.94 97.74 68.1 104.4 64.53 114.3 62.01 121 62 121 59.47 114.3 55.9 104.4 54.06 97.74 52.97 90.72 53.11 83.53 54.7 76.19 58.91 68.23 Z" fill="#f4f1ea"/><path d="M61.99 88 Q60.29 82.31 60.54 78.72 T61.7 70.63 64.87 62.46 70.41 56.47 77.24 53.07 84.3 51.99 91.36 53.26 97.81 56.74 102.96 61.98 106.51 68.69 108.26 76.16 108.6 83.63 108.12 91.38 107.18 98.7 105.81 105.33 103.63 113.02 101.64 119.18 101 121 101 121 100.4 119.16 98.57 112.97 96.55 105.33 94.86 97.6 93.29 89.57 91.89 82.34 89.46 75.73 84.64 71.3 78.43 71.12 73.05 75.52 68.74 81.53 64.39 86.23 Z" fill="#f4f1ea"/><path d="M131.01 18 Q135.76 27 137.27 32.05 T139.53 42.75 140.37 54.46 140.37 66.78 139.9 79.18 138.72 91.09 136.64 101.89 133.19 113.97 131.01 121 131 121 128.81 113.97 125.36 101.89 123.28 91.09 122.1 79.18 121.63 66.78 121.63 54.46 122.47 42.75 124.73 32.05 128.62 22.5 Z" fill="#f4f1ea"/><path d="M166.01 62.01 Q165.64 70.9 163.54 74.38 T158.41 80.82 152.18 85.75 145.37 89.37 137.37 93.01 133 95 133 95 134.63 90.47 137.74 82.14 141.33 74.92 146.63 68.49 153.46 63.6 161.54 61.86 Z" fill="#f4f1ea"/><path d="M143.01 85.99 Q150.67 86.86 153.59 88.81 T159.15 93.54 163.36 99.72 166.11 107.13 168.65 116.07 170 121 170 121 165.55 118.49 157.5 113.83 150.98 109.27 146.05 103.58 142.92 96.97 142.4 89.82 Z" fill="#f4f1ea"/><path d="M186.01 62 Q191.96 66.79 194.07 70.63 T197.67 77.89 199.82 84.56 200.74 92.53 200.67 100.56 199.61 108.43 198.43 116 198 119 198 119 196.32 116.48 192.01 110.13 187.69 103.41 184.27 96 181.88 88.2 181.26 81.15 181.81 73.05 184.15 65.35 Z" fill="#f4f1ea"/><path d="M197.99 119 Q194.47 112.1 194.5 108.57 T195.58 101.44 198.64 94.93 203.23 89.27 208.9 83.26 212 80 212 80 212.22 84.48 212.63 92.71 212.53 99.91 210.8 106.8 207.21 113.01 201.53 117.39 Z" fill="#f4f1ea"/><path d="M212.01 80 Q218.76 82.91 220.9 85.48 T224.69 91.24 226.77 97.93 227.18 105.38 227.08 114.16 227 119 227 119 223.59 115.57 217.41 109.26 212.56 103.4 209.61 96.85 208.71 89.93 210.34 83.29 Z" fill="#f4f1ea"/><path d="M226.99 119 Q223.98 112.85 223.66 108.93 T223.32 101.58 224.34 93.6 226.62 85.95 229.64 79.67 233.34 73.46 238.14 66.22 241 62 241 62 241.73 67.05 242.87 75.67 243.45 82.93 243.29 90 241.72 97.99 238.76 105.6 234.87 111.87 229.84 117.07 Z" fill="#f4f1ea"/><path d="M263 91.99 Q271.32 87.41 277.09 86.73 T287.29 85.71 292.96 82.14 292.13 76.28 287.12 72.12 280.68 70.85 274.31 73.36 270.1 79.1 267.98 86.69 267.52 94.19 268.98 100.94 272.23 107.03 277.82 111.85 284.7 114.66 292.27 114.52 299.71 112.82 303 112 303 112 301.54 113.78 297.66 118.19 291.83 123.09 284.43 126.07 276.52 126.15 268.8 123.83 261.76 119.35 256.19 113.08 252.21 105.53 249.84 97.02 249.31 88.02 250.61 78.79 253.69 69.65 257.72 62.59 263.5 57.42 271.29 53.56 279.49 52.12 287.62 53.06 295.05 56.24 301.37 61.23 306.09 67.41 309.22 74.83 310.63 82.4 309.04 89.49 303.89 95.1 296.49 97.58 287.72 98.15 277.06 97.49 267.11 94.39 Z" fill="#f4f1ea"/><path d="M327.01 16 Q330.99 23.38 332.24 29.72 T333.86 42.35 334.45 54.66 334.89 65.87 335.21 75.81 335.29 85.01 335.05 93.45 334.41 100.82 333.39 107.64 333.3 114.37 334.91 119.31 336 121 336 121 331.41 119.41 324.13 114.66 320.11 108.39 317.97 101.54 316.83 93.61 316.53 84.91 316.73 75.67 317.2 65.69 317.91 54.37 318.96 42.02 321.14 29.46 324.83 19.59 Z" fill="#f4f1ea"/><path d="M357.01 16 Q360.99 23.38 362.24 29.72 T363.86 42.35 364.45 54.66 364.89 65.87 365.21 75.81 365.29 85.01 365.05 93.45 364.41 100.82 363.39 107.64 363.3 114.37 364.91 119.31 366 121 366 121 361.41 119.41 354.13 114.66 350.11 108.39 347.97 101.54 346.83 93.61 346.53 84.91 346.73 75.67 347.2 65.69 347.91 54.37 348.96 42.02 351.14 29.46 354.83 19.59 Z" fill="#f4f1ea"/><g class="drip" style="transform-origin:366px 121px"><path d="M366.01 121 Q369.18 123.24 370.31 125.84 T371.49 131.31 370.77 137.1 370 140 370 140 368.19 137.62 365.3 132.61 364.15 127.19 365.04 122.7 Z" fill="#e8203a"/><path d="M362 145 A8 9 0 1 0 378 145 A8 9 0 1 0 362 145 Z" fill="#e8203a"/></g></svg></div>
       <label class="button">Open clip<input id="file" type="file" accept="video/*" hidden /></label>
-      <span id="clip-info"></span>
+      <span id="clip-info" class="clip-info"></span>
       <button id="track" hidden disabled>Track (stand-in)</button>
       <div id="tracking-controls" class="group" hidden>
         <label class="group"
@@ -404,8 +70,8 @@
       </div>
       <span class="spacer"></span>
       <span id="timing-note"></span>
-      <span id="status"></span>
-      <button id="export" disabled aria-expanded="false" aria-controls="export-sheet">Export</button>
+      <span id="status" class="status"></span>
+      <button id="export" class="primary" disabled aria-expanded="false" aria-controls="export-sheet">Export</button>
     </header>
 
     <section id="export-sheet" hidden aria-label="Export">
@@ -420,18 +86,18 @@
     </section>
 
     <aside id="plan-panel" hidden aria-label="Plan"></aside>
-    <main id="stage">
+    <main id="stage" class="stage">
       <canvas id="view" hidden></canvas>
       <div id="drop">
         <strong>Drop a clip here, or use Open clip</strong>
         <span>It's converted to H.264 at 30 fps first (up to 15 s).</span>
       </div>
     </main>
-    <div id="toast" role="status" hidden></div>
+    <div id="toast" class="toast" role="status" hidden></div>
 
-    <footer id="sheet">
+    <footer id="sheet" class="sheet">
       <p id="sheet-message" role="status" hidden></p>
-      <div id="sheet-main" class="row">
+      <div id="sheet-main" class="row actions">
         <button id="draw-limbs" class="big primary" disabled>Draw limbs</button>
         <button id="draw-impact" class="big" disabled>Draw impact</button>
         <button id="more" class="big" aria-expanded="false" aria-controls="more-panel">More</button>
@@ -451,19 +117,19 @@
       </div>
       <div class="row stepper">
         <button id="play" class="big" disabled>Play</button>
-        <button id="prev-frame" class="big" aria-label="Previous frame" disabled>◀</button>
-        <input id="scrub" type="range" min="0" max="0" value="0" aria-label="Frame" disabled />
-        <button id="next-frame" class="big" aria-label="Next frame" disabled>▶</button>
-        <output id="frame-label">frame –</output>
+        <button id="prev-frame" class="big icon" aria-label="Previous frame" disabled>◀</button>
+        <span class="scrubber"><input id="scrub" type="range" min="0" max="0" value="0" aria-label="Frame" disabled /></span>
+        <button id="next-frame" class="big icon" aria-label="Next frame" disabled>▶</button>
+        <output id="frame-label" class="frame-readout">frame –</output>
         <label class="big toggle" title="Generated sound effects"><input id="sound" type="checkbox" checked />Sound</label>
       </div>
 
-      <div id="more-panel" hidden>
+      <div id="more-panel" class="panel" hidden>
         <div class="row">
           <span class="label">Contact</span>
-          <button id="contact-earlier" class="big" aria-label="Contact a frame earlier" disabled>◀</button>
+          <button id="contact-earlier" class="big icon" aria-label="Contact a frame earlier" disabled>◀</button>
           <output id="contact-label">not set</output>
-          <button id="contact-later" class="big" aria-label="Contact a frame later" disabled>▶</button>
+          <button id="contact-later" class="big icon" aria-label="Contact a frame later" disabled>▶</button>
           <label class="group" title="How long the destruction lasts after the contact"
             ><span class="label">Aftermath</span> <input id="aftermath" type="range" min="15" max="30" step="1" value="15" /><output id="aftermath-value"
               >1.5 s</output
@@ -481,9 +147,9 @@
         </div>
         <div class="row tools">
           <div class="group" role="radiogroup" aria-label="Ink color">
-            <input class="swatch" type="radio" name="color" value="#e8203a" style="--color: #e8203a" aria-label="Red" checked />
-            <input class="swatch" type="radio" name="color" value="#f4f1ea" style="--color: #f4f1ea" aria-label="White" />
-            <input class="swatch" type="radio" name="color" value="#16141a" style="--color: #16141a" aria-label="Black" />
+            <input class="swatch red" type="radio" name="color" value="#e8203a" style="--color: #e8203a" aria-label="Red" checked />
+            <input class="swatch paper" type="radio" name="color" value="#f4f1ea" style="--color: #f4f1ea" aria-label="White" />
+            <input class="swatch ink" type="radio" name="color" value="#16141a" style="--color: #16141a" aria-label="Black" />
           </div>
           <div class="group" role="radiogroup" aria-label="Layer for new strokes">
             <span class="layer-word">New strokes:</span>
@@ -519,9 +185,9 @@
           <label class="group" title="A flame around the person, in the ink selected when you turn it on"><input id="flame-aura" type="checkbox" />Flame aura</label>
           <button id="undo" disabled>Undo</button>
           <button id="clear" disabled>Clear</button>
-          <button id="plan" disabled title="Wonder reads the strokes on this frame: what each attaches to and how it moves">Plan</button>
+          <button id="plan" disabled title="Nearest-mask rule: which body part each stroke on this frame attaches to">Plan</button>
           <button id="save-effect" disabled title="The effect JSON, with your changes to the plan">Save effect</button>
-          <button id="save-drawings" disabled title="Your strokes by frame, for recording Wonder's plan (npm run plan:record)">Save drawings</button>
+          <button id="save-drawings" disabled title="Your strokes by frame, as a file">Save drawings</button>
           <button id="raw-strokes" disabled title="Your strokes exactly as drawn, for reference/raw-strokes.json">Save strokes</button>
         </div>
       </div>

@@ -385,6 +385,7 @@ function stepFrame(by: number) {
 async function play() {
   if (!clip || playing || busy) return;
   playing = true;
+  document.body.classList.add('playing');
   playButton.textContent = 'Pause';
   const token = ++playToken;
   let from = targetFrame >= clip.frameCount - 1 ? 0 : targetFrame;
@@ -414,6 +415,7 @@ async function play() {
 function pause() {
   if (!playing) return;
   playing = false;
+  document.body.classList.remove('playing');
   playToken++;
   sfx.stop();
   playButton.textContent = 'Play';

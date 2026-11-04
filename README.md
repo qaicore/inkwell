@@ -19,7 +19,9 @@ Also works:
 - Strokes move with physics (SPEC §8). Each one is a chain that lags behind the body, overshoots and settles. **Stiff** sets it for the next strokes: 0 hangs like a rope, 1 keeps the drawn shape. **Rigid** strokes follow the body exactly, like horns or a halo.
 - Play it back at 30 fps. The strokes are held for 2 or 3 frames at a time, 12 drawings a second, like hand-drawn animation, with a line boil (**Wobble**) that redraws each one slightly differently. In dev, the app reads the drawings per second and the boil from `reference/timing.json`; until that exists, it uses the example file's numbers and says so in the header.
 - **Save strokes** downloads your strokes exactly as drawn, as `raw-strokes.json`, for `reference/` (A6 checks the stored points against them).
-- Export an MP4 (H.264, constant 30 fps, original audio). In dev, each export is also saved to `renders/`.
+- **Sound** (on by default) adds a whoosh, a slam, electric crackle and a rumble, timed to the strike. They're generated in code with Web Audio, with no audio files.
+- **Prop** (under More): strokes drawn on the limbs' frame become one rigid shape that rides on the tip of the nearest limb, into the slam and into the export.
+- Export an MP4 (H.264, constant 30 fps, the original audio plus the sound effects when the browser can encode them). In dev, each export is also saved to `renders/`.
 - Tracking, from SAM 3.1's cached masks, or a stand-in on a clip that has none. Each stroke's root (its first point) rides the body on every frame, and the stroke turns and scales with it. Strokes set to Behind are tucked behind the person, using a person mask.
   - The stand-in is MediaPipe's pose model, run in the browser. It only loads in dev (`npm run dev`) and is left out of production builds.
   - It needs WebGL 2. When the browser won't give the page WebGL 2, or the model hands back empty masks there, the dev server runs the same model in Python instead. Set that up once with `npm run standin:setup`, which makes `.venv/` and installs MediaPipe. It also needs ffmpeg on your PATH.
@@ -102,9 +104,9 @@ node scripts/scan-secrets.mjs
 
 - **Meta's models** (called through Meta's API; none of their code is in the repo):
   - SAM 3.1 gives the person (and face) masks the strokes and the cutout follow. The app reads them from cached answers, and `npm run probe` makes the paid call.
-  - Muse Wonder's facing labels are part of the probe. Its stroke plan (for every stroke, what it attaches to, or the nearest-mask rule if its answer fails the check) is built, but the two-drawing flow doesn't call it.
+  - Muse Wonder labeled which way the person faces, once, in the probe (`fixtures/probe/report.md`). The app doesn't call it.
 - **Open-source libraries** (all of `package.json`):
   - [perfect-freehand](https://github.com/steveruizok/perfect-freehand) (MIT) turns points into the stroke outline.
   - [Mediabunny](https://mediabunny.dev) (MPL-2.0) decodes and encodes the video.
   - Dev only, not shipped: [MediaPipe Tasks Vision](https://ai.google.dev/edge/mediapipe/solutions/vision/pose_landmarker) (Apache-2.0), the pose model that gives the impact its body landmarks in dev, and the tracking on a clip with no cached SAM 3.1 person masks (the app reads cached masks first); [@meta-sam/parser](https://www.npmjs.com/package/@meta-sam/parser) (SAM License) reads SAM 3.1's streamed masks in the probe; the [OpenAI SDK](https://github.com/openai/openai-node) (`openai`, Apache-2.0), pointed at Meta's API, makes the probe's calls; [@vitejs/plugin-basic-ssl](https://github.com/vitejs/vite-plugin-basic-ssl) (MIT) for phone mode; [@napi-rs/canvas](https://github.com/Brooooooklyn/canvas) (MIT), the Node canvas that renders the engine's frames and contact sheets in tests and `npm run verify`; [Vite](https://vite.dev) (MIT); [Vitest](https://vitest.dev) (MIT) runs the tests; [TypeScript](https://www.typescriptlang.org) (Apache-2.0); @types/node (MIT).
-- **Code written with Claude Code under Qai's direction, from Oct 27:** everything else in the repo, including the brush, the physics, the 3D rope limbs and the strike, the electricity, the impact frames, the destruction, the tracking glue, the export and the tests.
+- **Interface skin:** "wet ink" (`src/app/skin.css`), painted in Ika from Qai's brief, with no stock assets or fonts.
