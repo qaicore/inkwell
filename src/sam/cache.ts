@@ -4,8 +4,9 @@
 // probe all decode that raw output again with the same parser, so a cached
 // run reads exactly like a live one, and nothing is paid for twice.
 import type { Anchor } from '../types/effect.ts';
-import { framesFromRecords, parseCachedOutput, type Bounds } from './masks.ts';
+import { framesFromRecords, parseCachedOutput, readFrames, type Bounds, type FrameMask, type Part } from './masks.ts';
 import type { Mask } from '../track/tracking.ts';
+import type { SegmentationRecord } from '@meta-sam/parser';
 
 // One frame's mask: a 0/1 raster covering `bounds` (source pixels).
 export interface SamMask {
@@ -44,7 +45,47 @@ export function cachedFrames(json: unknown): number {
 export async function masksFromCache(json: unknown, frames: number): Promise<(SamMask | null)[]> {
   const cache = readSamCache(json);
   const records = (await parseCachedOutput(cache.rawOutput)).records;
-  return framesFromRecords(records, frames).map((m) => (m ? { width: m.width, height: m.height, raster: m.raster, bounds: m.bounds, confidence: m.confidence } : null));
+  return framesFromRecords(records, frames).map(samMaskOf);
+}
+
+const FRAME_LINE = /^<(\d+)f>/;
+const PARSE_LINES = 1; // lines the parser reads at a time: about 15 ms on a PC
+
+const samMaskOf = (m: FrameMask | null): SamMask | null => (m ? { width: m.width, height: m.height, raster: m.raster, bounds: m.bounds, confidence: m.confidence } : null);
+
+// The same, a piece at a time, for a thread that has a page to keep alive
+// (R5, S2: reading the hero's cache is 13 s, half the parser's own pass over
+// the text, which decodes every mask to check it, half decoding each again).
+// The text is one line a frame (`<12f>0<|box...|><|mask...|>`), so it's parsed
+// a few lines at a time, then each raster decoded, with `pause` awaited
+// between; `progress` hears how far it is (0 to 1). Without a `pause` it runs
+// straight through, as the workers do. `part` reads only some of the frames
+// (masks.ts), the rest null, and parses only their lines.
+export async function masksFromCacheSliced(
+  json: unknown,
+  frames: number,
+  { pause, progress, part }: { pause?: () => Promise<void>; progress?: (fraction: number) => void; part?: Part } = {},
+): Promise<(SamMask | null)[]> {
+  const cache = readSamCache(json);
+  const lines = cache.rawOutput.split('\n').filter((line) => {
+    const mark = FRAME_LINE.exec(line);
+    if (!mark) return true; // no frame mark: it stays for every share
+    const frame = Number(mark[1]);
+    return frame < frames && (!part || frame % part.count === part.index);
+  });
+  const records: SegmentationRecord[] = [];
+  for (let at = 0; at < lines.length; at += PARSE_LINES) {
+    records.push(...(await parseCachedOutput(lines.slice(at, at + PARSE_LINES).join('\n'))).records);
+    progress?.((0.5 * Math.min(at + PARSE_LINES, lines.length)) / lines.length);
+    if (pause) await pause();
+  }
+  const steps = readFrames(records, frames, part);
+  for (;;) {
+    const step = steps.next();
+    if (step.done) return step.value.map(samMaskOf);
+    progress?.(0.5 + (0.5 * step.value.done) / step.value.total);
+    if (pause) await pause();
+  }
 }
 
 // The file a stroke's anchor is cached in, next to the clip. A concept is

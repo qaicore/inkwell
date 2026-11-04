@@ -60,7 +60,7 @@ const STREAK_EVERY = 3; // a streak's samples: every this many of the centreline
 const DEG = Math.PI / 180;
 
 // Which wisps a drawing of reference age A shows, and the splash step.
-export function wispKind(A: number): { kind: WispKind; step: number } | null {
+export function wispTable(A: number): { kind: WispKind; step: number } | null {
   if (A < 0) return null;
   if (A === 0) return { kind: 'spikes', step: 0 };
   if (A <= 2) return { kind: 'slashes', step: 0 };
@@ -68,6 +68,15 @@ export function wispKind(A: number): { kind: WispKind; step: number } | null {
   if (A <= 6) return null;
   if (A <= 13) return { kind: 'splashes', step: Math.min(3, Math.floor((A - 7) / 2)) };
   return null;
+}
+
+// What the scene lays: the spikes and the splashes. The A1–2 zigzag crown and
+// the A3–4 white dome are not in the reference (judges, rounds 3–4), so they
+// are cut here; wispTable still builds their geometry for the measured-area tests.
+export const CUT_KINDS: readonly WispKind[] = ['slashes', 'arcs'];
+export function wispKind(A: number): { kind: WispKind; step: number } | null {
+  const which = wispTable(A);
+  return which && !CUT_KINDS.includes(which.kind) ? which : null;
 }
 
 export const wispOpacity = (A: number) => (A <= 4 ? OPACITY[0] : OPACITY[0] + ((OPACITY[1] - OPACITY[0]) * Math.min(A - 4, 9)) / 9);
@@ -346,7 +355,7 @@ function intoFrame(fr: MassFrame, unit: number, width: number, height: number, p
 
 // The pieces of global drawing k at reference age A: pure in (seed, k, A).
 export function wispPieces(seed: number, k: number, A: number): WispPiece[] {
-  const which = wispKind(A);
+  const which = wispTable(A);
   if (!which) return [];
   const r = rng(seed, 'wisp', k);
   switch (which.kind) {
@@ -378,7 +387,7 @@ export function shapes(ictx: MassContext, f: number): WispDrawing | null {
   const j = f - ictx.I;
   if (j < 9 || j > ictx.jEnd) return null;
   const { k, start, A } = drawingAge(ictx, f);
-  const which = wispKind(A);
+  const which = wispTable(A);
   if (!which) return null;
   const zoom = ZOOM_PEAK / zoomAt(start - ictx.I);
   const erode = decayAlpha(start - ictx.I, ictx.jEnd);

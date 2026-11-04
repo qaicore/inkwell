@@ -79,6 +79,8 @@ export const ROPE = {
   rootHz: 6, // a node at the root takes up the body's turn this fast (its spring's natural frequency) ...
   tipHz: 0.8, // ... the tip this slowly, and the nodes between on (1 − t)² of the way
   follow: 0.5, // the springs' damping ratio: the tip overshoots a stopped turn by about a sixth and swings back
+  rootSpeed: 30, // rad/s the nodes take up his turn at the most: at the root as fast as he turns ...
+  tipSpeed: 3.5, // ... the tip about half as fast as his spin (a heavy rope is dragged round, it doesn't flip over in a drawing: 112 % of its length on the hero's f63)
   // The bend wave: a standing limb's own curve changes 1–12° a joint between
   // drawings (decision 19(b)), a rope's undulation running down it: over 1.2
   // limb lengths at 0.42 Hz it was 0.5°, frozen under the boil. Shorter and
@@ -89,6 +91,7 @@ export const ROPE = {
   depthHz: 0.29,
   waveLength: 0.8, // limb lengths one wave spans
   grow: 1, // the wave grows as t^grow toward the tip
+  freedWave: 1.7, // × the bend wave once released: on his taller, nearer body it would show under 1° a drawing (f141–159)
   bow: 0.16, // the least sagitta over chord the target shows on screen: the chain, swinging, keeps over a third of it
   least: 0.07, // the least sagitta over chord a drawing of it shows (decision 15's 0.06, and room for the boil)
 };
@@ -160,6 +163,7 @@ export interface Animate3DOptions {
 interface Drive {
   frac: number[]; // arc fractions of the drawing
   hz: number[]; // each node's follow frequency
+  most: number[]; // each node's fastest follow, rad/s
   angle: Float64Array; // per node: yaw, pitch, roll
   speed: Float64Array;
   phase: [number, number];
@@ -208,8 +212,9 @@ export function animate3d(opts: Animate3DOptions): Frame3D[] {
   // lying on it would be drawn half as long as they are (decision 15(f)).
   const target = (s: Lifted, j: number, b: Body3D, time: number, f: number, w = 1) => {
     if (s.kind === 'rigid') return s.points.map((q) => toCamera(b, q));
-    const raw = driven(s, drives[j], b, time);
-    const pts = strike && f >= strike.release && struck[j] ? faceCamera(raw, FACE) : raw;
+    const freed = strike !== undefined && f >= strike.release && struck[j];
+    const raw = driven(s, drives[j], b, time, freed ? ROPE.freedWave : 1);
+    const pts = freed ? faceCamera(raw, FACE) : raw;
     const sh = shifts[j];
     if (!sh) return pts;
     const [a, c] = [sh[Math.max(0, f - 1)], sh[f]];
@@ -458,6 +463,7 @@ function driveOf(s: Lifted, R0: number): Drive {
   return {
     frac,
     hz: frac.map((t) => ROPE.tipHz + (ROPE.rootHz - ROPE.tipHz) * (1 - t) ** 2),
+    most: frac.map((t) => ROPE.tipSpeed + (ROPE.rootSpeed - ROPE.tipSpeed) * (1 - t) ** 2),
     angle: new Float64Array(3 * n),
     speed: new Float64Array(3 * n),
     phase: [uniform(r, 0, 2 * Math.PI), uniform(r, 0, 2 * Math.PI)],
@@ -486,6 +492,8 @@ function follow(d: Drive, b: Body3D, dt: number) {
       const x = d.angle[at];
       const off = k === 2 ? Math.atan2(Math.sin(goal[k] - x), Math.cos(goal[k] - x)) : goal[k] - x;
       d.speed[at] += (w * w * off - 2 * ROPE.follow * w * d.speed[at]) * dt;
+      const most = d.most[i];
+      d.speed[at] = Math.min(most, Math.max(-most, d.speed[at]));
       d.angle[at] += d.speed[at] * dt;
     }
   }
@@ -497,7 +505,7 @@ function follow(d: Drive, b: Body3D, dt: number) {
 // are), then turned by the bend wave at its arc fraction, then bowed on
 // screen to ROPE.bow if it would look straighter (segments turned about the
 // view axis, so the lengths still hold).
-function driven(s: Lifted, d: Drive, b: Body3D, time: number): Vec3[] {
+function driven(s: Lifted, d: Drive, b: Body3D, time: number, gain = 1): Vec3[] {
   const n = s.points.length;
   const root = toCamera(b, s.points[0]);
   const pts: Vec3[] = [root];
@@ -511,7 +519,7 @@ function driven(s: Lifted, d: Drive, b: Body3D, time: number): Vec3[] {
   const out: Vec3[] = [root];
   for (let i = 0; i < n - 1; i++) {
     const t = d.frac[i + 1];
-    const reach = t ** ROPE.grow;
+    const reach = gain * t ** ROPE.grow;
     const turn = ROPE.waveDeg * rad * reach * Math.sin(2 * Math.PI * (ROPE.waveHz * time - t / ROPE.waveLength) + d.phase[0]);
     const tilt = ROPE.depthDeg * rad * reach * Math.sin(2 * Math.PI * (ROPE.depthHz * time - t / ROPE.waveLength) + d.phase[1]);
     const seg = tiltUp(turnOnScreen(sub3(pts[i + 1], pts[i]), turn), tilt);

@@ -57,6 +57,13 @@ export interface Contact {
   from: number;
 }
 
+// The air's drag on a heavy rope, on top of the damping: a node's velocity
+// over (1 + k × its speed, torso heights a step). It leaves a slow wave alone
+// and holds back a rope whipped round after his turn, so its tip trails on a
+// long curve instead of flipping across him in a drawing (170 px a frame on
+// the hero's f63).
+export const DRAG = { k: 0.5 };
+
 const PULL = 0.5;
 const TEAR = 1.1; // the most the shape pull may stretch a segment, × its rest length
 const FTL_DAMPING = 0.9;
@@ -123,7 +130,9 @@ export function stepChain3(chain: Chain3, target: Vec3[], unitPx: number, params
     const p = points[i];
     const q = prev[i];
     prev[i] = p;
-    points[i] = [p[0] + (p[0] - q[0]) * keep, p[1] + (p[1] - q[1]) * keep + fall, p[2] + (p[2] - q[2]) * keep];
+    const [vx, vy, vz] = [p[0] - q[0], p[1] - q[1], p[2] - q[2]];
+    const left = keep / (1 + (DRAG.k * Math.hypot(vx, vy, vz)) / unitPx);
+    points[i] = [p[0] + vx * left, p[1] + vy * left + fall, p[2] + vz * left];
   }
   prev[0] = points[0];
   points[0] = copy(target[0]);

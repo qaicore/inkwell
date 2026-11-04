@@ -10,7 +10,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, it } from 'vitest';
-import type { Vec3 } from '../../src/impact/contracts.ts';
+import type { Vec2, Vec3 } from '../../src/impact/contracts.ts';
 import { limbStroke, readDrawings, skeletonPoints, standInPoints, turnPlan } from '../../scripts/impact-render.ts';
 import { frameMasks } from '../../src/app/pipeline.ts';
 import { momentsFromDrawings } from '../../src/impact/detect.ts';
@@ -373,18 +373,14 @@ describe.skipIf(!have)('rope limbs on the hero clip (decisions 15, 17, 18)', () 
 
   // Round 4 R1 (technical 5, asks 5; decision 19(e)): every frame, not the
   // median, on the line the scene draws, against its length on screen as
-  // drawn (per torso height). 19(e) asks 0.85: limb 2 is at 0.84 on f93–94,
-  // where the thrown rope still rises toward the camera along C's lift and
-  // looks shorter. Not held here: its length in 3D, which the routing round
-  // him adds to (1.2–1.8× on limbs 2 and 4 over f109–134, the rope laid on
-  // its screen curve diving behind him; see the R1 notes).
-  it('gives a released limb its drawn length back on the drawn line: on every frame f93–130 0.85–1.15× as long as drawn on screen (per torso height), 0.83 on f93–94', () => {
+  // drawn (per torso height). Round 5 S1 took the exception on f93–94 off.
+  it('gives a released limb its drawn length back on the drawn line: on every frame f93–130 0.85–1.15× as long as drawn on screen (per torso height)', () => {
     const line = drawnView(hero);
     for (const [id, drawn] of hero.drawnOnScreen) {
       for (let f = 93; f <= 130; f++) {
         const pts = line(f, id);
         const ratio = pts.slice(1).reduce((sum, p, i) => sum + Math.hypot(p[0] - pts[i][0], p[1] - pts[i][1]), 0) / hero.bodies[f].unit / drawn;
-        expect(ratio, `f${f} limb ${id}`).toBeGreaterThanOrEqual(f <= 94 ? 0.83 : 0.85);
+        expect(ratio, `f${f} limb ${id}`).toBeGreaterThanOrEqual(0.85);
         expect(ratio, `f${f} limb ${id}`).toBeLessThanOrEqual(1.15);
       }
     }
@@ -483,24 +479,81 @@ describe.skipIf(!have)('rope limbs on the hero clip (decisions 15, 17, 18)', () 
   // the next one has the tip back where the rope is): limb 1 at 82–88 on
   // f105, f123, f125 and f128, limb 4 at 95 on f115. Held to 100 there, on
   // 5 limb-frames at most (see the R1 notes).
-  it('throws a released tip at most 80 px a frame after f95 on the drawn line (f96–130), but for at most 5 limb-frames, under 100', () => {
+  it('throws a released tip at most 80 px a frame after f95 on the drawn line (f96–130)', () => {
     const line = drawnView(hero);
-    const over: string[] = [];
     for (const { id } of hero.frames[93].placed) {
       for (let f = 96; f <= 130; f++) {
         const [a, b] = [line(f - 1, id).at(-1)!, line(f, id).at(-1)!];
-        const step = Math.hypot(b[0] - a[0], b[1] - a[1]);
-        if (step > 80) over.push(`f${f} limb ${id}: ${step.toFixed(0)}`);
-        expect(step, `f${f} limb ${id}`).toBeLessThan(100);
+        expect(Math.hypot(b[0] - a[0], b[1] - a[1]), `f${f} limb ${id}`).toBeLessThanOrEqual(80);
       }
     }
-    expect(over.length, over.join(', ')).toBeLessThanOrEqual(5);
+  });
+  // Round 5 S1: a snap on the first drawing after the pin, and clear of the
+  // fire while it burns (today 370–660 px off P on f93, 500–850 by f95).
+  it('snaps every released tip off P on the first drawing: at least 250 px off it on f93, 400 by f95', () => {
+    const line = drawnView(hero);
+    const P = hero.frames[92].placed[0].points.at(-1)!;
+    for (const { id } of hero.frames[93].placed) {
+      for (const [f, least] of [[93, 250], [95, 400]] as const) {
+        const tip = line(f, id).at(-1)!;
+        expect(Math.hypot(tip[0] - P[0], tip[1] - P[1]), `f${f} limb ${id}`).toBeGreaterThanOrEqual(least);
+      }
+    }
+  });
+  // Round 5 S1: a flop, not a slide to rest: after the snap the root-to-tip
+  // chord swings past where it goes and comes back at least 5° (today 14° on
+  // limb 1, 8° on limb 2, about 60° on limbs 3 and 4).
+  it('flops back after the snap: each limb`s chord turns back at least 5° against the way it was flung (f95–125)', () => {
+    const line = drawnView(hero);
+    const chord = (f: number, id: number) => {
+      const pts = line(f, id);
+      const [a, b] = [pts[0], pts.at(-1)!];
+      return Math.atan2(b[1] - a[1], b[0] - a[0]);
+    };
+    const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
+    for (const { id } of hero.frames[93].placed) {
+      const way = Math.sign(wrap(chord(95, id) - chord(92, id)));
+      let along = 0;
+      let peak = 0;
+      let back = 0;
+      for (let f = 96; f <= 125; f++) {
+        along += way * wrap(chord(f, id) - chord(f - 1, id));
+        peak = Math.max(peak, along);
+        back = Math.max(back, peak - along);
+      }
+      expect((back * 180) / Math.PI, `limb ${id}`).toBeGreaterThanOrEqual(5);
+    }
+  });
+  // Round 5 S1 (judge round 4: an L1 node moved 112 % of the limb's length on
+  // f63, the L1 tip's way flipped 162° on f65): the rope is dragged round.
+  it('drags a limb round the spin without a pop (f55–74, as drawn): relative to its root no node moves over 60 % of the limb in a drawing, and no tip turns over 140°', () => {
+    const line = drawnView(hero);
+    for (const { id } of hero.frames[55].placed) {
+      const drawn = hero.drawnOnScreen.get(id)!;
+      let was: Vec2[] | null = null;
+      let way: number | null = null;
+      for (let f = 55; f <= 74; f++) {
+        const pts = line(f, id);
+        const rel = pts.map((p): Vec2 => [p[0] - pts[0][0], p[1] - pts[0][1]]);
+        if (was) {
+          const most = Math.max(...rel.map((p, i) => Math.hypot(p[0] - was![i][0], p[1] - was![i][1])));
+          expect(most / (drawn * hero.bodies[f].unit), `f${f} limb ${id}`).toBeLessThanOrEqual(0.6);
+        }
+        was = rel;
+        if (hero.frames[f].capture !== hero.frames[f - 1].capture) {
+          // (today under 140° on f70; it was 162° on f65)
+          const n = pts.length;
+          const dir = Math.atan2(pts[n - 1][1] - pts[n - 4][1], pts[n - 1][0] - pts[n - 4][0]);
+          if (way !== null) expect((Math.abs(Math.atan2(Math.sin(dir - way), Math.cos(dir - way))) * 180) / Math.PI, `f${f} limb ${id}`).toBeLessThanOrEqual(140);
+          way = dir;
+        }
+      }
+    }
   });
   // 19(b): a standing limb's own curve changes 1–12° a joint a drawing
   // without the boil (the chain itself, as seen): round 3 was 0.3–0.5°.
-  // f141–159 is not held to it yet: limbs 1, 3 and 4 are at 0.8–0.9° there.
-  it('moves a standing limb`s own curve 1–12° a joint a drawing without the boil (f24–48)', () => {
-    const starts = Array.from({ length: 25 }, (_, i) => 24 + i).filter((f) => hero.frames[f].capture !== hero.frames[f - 1].capture);
+  it.each([[24, 48], [141, 159]])('moves a standing limb`s own curve 1–12° a joint a drawing without the boil (f%i–%i)', (from, to) => {
+    const starts = Array.from({ length: to - from + 1 }, (_, i) => from + i).filter((f) => hero.frames[f].capture !== hero.frames[f - 1].capture);
     const turned = (pts: readonly Vec3[], f: number) => {
       const xy = pts.map((p) => project(hero.bodies[f], p).xy);
       return xy.slice(1, -1).map((q, i) => {

@@ -118,6 +118,12 @@ export function brown(at: number): string {
 // A lump's body tone on the ramp, at distance d from P (U).
 const bodyAt = (A: number, d: number, step: number) => clamp((AGE_STEP * clamp(A - 3, 0, 14)) / 14 + SPREAD * Math.min(1, d / SPREAD_REACH) + step, 0, BODY_MAX);
 export const shadeOf = (body: number) => body + SHADE_STEP;
+// The lumps are laid lighter and softer than the measured browns: the dark
+// ramp read as brown polka dots on the plate (judges, rounds 3-4). The ramp,
+// the ink and the order are unchanged; each lump tone goes this far toward a
+// warm light smoke.
+export const SMOKE_LIFT = { to: '#c9a584', by: 0.4 } as const;
+export const lifted = (hex: string) => mixHex(hex, SMOKE_LIFT.to, SMOKE_LIFT.by);
 
 // A ball's crescent share: 0.30–0.45 by its own shade spot's size; a lobe's by its radius.
 export const crescentShare = (b: Ball) => CRESCENT[0] + (CRESCENT[1] - CRESCENT[0]) * clamp((b.spotR / b.r - 0.5) / 0.12, 0, 1);
@@ -746,8 +752,8 @@ function buildShapes(ictx: MassContext, fr: MassFrame, state: ClusterState, g: n
     const rl = R * Math.sqrt(1 - share);
     const len = Math.hypot(toward[0], toward[1]) || 1;
     const at: FloorPt = [c[0] + ((R - rl) * toward[0]) / len, c[1] + ((R - rl) * toward[1]) / len];
-    out.push({ role: `${role}-shade`, points: disc(c, R), color: brown(shadeOf(body)), round: true });
-    out.push({ role, points: disc(at, rl), color: brown(body), round: true });
+    out.push({ role: `${role}-shade`, points: disc(c, R), color: lifted(brown(shadeOf(body))), round: true });
+    out.push({ role, points: disc(at, rl), color: lifted(brown(body)), round: true });
   };
   // One ink contour, on the union's edge only (judge round 1: no polka dots):
   // every lobe and ball in the ink, then every fill over them a line in, so

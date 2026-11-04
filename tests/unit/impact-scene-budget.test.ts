@@ -213,4 +213,27 @@ describe('the limbs’ physics in the Node proxy', () => {
       await worker.terminate();
     }
   });
+
+  // R5, S2: the page's first paint of a rebuilt scene asks which drawings the
+  // frame lacks (scene.missing) and holds the last frame while the render-ahead's
+  // worker makes them, instead of drawing them in one task. What it does itself
+  // is the ask; the drawings it leaves out are the jobs below, which the budget
+  // above times (design 42 ms a limb drawing, 12 a mass part, 8 a poster; the
+  // first page-side draw measured 137 to 319 ms in the dev app).
+  it('asks for a rebuilt scene’s first frame, at a strike frame and an aftermath frame, in a few ms, leaving its limb, mass and poster drawings to the worker (R5, S2)', () => {
+    // As the page has it, waiting for the physics (its limbs as drawn), then with the physics worked out and kept.
+    const waiting = sceneOf({}, { physics: 'wait' });
+    const worked = sceneOf();
+    worked.frames3d();
+    for (const scene of [waiting, worked]) {
+      for (const o of [I - 3, I + 20]) {
+        const t0 = performance.now();
+        const lacking = scene.missing(o);
+        const asked = performance.now() - t0;
+        expect(lacking.length, `frame ${o} lacks drawings`).toBeGreaterThan(0);
+        expect(asked, `ask ${asked.toFixed(2)} ms`).toBeLessThanOrEqual(PAGE_TASK_MS); // today a few ms
+      }
+      expect(scene.missing(I + 20).some((job) => job.kind === 'mass')).toBe(true);
+    }
+  });
 });

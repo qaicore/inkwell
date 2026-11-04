@@ -304,12 +304,12 @@ describe('the orders', () => {
     });
   });
 
-  // Round 4 R1 (decision 19(e)): the release is laid on the chain, pinned to
-  // its own tip, as the whip and the pin are: thrown free with a recoil
-  // kick, its drawings on 2s put a whole drawing's swing (up to 466 px on the
-  // hero) on one frame, and slowed down, his pushes tore it across him in
-  // depth. Its clock is the throw's own, slowed to throwPx a drawing.
-  it('lets go on the release: the tip pulled up out of P, the chain laid on the throw at its drawn length, slowed to throwPx a drawing, stiffening back to its own, and handed back when the throw is done', () => {
+  // Round 5 S1 (decisions 15(f), 19(e)): the release is laid on the chain,
+  // pinned to its own tip, as the whip and the pin are. The tension let go
+  // flings it most of the way to its idle curve on the first drawing; from
+  // f96 no drawing moves a node more than throwPx; it is at rest and
+  // handed back by about f116 (this synthetic body stands still under it).
+  it('lets go on the release: the tip flung up out of P on the first drawing, the chain laid on the throw at its drawn length, throwPx a drawing from f96, stiffening back to its own, and handed back when the throw is done', () => {
     const ctl = fresh();
     const pinned = ordersAt(ctl, bodies[93], strokes, 92, STEPS).orders; // the chains on C, on the same body
     const chains = pinned.slice(0, 4).map((o) => o!.target!);
@@ -329,31 +329,38 @@ describe('the orders', () => {
       expect(o.restScale!).toBeCloseTo(polyLength(target) / polyLength(l.target), 9);
       expect(o.stiffness!).toBeGreaterThan(0.99);
     });
-    // On through the throw, step by step on the same body: no node of the
-    // thrown curve moves more than its share of throwPx a drawing on screen
-    // in a step, the stiffness falls to the stroke's own, and the orders
-    // stop once it is done, within the ease.
+    // On through the throw, step by step on the same body: the first drawing
+    // is well on its way off P, no drawing from f96 moves a node more than
+    // throwPx (the budget grows over the frames to the next
+    // drawing), the stiffness falls to the stroke's own, and the orders stop
+    // once it is done, by about f116.
     const seen = (o: LimbControl) => o.target!.map((q) => project(bodies[93], q).xy);
-    const last = orders.slice(0, 4).map((o) => seen(o!));
     const lastStiff = orders.slice(0, 4).map((o) => o!.stiffness!);
+    const shown: (Vec2[] | null)[] = [null, null, null, null];
     const handed: number[] = [0, 0, 0, 0]; // the frame each limb is handed back on
+    const starts = new Set(Array.from({ length: 80 }, (_, k) => Math.ceil((k * 30) / 12)));
     for (let f = 93; f <= 152 && handed.some((h) => h === 0); f++) {
-      const k = Math.floor(((f - 1) * 12) / 30); // the drawing f's steps lead up to, and its frames
-      const span = Math.ceil(((k + 1) * 30) / 12) - Math.ceil((k * 30) / 12);
       for (let sub = f === 93 ? 2 : 1; sub <= STEPS; sub++) {
         ordersAt(ctl, bodies[93], strokes, f, sub).orders.slice(0, 4).forEach((o, i) => {
           if (handed[i]) return expect(o, `limb ${i + 1} f${f}.${sub}: handed back on f${handed[i]}`).toBeNull();
           if (!o) return void (handed[i] = f);
-          const pts = seen(o);
-          const most = Math.max(...pts.slice(1).map((p, j) => dist2(p, last[i][j + 1])));
-          // (the clock takes each node as moving straight between two steps' curves: a few % over where it bends)
-          expect(most, `f${f}.${sub} limb ${i + 1}`).toBeLessThanOrEqual(1.05 * (STRIKE.throwPx / span / STEPS));
-          last[i] = pts;
           lastStiff[i] = o.stiffness!;
+          if (sub !== STEPS || !starts.has(f)) return;
+          const pts = seen(o);
+          if (f === 93) expect(dist2(pts.at(-1)!, P), `limb ${i + 1} off P on the first drawing`).toBeGreaterThan(50);
+          const was = shown[i];
+          if (was && f > 95) {
+            const most = Math.max(...pts.slice(1).map((p, j) => dist2(p, was[j + 1])));
+            expect(most, `f${f} limb ${i + 1}`).toBeLessThanOrEqual(STRIKE.throwPx + 0.5);
+          }
+          shown[i] = pts;
         });
       }
     }
-    for (const [i, f] of handed.entries()) expect(f, `limb ${i + 1} handed back within the ease`).toBeGreaterThan(93);
+    for (const [i, f] of handed.entries()) {
+      expect(f, `limb ${i + 1} handed back after the throw`).toBeGreaterThan(93);
+      expect(f, `limb ${i + 1} handed back by about f116`).toBeLessThanOrEqual(120);
+    }
     for (const s of lastStiff) expect(s).toBeLessThan(0.2);
   });
 

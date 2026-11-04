@@ -1277,7 +1277,8 @@ function inkGuard(d: Draft, fig: PosterFigure): { ink: number; contour: boolean;
   const solid = contourStyle ? outline * (d.si === 5 ? 4 : 1) : fig.personArea + fig.limbArea;
   const asContour = fig.personLength * line + fig.limbArea;
   const cap = INK_CAP * frame;
-  const contour = !contourStyle && fixed + solid + fig.markArea > cap;
+  // IF4 always draws him as a contour: the ink star over his solid body went flat black (judge round 4).
+  const contour = !contourStyle && (d.si === 3 || fixed + solid + fig.markArea > cap);
   let total = fixed + (contour ? asContour : solid) + fig.markArea;
   const trimmable = inky.filter((s) => s.trim);
   total += trimmable.reduce((sum, s) => sum + s.area, 0);

@@ -39,25 +39,23 @@
 //     nodes are evenly spaced, and keeps the drawing's proportions otherwise.
 //     C's side and bulge round him change slowly (steady), so the drawn rope
 //     never pops from one side of him to the other;
-//   - release, from release: the tip let go of P and the drawn length back
-//     (decision 15: never longer than about 1.15× it, never straight). The
-//     chain is laid on a thrown curve, pinned to its own tip (made(q)): from
-//     C (as it would lie now, opened out to releaseBulge, on the side of him
-//     it was on at the release) back to its idle curve (its own target,
-//     bowed on screen to at least minBow). For recoilFrom of the throw the
-//     limb only pulls out of P, up −d̂ (pullOut × the drawn length at the
-//     tip, swelling and gone over pullSpan); then a recoil wave runs from the
-//     tip up to the root (recoilWave), each segment's way turned from C's to
-//     the idle curve's at its drawn length on a damped spring that swings
-//     about a fifth past it (recoilSpring), the stem by the root turning
-//     steadily instead (rootTurn), never under the floor line through P
-//     (aboveFloor). The throw's clock q runs over throwDrawings, but never so
-//     fast that a node of the drawn curve moves more than throwPx a drawing
-//     on screen against the last step's curve carried by his torso
-//     (throwClock: the held drawings are carried that way between drawings).
-//     The stiffness falls from 1 to the stroke's own as it goes
-//     (1 − (1 − s)·smooth(q)²), and the limb is the lift's again once the
-//     throw is done, easeDrawings after the release at the latest.
+//   - release, from release: a snap, a flop, then rest (decision 15(f), 19(e)).
+//     The tip lets go of P and the drawn length comes back (never longer than
+//     about 1.15× it, never straight). The chain is laid on a thrown curve,
+//     pinned to its own tip (made(q), snapBack): from C as it would lie now to
+//     its idle curve (its own target, bowed on screen to at least minBow).
+//     The tension let go flings it there on the first drawings, the tip ahead
+//     of the root (snapFrames, snapDelay), so the tips are far off P and the
+//     limbs keep their glow while the fire burns; by the root it turns
+//     steadily instead (stemSpan, stemTurn). A recoil wave then runs from the
+//     tip up to the root, a damped swing past the idle curve and back
+//     (overshootDeg), and is gone by the throw's end, about f116. After the
+//     first drawings (throwFree), no drawing moves the outer half of the
+//     line more than throwPx against the frame before it (throwClock). Never
+//     under the floor line through P (aboveFloor). The stiffness falls from 1
+//     to the stroke's own as it goes (1 − (1 − s)·smooth(q)²), and the limb is
+//     the lift's again once the throw is done and caught up, easeDrawings
+//     after the release at the latest.
 // With a dummy (collide.ts) every laid curve (the whip's, the pinned and
 // the thrown) is routed round his body by its depth (routeAround), C finely
 // sampled before the chain's nodes are read off it and on the side of him
@@ -86,7 +84,7 @@ import { drawingStart } from '../impact/clock.ts';
 import { rng, uniform } from '../impact/rng.ts';
 import { drawingIndex } from '../motion/timing.ts';
 import { project, toBody, toCamera, TORSO, unproject, type Body3D } from './body.ts';
-import { lerpDummy, overOutline, routeAround, type Dummy } from './collide.ts';
+import { insideDepth, lerpDummy, overOutline, routeAround, scanPush, type Dummy } from './collide.ts';
 import { radiusAt } from './tube.ts';
 
 // Design §4 and §9's slam rows.
@@ -98,9 +96,9 @@ export const STRIKE = {
   coilDelay: 3, // frames the tip's coil starts after the root's: it winds back root first
   coilStiffness: 0.5,
   whipFrames: 3, // the whip's frames, land − 2..land: the inner half comes over first, the outer last, the tip onto P on land
-  whip: 0.55, // node i starts over to C at whip·t_i of the whip ...
-  whipSpan: 0.45, // ... and is on it this share of it later: the tip at its end (a wide front: a narrow one folds the rope back on itself, a pigtail) ...
-  whipEase: 1.2, // ... on a clock running as u^whipEase over its frames: by the f76 drawing the front is half way down the limb, the outer half on its way (at 2 the outer half never showed it)
+  whip: 0.7, // node i starts over to C at whip·t_i of the whip ...
+  whipSpan: 0.3, // ... and is on it this share of it later: the tip at its end (a wide front: a narrow one folds the rope back on itself, a pigtail) ...
+  whipEase: 1.6, // ... on a clock running as u^whipEase over its frames: by the f76 drawing the front is half way down the limb, the outer half on its way (at 2 the outer half never showed it)
   whipCurl: 80, // the whipped outer quarter turning this many degrees at most in all (a whip's loop, not a pigtail) ...
   whipJoint: 24, // ... and no joint of it more than this many
   whipInnerBow: 0.04, // the least sagitta over chord of the whip's inner half on screen: a rope coming over, never a rod
@@ -121,18 +119,19 @@ export const STRIKE = {
   rippleHz: 2.2, // ... running down it,
   rippleWaves: 1.5, // this many waves along it
   easeDrawings: 24, // the release hands back to the lift within this many drawings at most (f93–152 on the hero), as soon as its throw is done ...
-  throwDrawings: 10, // ... the throw running over this many when nothing slows it ...
-  throwPx: 68, // ... and slower wherever it would change a node more than this many px on screen between two drawings (decision 19(e): 80)
-  pullOut: 0.3, // × the drawn length: the released tip's pull back up −d̂, out of P (the tips lift off the floor before they swing) ...
-  pullSpan: 0.4, // ... swelling and gone again over this share of the throw
-  recoilFrom: 0.15, // the share of the throw the limb only pulls out of P (along C, at its drawn length) before the throw back ...
-  releaseBulge: 0.65, // ... C opening out to this bulge (at least) meanwhile ...
-  recoilWave: 0.6, // ... and the share the recoil wave then takes to run from the tip up to the root ...
-  recoilPeak: 0.6, // ... each node's swing past its idle curve peaking this share of its spring after it sets off ...
-  recoilDamping: 0.45, // ... on a spring this damped (about a fifth past it); ...
+  throwDrawings: 9.6, // ... the throw running over this many when nothing slows it: at rest by about f116 ...
+  throwFree: 2, // ... free for this many frames after the release's first, the snap (decision 19(e) holds from f96) ...
+  throwPx: 72, // ... and from there slower wherever a drawing would change a node more than this many px on screen against the frame before it (decision 19(e): 80)
+  snapFrames: 0.6, // the snap's clock, e-folding: most of the way to the idle curve on the first drawing ...
+  snapDelay: 0.6, // ... the root this many frames behind the tip
+  stemSpan: [0.04, 0.22] as const, // by the root, up to this stretch of it (smoothstep), the limb turns steadily instead: swung round at once, the stem out of his back would sweep through him ...
+  stemTurn: 0.2, // ... and is round by this share of the throw (slower, it lies across him longer and the routing takes it round in depth: 1.3x its length)
+  overshootDeg: 25, // the recoil's swing past the idle curve, at its most ...
+  recoilFrames: 16, // ... a whole swing this many frames ...
+  recoilDecay: 7, // ... dying away over this many (e-folding) ...
+  recoilDelay: 5, // ... and reaching the root this many frames after the tip
   floorPad: 4, // px the released limb's target keeps above the floor line through P
-  rootTurn: [0.1, 0.4] as const, // ... by the root, up to this stretch of it (smoothstep), a steady turn over the ease
-  minBow: 0.1, // the least sagitta over chord on screen a released limb's target shows (never straight)
+  minBow: 0.13, // the least sagitta over chord on screen a released limb's target shows (never straight)
   coilSpeed: 8, // torso heights a second the coil's stiffening may add to a lagging tip
 };
 const LIMB_RADIUS = 0.02 * (9 / 16); // × the frame's width: R0 when no radius is given (lift.ts's: 0.02 of a 16:9 clip's short side)
@@ -270,6 +269,19 @@ function roundOutline(ds: readonly Dummy[], w: number, b: Body3D, R: Vec2, P: Ve
 }
 const OUTLINE_SAMPLES = 40; // pieces of the curve roundOutline scores
 
+// A released limb's way through its throw (strikeController's throwClock).
+interface Thrown {
+  tau: number;
+  q: number;
+  held: boolean; // the budget held it back on the last step
+  frameBody: Body3D; // his body at the end of the last whole frame
+  shown: Vec2[]; // the last drawing started, on screen ...
+  shownBody: Body3D; // ... on this body ...
+  shownAt: number; // ... at this τ
+}
+const THROW_STEM = 0.25; // the stretch by the root (arc fraction) that goes with the root, which is his to move ...
+const THROW_OUTER = 0.5; // ... and the stretch the budget looks at, from here to the tip (the nearer nodes ride on him)
+
 export function strikeController(o: StrikeOptions): Strike {
   const { land, release, P } = o;
   if (!Number.isInteger(land) || !Number.isInteger(release) || release <= land) {
@@ -327,63 +339,45 @@ export function strikeController(o: StrikeOptions): Strike {
     return kept;
   };
   // Each released limb's way through its throw, q 0..1 (the release's
-  // made(q)): on at the throw's own pace (throwDrawings), but no further a
-  // step than changes the thrown curve on screen at any node by its share
-  // of throwPx a drawing (a frame of a drawing three frames long, a third),
-  // against the last step's curve carried by his torso's similarity
-  // (what carries a held drawing between drawings, impact/scene.ts): so his
-  // own move counts only as far as the held drawing doesn't follow it, and
-  // a throw that goes his way is free. When even standing still would change
-  // it more (he moves under a tip on the floor), the share of the step that
-  // changes it least. Kept as `held` is: in time order, afresh on an earlier step.
+  // made(q)), on the throw's own clock: throwDrawings at the most, so it is at
+  // rest by about f116. After the snap's drawings (throwFree), no drawing
+  // changes a node past the root's stretch by more than throwPx on screen
+  // against the frame before it, the last drawing carried by his torso's
+  // similarity (what carries a held drawing between drawings, impact/scene.ts):
+  // a node further off is taken its share of the way there, so his own move
+  // counts in full, and a throw that goes his way is free. The budget grows
+  // over the frames up to the next drawing. Kept as `held` is: in time order,
+  // afresh on an earlier step.
   const throwFrames = (STRIKE.throwDrawings * fps) / (o.dps ?? 12);
-  const thrown = new Map<number, { tau: number; q: number; body: Body3D; seen: Vec2[] }>();
-  const throwClock = (id: number, b: Body3D, tau: number, made: (q: number) => Vec3[]): { q: number; nodes: Vec3[] } => {
+  const thrown = new Map<number, Thrown>();
+  const throwClock = (id: number, b: Body3D, tau: number, at: StrikeStep, fr: readonly number[], made: (q: number) => Vec3[]): { q: number; nodes: Vec3[] } => {
     const last = thrown.get(id);
-    const seenOf = (pts: readonly Vec3[]) => pts.map((p) => project(b, p).xy);
-    if (!last || tau <= last.tau) {
-      const q = clamp01((tau - (release - 1)) / throwFrames);
-      const nodes = made(q);
-      thrown.set(id, { tau, q, body: b, seen: seenOf(nodes) });
-      return { q, nodes };
-    }
-    const q1 = Math.min(1, last.q + (tau - last.tau) / throwFrames);
-    const a = made(last.q);
-    const c = q1 > last.q ? made(q1) : a;
-    const [sa, sc] = [seenOf(a), seenOf(c)];
-    const was = last.seen.map(carried(last.body, b));
-    // Node i's change at share k of the step: u_i + k·v_i.
-    const u = sa.map((p, i) => [p[0] - was[i][0], p[1] - was[i][1]]);
-    const v = sc.map((p, i) => [p[0] - sa[i][0], p[1] - sa[i][1]]);
-    // The drawing this step's frame leads up to, and how many frames it follows the last one by.
-    const k = drawingIndex(Math.max(0, Math.ceil(tau) - 1), o.dps ?? 12, fps);
-    const span = Math.max(1, drawingStart(k + 1, o.dps ?? 12) - drawingStart(k, o.dps ?? 12));
-    const budget = (STRIKE.throwPx / span) * (tau - last.tau);
-    let [lo, hi] = [0, 1];
-    for (let i = 1; i < u.length && lo <= hi; i++) {
-      // |u + k·v|² ≤ budget²: a quadratic in k.
-      const [A, B, C] = [v[i][0] ** 2 + v[i][1] ** 2, u[i][0] * v[i][0] + u[i][1] * v[i][1], u[i][0] ** 2 + u[i][1] ** 2 - budget * budget];
-      if (A < 1e-12) {
-        if (C > 0) hi = -1;
-        continue;
+    const was = last && tau > last.tau ? last : undefined;
+    const q = clamp01((tau - (release - 1)) / throwFrames);
+    const curve = made(q);
+    const seen = curve.map((p) => project(b, p).xy);
+    let nodes = curve;
+    let shows = seen;
+    let held = false;
+    if (was && at.f > release + STRIKE.throwFree) {
+      // What the frame before the next drawing shows.
+      const from = was.shown.map(carried(was.shownBody, was.frameBody));
+      const k = drawingIndex(Math.ceil(was.shownAt), o.dps ?? 12, fps);
+      const budget = STRIKE.throwPx * clamp01((tau - was.shownAt) / Math.max(1, drawingStart(k + 1, o.dps ?? 12) - was.shownAt));
+      const most = Math.max(...seen.map((p, i) => (fr[i] < THROW_OUTER ? 0 : Math.hypot(p[0] - from[i][0], p[1] - from[i][1]))));
+      held = most > budget;
+      if (held) {
+        const share = budget / most;
+        shows = seen.map((p, i) => {
+          const w = share + (1 - share) * (1 - smooth(fr[i] / THROW_STEM));
+          return [from[i][0] + (p[0] - from[i][0]) * w, from[i][1] + (p[1] - from[i][1]) * w];
+        });
+        nodes = curve.map((p, i) => (i === 0 ? p : unproject(b, shows[i], p[2])));
       }
-      const disc = B * B - A * C;
-      if (disc < 0) {
-        hi = -1;
-        continue;
-      }
-      const r = Math.sqrt(disc);
-      lo = Math.max(lo, (-B - r) / A);
-      hi = Math.min(hi, (-B + r) / A);
     }
-    let share = hi;
-    if (!(lo <= hi)) {
-      const worst = (x: number) => Math.max(...u.slice(1).map((ui, j) => Math.hypot(ui[0] + x * v[j + 1][0], ui[1] + x * v[j + 1][1])));
-      share = [0, 0.25, 0.5, 0.75, 1].reduce((best, x) => (worst(x) < worst(best) ? x : best), 0);
-    }
-    const q = last.q + (q1 - last.q) * share;
-    const nodes = share >= 1 ? c : share <= 0 ? a : made(q);
-    thrown.set(id, { tau, q, body: b, seen: share >= 1 ? sc : share <= 0 ? sa : seenOf(nodes) });
+    const ends = at.sub === at.steps;
+    const starts = !was || (ends && drawingStart(drawingIndex(at.f, o.dps ?? 12, fps), o.dps ?? 12) === at.f);
+    thrown.set(id, { tau, q, held, frameBody: ends || !was ? b : was.frameBody, shown: starts ? shows : was.shown, shownBody: starts ? b : was.shownBody, shownAt: starts ? tau : was.shownAt });
     return { q, nodes };
   };
 
@@ -395,7 +389,7 @@ export function strikeController(o: StrikeOptions): Strike {
     // done, and by the ease's end at the latest: handed back half thrown, the
     // rope snapped to its idle curve in a frame (550 px on the hero).
     const last = thrown.get(l.id);
-    const done = phase.kind === 'release' && last !== undefined && tau > last.tau && last.q >= 1;
+    const done = phase.kind === 'release' && last !== undefined && tau > last.tau && last.q >= 1 && !last.held;
     if (!spec || phase.kind === 'none' || n < 2 || done) return null;
     const b = at.body;
     const target = l.target;
@@ -470,18 +464,11 @@ export function strikeController(o: StrikeOptions): Strike {
       return { target: curve, stiffness: STRIKE.pinStiffness, pin: curve[n - 1], restScale: drawn > 0 ? length / drawn : 1 };
     }
     // The release (decision 15(f), 19(e)): the drawn length back within the
-    // frame, and the limb thrown from the pinned curve (as it would lie now)
-    // back to its own idle curve by a recoil wave running from the tip up to
-    // the root: after recoilFrom of the ease, node i sets off
-    // recoilWave·(1 − t_i) of it after the tip and swings past its idle curve
-    // and back on a damped spring (recoilSpring), each segment's direction
-    // turned from the curve's to the idle one's at its drawn length. So the
-    // tip pulls out of P first (back along C as the length comes back, and
-    // pulled up −d̂), the bend runs back up, and the limb flops into its
-    // curve with an overshoot, never longer than drawn, never straight
-    // (bowed on screen after, as the idle curve is), and never under the
-    // floor line through P (aboveFloor: laid at the drawn length, C's last
-    // stretch ran on past P into the floor).
+    // frame, and the limb flung from the pinned curve (as it would lie now) to
+    // its own idle curve (snapBack), never longer than drawn, never straight
+    // (bowed on screen, as the idle curve is), and never under the floor line
+    // through P (aboveFloor: laid at the drawn length, C's last stretch would
+    // run on past P into the floor).
     const goal = (l as LimbStep).drawn;
     const want = goal !== undefined && drawn > 0 ? Math.min(1, goal / drawn) : 1;
     // The side of him it is thrown from and the way round it is thrown, held
@@ -493,38 +480,32 @@ export function strikeController(o: StrikeOptions): Strike {
     const lengths = idle.slice(1).map((p, i) => dist3(idle[i], p) * want);
     const sense = heldWay(`release ${l.id}`, tau, () => Math.sign(wrap(chordAngle(idle) - chordAngle(curveNodes(b, target[0], P, from, liftPx, fr, undefined, undefined, bulge).nodes))) || 1);
     const made = (q: number): Vec3[] => {
-      // The curve it is thrown back from opens out to releaseBulge over the
-      // pull out of P: thrown from the taut pin itself, the throw drags the rope
-      // through him and stretches it (a quarter over its length on limb 4).
-      const relBulge = bulge + Math.max(0, STRIKE.releaseBulge - bulge) * smooth(Math.min(1, q / STRIKE.recoilFrom));
-      const pinned = curveNodes(b, target[0], P, from, liftPx, fr, undefined, undefined, relBulge).nodes;
-      // By the root (rootTurn of it) the limb turns back steadily over the
-      // whole throw instead: the stem out of his back swung round at once
-      // would sweep the rope through him.
-      const throwAt = (i: number) => recoilSpring((q - STRIKE.recoilFrom - STRIKE.recoilWave * (1 - fr[i])) / (1 - STRIKE.recoilFrom - STRIKE.recoilWave));
-      const w = (i: number) => {
-        const k = smoothstepAt(STRIKE.rootTurn[0], STRIKE.rootTurn[1], fr[i]);
-        return smooth(q) + (throwAt(i) - smooth(q)) * k;
-      };
-      // Out of P first: the throw carried back up −d̂, pullOut of the drawn
-      // length at the tip (t_i of it down the limb), swelling and gone again
-      // over the first pullSpan of the throw.
-      const pull = q < STRIKE.pullSpan ? STRIKE.pullOut * drawn * want * Math.sin((Math.PI * q) / STRIKE.pullSpan) : 0;
-      const back = swing(pinned, idle, w, sense, lengths).map((p, i): Vec3 => [p[0] - d[0] * pull * fr[i], p[1] - d[1] * pull * fr[i], p[2]]);
-      return aboveFloor(b, bowedOnScreen(b, back, from, fr), P, d, STRIKE.floorPad);
+      const pinned = curveNodes(b, target[0], P, from, liftPx, fr, undefined, undefined, bulge).nodes;
+      return aboveFloor(b, bowedOnScreen(b, snapBack(pinned, idle, fr, q * throwFrames, q, sense, lengths), from, fr), P, d, STRIKE.floorPad);
     };
-    // The throw's own clock (decision 19(e)): it runs with the ease, but
-    // never so fast that a node of the thrown curve moves more than throwPx
-    // a frame on screen (on this step's body, so his own moves don't count):
-    // the drawings are on 2s and 3s from the release on, and a throw at the
-    // ease's pace put a whole drawing's swing (up to 466 px) on one frame.
-    const { q, nodes: throwOf } = throwClock(l.id, b, tau, made);
+    // The throw's own clock and the budget on each drawing (decision 19(e)).
+    const { q, nodes: throwOf } = throwClock(l.id, b, tau, at, fr, made);
     // Laid on the chain, as the whip and the pinned curve are (the lift's
-    // kinematic pin, here on its own tip): left to its collisions, a rope
-    // thrown this slowly lingers by him as he stands up, and the pushes tore
-    // it across him in depth (2.2× its length on the hero's f112). It carries
-    // the throw's velocity on when it is handed back.
-    const laid = routed ? routed.nodes(throwOf) : throwOf;
+    // kinematic pin, here on its own tip): left to its collisions, the pushes
+    // tore it across him in depth (2.2× its length on the hero's f112). It
+    // carries the throw's velocity on when it is handed back. Routed from its
+    // own depths, not the chain's: it is on its way to its idle curve behind
+    // him, and the chain's still lie in front of him where the strike lifted it.
+    const laid = dummy
+      ? stemClear(
+          dummy,
+          b,
+          keptLong(
+            (pts, now) => {
+              const ft = arcFractions(pts);
+              // The room round him grows along the limb: by the root, the rope grows out of him.
+              return routeAround(dummy, pts, ft.map((t) => radiusAt(t, 1, R0) * smoothstepAt(0.1, 0.4, t)), routeFrom(ft, polyLength(pts), R0), now, FLARE * R0);
+            },
+            throwOf,
+            lengths,
+          ),
+        )
+      : throwOf;
     return {
       pin: laid[n - 1],
       restScale: drawn > 0 ? polyLength(laid) / drawn : 1,
@@ -620,6 +601,73 @@ function swing(from: readonly Vec3[], to: readonly Vec3[], w: (i: number) => num
   return out;
 }
 
+// The thrown curve `x` frames into the release (q: that share of the throw),
+// laid from the pinned curve's root (decision 15(f)). Each segment's way on
+// screen is its pinned way plus
+//   - the snap: the chord's turn to the idle curve's, taken `sense` round,
+//     and the segment's own way about the chord, on a clock that is most of
+//     the way there on the first drawing, the tip's first (snapDelay·(1 − t)
+//     frames ahead of the root's), so the tension let go flings the tips off P;
+//   - the recoil: a damped swing past the idle curve and back (overshootDeg,
+//     recoilFrames a swing), running from the tip up to the root
+//     (recoilDelay·(1 − t) frames), gone with the throw's end, so the limb
+//     flops into its curve instead of stopping on it.
+// Its rise toward the camera goes the same way as the snap, and its length is `lengths`[i].
+function snapBack(pinned: readonly Vec3[], idle: readonly Vec3[], fr: readonly number[], x: number, q: number, sense: number, lengths: readonly number[]): Vec3[] {
+  const n = idle.length;
+  const [ga, gb] = [chordAngle(pinned), chordAngle(idle)];
+  const turn = turnWay(gb - ga, sense);
+  const way = Math.sign(turn) || 1;
+  const left = 1 - clamp01(q) ** 4;
+  const out: Vec3[] = [copy3(idle[0])];
+  for (let i = 0; i < n - 1; i++) {
+    const a = sub3(pinned[i + 1], pinned[i]);
+    const c = sub3(idle[i + 1], idle[i]);
+    const [aa, ca] = [Math.atan2(a[1], a[0]), Math.atan2(c[1], c[0])];
+    const [ea, ec] = [Math.atan2(a[2], Math.hypot(a[0], a[1])), Math.atan2(c[2], Math.hypot(c[0], c[1]))];
+    const back = 1 - fr[i + 1];
+    const flung = 1 - (1 - snapClock(x - STRIKE.snapDelay * back)) * (1 - clamp01(q) ** 4);
+    const snap = smooth(q / STRIKE.stemTurn) + (flung - smooth(q / STRIKE.stemTurn)) * smoothstepAt(STRIKE.stemSpan[0], STRIKE.stemSpan[1], fr[i + 1]);
+    const u = x - STRIKE.recoilDelay * back;
+    const swung = u > 0 ? Math.exp(-u / STRIKE.recoilDecay) * Math.sin((2 * Math.PI * u) / STRIKE.recoilFrames) : 0;
+    const ang = aa + snap * (turn + wrap(ca - gb - (aa - ga))) + way * ((STRIKE.overshootDeg * Math.PI) / 180) * swung * left;
+    const rise = ea + flung * (ec - ea);
+    const p = out[i];
+    out.push([p[0] + lengths[i] * Math.cos(rise) * Math.cos(ang), p[1] + lengths[i] * Math.cos(rise) * Math.sin(ang), p[2] + lengths[i] * Math.sin(rise)]);
+  }
+  return out;
+}
+// A thrown curve routed round him at its own length (decision 15(f)): the
+// routing moves depths only, and a dive round him adds to the rope. When the
+// way it is routed from its own depths comes out over THROW_LONG × its length
+// (the way that moves it least can leave his back in a step as deep as he
+// is), the way that stays nearest the root's depth is tried, and the shorter kept.
+function keptLong(route: (pts: Vec3[], now?: (i: number) => number) => Vec3[], nodes: Vec3[], lengths: readonly number[]): Vec3[] {
+  const own = route(nodes);
+  if (polyLength(own) <= THROW_LONG * lengths.reduce((sum, l) => sum + l, 0)) return own;
+  const low = route(nodes, () => nodes[0][2]);
+  return polyLength(low) < polyLength(own) ? low : own;
+}
+const THROW_LONG = 1.08;
+
+// The curve with no node left over STEM_SLACK px inside him: the routing starts
+// past the flared root, and a stem swung round can sweep a node by the root a
+// little into him. Out the shortest way: the scan's, else straight off his torso.
+function stemClear(d: Dummy, b: Body3D, nodes: Vec3[]): Vec3[] {
+  const centre = toCamera(b, [0, TORSO.cy, 0]);
+  return nodes.map((p, i) => {
+    const deep = i === 0 ? 0 : insideDepth(d, p);
+    if (deep <= STEM_SLACK) return p;
+    const hit = d.scan ? scanPush(d.scan, p, 0) : null;
+    if (hit) return hit.out;
+    const off = sub3(p, centre);
+    return add3(p, scale3(off, (deep + STEM_SLACK) / (Math.hypot(off[0], off[1], off[2]) || 1)));
+  });
+}
+const STEM_SLACK = 1;
+
+const snapClock = (x: number) => (x > 0 ? 1 - Math.exp(-x / STRIKE.snapFrames) : 0);
+
 // His torso's similarity from body a to body b on screen (scale, lean and
 // place: what carries a held drawing between drawings, impact/scene.ts
 // torsoSimilarity), as a map of screen points.
@@ -642,16 +690,6 @@ function turnWay(a: number, sense: number): number {
   return short + 2 * Math.PI * Math.sign(sense);
 }
 const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
-
-// A damped spring's step response at u (0 before it sets off): past 1 by
-// about a fifth at u = recoilPeak, back under it, and within 1 % of it by u = 1.
-function recoilSpring(u: number): number {
-  if (!(u > 0)) return 0;
-  const zeta = STRIKE.recoilDamping;
-  const wd = Math.PI / STRIKE.recoilPeak;
-  const w0 = wd / Math.sqrt(1 - zeta * zeta);
-  return 1 - Math.exp(-zeta * w0 * u) * (Math.cos(wd * u) + ((zeta * w0) / wd) * Math.sin(wd * u));
-}
 
 // The height (px, up −d̂) a point `up` px above the floor line is kept at:
 // `pad` at least, eased in over FLOOR_BAND px (a softplus), so a curve the

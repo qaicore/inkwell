@@ -12,7 +12,10 @@
 //     the same jobs run on the main thread, one at a time between frames, and
 //     the preview draws at 0.75 resolution (SLICED_SIZE).
 // A frame never waits for a job: frameLayers draws whatever is still missing
-// itself. The same file is the worker: run in a worker scope it serves the
+// itself. The page can ask first (`ready`), though: a scene just built has
+// none of its drawings yet, and drawing a frame's limbs, masses and posters
+// on the page in one task is the freeze this avoids (R5, S2), so it holds the
+// last good frame until the worker's come. The same file is the worker: run in a worker scope it serves the
 // page (the guard at the bottom), and anywhere else it only defines things.
 import type { Effect } from '../types/effect.ts';
 import type { DrawingJob, DrawnLayer, DrawnPart, Tier } from '../impact/contracts.ts';
@@ -26,6 +29,7 @@ export const PREVIEW_SIZE = 1080; // the internal frame's long side (design §10
 export const SLICED_SIZE = Math.round(PREVIEW_SIZE * CUT_RESOLUTION); // on the main thread: 810
 const IN_FLIGHT = 6; // jobs the worker is asked for at once
 const START_MS = 10_000; // how long the worker may take to say it's there
+export const HOLD_MS = 8000; // how long the page holds a frame for the worker's drawings before it draws them itself
 
 // What a worker needs to build the page's scene, besides the clip's data.
 export interface SceneData {
@@ -67,6 +71,8 @@ export interface RenderAhead {
   clip(data: ClipData | null): void; // a new clip, or new tracking
   scene(scene: ImpactScene | null, data: SceneData | null): void; // the scene the page draws now
   ahead(o: number): void; // after output frame o is on screen: the drawings due next
+  ready(o: number): boolean; // whether frame o's own drawings are all in the scene, asking for those that aren't; true where the page draws them itself (no worker, a different scene there, a drawing that failed or took more than HOLD_MS)
+  arrived: (() => void) | null; // called when a drawing, or the worker's word on the scene, comes: ready may be true now
   dispose(): void;
 }
 
@@ -109,23 +115,14 @@ function workerAhead(worker: Worker): RenderAhead {
   let id = 0;
   let current: ImpactScene | null = null;
   let same = false;
+  let heard = false; // the worker has said whether it built the same scene
+  let lastWord = 0; // when the worker last said anything about this scene
   const asked = new Set<string>();
-  worker.addEventListener('message', (e: MessageEvent<FromWorker>) => {
-    const msg = e.data;
-    if (msg.type === 'scene' && msg.id === id && current) {
-      same = msg.sceneId === current.sceneId;
-      if (!same) console.warn(`The render-ahead worker built scene ${msg.sceneId}, not ${current.sceneId}; the page draws every drawing itself.`);
-    } else if (msg.type === 'layer') {
-      asked.delete(msg.layer.key);
-      if (msg.id === id && current) current.put(msg.layer);
-    } else if (msg.type === 'failed') {
-      asked.delete(msg.key);
-      if (msg.id === id) console.warn(`The render-ahead worker couldn't draw ${msg.key}: ${msg.message}`);
-    }
-  });
-  return {
+  const failed = new Set<string>(); // drawings the worker couldn't make: the page draws these
+  const ahead: RenderAhead = {
     mode: 'worker',
     size: PREVIEW_SIZE,
+    arrived: null,
     clip: (data) => {
       if (data) worker.postMessage({ type: 'clip', clip: data } satisfies ToWorker);
     },
@@ -133,7 +130,10 @@ function workerAhead(worker: Worker): RenderAhead {
       id++;
       current = scene;
       same = false;
+      heard = false;
+      lastWord = performance.now();
       asked.clear();
+      failed.clear();
       if (scene && data) worker.postMessage({ type: 'scene', id, scene: data } satisfies ToWorker);
     },
     ahead: (o) => {
@@ -145,8 +145,47 @@ function workerAhead(worker: Worker): RenderAhead {
         worker.postMessage({ type: 'job', id, key: job.key } satisfies ToWorker);
       }
     },
+    ready: (o) => {
+      if (!current || (heard && !same)) return true;
+      if (performance.now() - lastWord > HOLD_MS) return true;
+      const missing = current.missing(o).filter((job) => !failed.has(job.key));
+      if (missing.length === 0) return true;
+      if (heard) {
+        for (const job of missing) {
+          if (asked.size >= IN_FLIGHT) break;
+          if (asked.has(job.key)) continue;
+          asked.add(job.key);
+          worker.postMessage({ type: 'job', id, key: job.key } satisfies ToWorker);
+        }
+      }
+      return false;
+    },
     dispose: () => worker.terminate(),
   };
+  worker.addEventListener('message', (e: MessageEvent<FromWorker>) => {
+    const msg = e.data;
+    if (msg.type === 'ready') return;
+    if (msg.id !== id) {
+      if (msg.type === 'layer') asked.delete(msg.layer.key);
+      else if (msg.type === 'failed') asked.delete(msg.key);
+      return;
+    }
+    lastWord = performance.now();
+    if (msg.type === 'scene' && current) {
+      heard = true;
+      same = msg.sceneId === current.sceneId;
+      if (!same) console.warn(`The render-ahead worker built scene ${msg.sceneId}, not ${current.sceneId}; the page draws every drawing itself.`);
+    } else if (msg.type === 'layer') {
+      asked.delete(msg.layer.key);
+      current?.put(msg.layer);
+    } else if (msg.type === 'failed') {
+      asked.delete(msg.key);
+      failed.add(msg.key);
+      console.warn(`The render-ahead worker couldn't draw ${msg.key}: ${msg.message}`);
+    }
+    ahead.arrived?.();
+  });
+  return ahead;
 }
 
 // The jobs on the main thread, one a task so frames paint between them, the
@@ -189,6 +228,8 @@ export function slicedAhead(defer: (run: () => void) => void = (run) => void set
       queue.sort((a, b) => a.due - b.due);
       schedule();
     },
+    ready: () => true, // it draws between frames, and a frame draws what's missing itself
+    arrived: null,
     dispose: () => {
       current = null;
       queue.length = 0;

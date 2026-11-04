@@ -435,12 +435,16 @@ export interface FloodSpec {
   field: 'rim' | 'deep'; // a paler rim over a saturated inside, or core at the edge paling with depth
 }
 
-// The measured floods (destruction §4.8, §6.9).
+// The measured floods (destruction §4.8, §6.9) were half-screen panels, 16–58 %
+// of the frame on the ±t sides; the judges (rounds 3–4) cut them as cyan panels
+// that do not belong. Each is now a soft low band along the floor (dir about
+// ±180, the floor side of P), 6–9 % of the frame, in the same layers and the
+// k24–25 tones, so the discharge still washes the floor.
 export const FLOODS: readonly FloodSpec[] = [
-  { wash: 1, A: 10, area: 0.16, dir: 60, field: 'rim' }, // the +t background beyond the cluster
-  { wash: 1, A: 11, area: 0.3, dir: 75, field: 'rim' }, // the floor in front of P and the far +t corner
-  { wash: 2, A: 15, area: 0.29, dir: -70, field: 'deep' }, // the −t floor and background
-  { wash: 3, A: 17, area: 0.58, dir: -95, field: 'deep' }, // everything on the −t side
+  { wash: 1, A: 10, area: 0.06, dir: 172, field: 'rim' },
+  { wash: 1, A: 11, area: 0.08, dir: -176, field: 'rim' },
+  { wash: 2, A: 15, area: 0.07, dir: 178, field: 'deep' },
+  { wash: 3, A: 17, area: 0.09, dir: -172, field: 'deep' },
 ];
 
 export const GENTLE_FLOOD_AREA = 0.22; // under the 25 % cap, with room for the lobes

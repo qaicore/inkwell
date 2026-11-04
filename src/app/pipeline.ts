@@ -58,14 +58,17 @@ const DEFAULT_PALETTE: Effect['palette'] = ['#e8203a', '#f4f1ea', '#16141a'];
 const DEFAULT_BRUSH: Effect['brush'] = { size: 28, thinning: 0.65, smoothing: 0.6, streamline: 0.45 };
 const NO_PERSON_TORSO = 0.25; // of the frame height, when no mask says otherwise
 
+// How a cached run is decoded: the app reads it off the page (sam/mask-worker.ts).
+export type MaskReading = (json: unknown, frames: number) => Promise<(SamMask | null)[]>;
+
 // SAM's person and face masks for the clip, from the cache.
-export async function personAndFace(clip: PipelineClip, sam: SamSource): Promise<{ person: (SamMask | null)[]; face: (SamMask | null)[] }> {
+export async function personAndFace(clip: PipelineClip, sam: SamSource, read: MaskReading = masksFromCache): Promise<{ person: (SamMask | null)[]; face: (SamMask | null)[] }> {
   const personJson = await sam('sam-person.json');
   if (!personJson) throw new Error(`no cached SAM person run for ${clip.id}`);
   const faceJson = await sam('sam-face.json');
   return {
-    person: await masksFromCache(personJson, clip.frames),
-    face: faceJson ? await masksFromCache(faceJson, clip.frames) : Array.from({ length: clip.frames }, () => null),
+    person: await read(personJson, clip.frames),
+    face: faceJson ? await read(faceJson, clip.frames) : Array.from({ length: clip.frames }, () => null),
   };
 }
 
@@ -77,12 +80,29 @@ export function frameMasks(masks: (SamMask | null)[], width: number, height: num
 // The app's tracking from SAM's person masks: the cutout, and strokes that
 // follow the person's shape.
 export function samTracking(person: (SamMask | null)[], width: number, height: number): Tracking {
-  const shapes = person.map((m) => (m ? samShape(m) : null));
-  return {
-    label: 'SAM 3.1 (cached)',
-    masks: frameMasks(person, width, height),
-    follow: (root, frame) => followShapes(shapes, root, frame),
-  };
+  return trackingOf(frameMasks(person, width, height), person.map((m) => (m ? samShape(m) : null)));
+}
+
+const trackingOf = (masks: (Mask | null)[], shapes: (ReturnType<typeof samShape> | null)[]): Tracking => ({
+  label: 'SAM 3.1 (cached)',
+  masks,
+  follow: (root, frame) => followShapes(shapes, root, frame),
+});
+
+// The same, a few frames at a time with the thread handed back between them:
+// reading the hero's 209 masks is 0.7 s in Node, one task of that on the page
+// (R5, S2). `pause` is awaited between the slices.
+const SLICE = 4;
+export async function samTrackingSliced(person: (SamMask | null)[], width: number, height: number, pause: () => Promise<void>): Promise<Tracking> {
+  const masks: (Mask | null)[] = [];
+  const shapes: (ReturnType<typeof samShape> | null)[] = [];
+  for (let f = 0; f < person.length; f++) {
+    const m = person[f];
+    masks.push(m ? toFrameMask(m, width, height) : null);
+    shapes.push(m ? samShape(m) : null);
+    if (f % SLICE === SLICE - 1) await pause();
+  }
+  return trackingOf(masks, shapes);
 }
 
 export async function runPipeline(o: PipelineOptions): Promise<PipelineResult> {

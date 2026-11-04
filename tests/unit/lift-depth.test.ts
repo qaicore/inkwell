@@ -339,9 +339,11 @@ describe('determinism and the no-slam output', () => {
     // joints eased on screen (easeJoints). Again in round 4 (R1): the bend
     // wave shorter and quicker (lift.ts ROPE, decision 19(b)) and the base's
     // hold (strand3d.ts HOLD), and in its second pass the wave's turn at the
-    // tip 16° → 22° (standing limbs under 1° a drawing on f141–159).
-    expect(noSlamHash(false)).toBe('fd2854e92a9f78f90e7e3050b0738592fe4497ef0d0660b69ccf3c6168f7e1ee');
-    expect(noSlamHash(true)).toBe('673ca65dcffd75294591eb5de2be012718ea8a796811ca707f4a20ae3359fd32');
+    // tip 16° → 22° (standing limbs under 1° a drawing on f141–159). Again in
+    // round 5 (S1): the air's drag on the rope (strand3d.ts DRAG), which holds
+    // back a rope whipped round after his turn.
+    expect(noSlamHash(false)).toBe('9c0fda2255c7568d83b59553b6c9ec5da77ba43f04e36525e084567146542ac3');
+    expect(noSlamHash(true)).toBe('a283784b61eba0ed08fee06113033b6203fb7cd7f9efd11791dff751c9d23f49');
   });
 
   it('projects the placed root where the chain root projects on every capture', () => {

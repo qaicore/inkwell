@@ -172,7 +172,7 @@ describe('the schedule, limbs first', () => {
   });
 
   it('charges by the table, and fades over j 0..3 only when there are no posters', () => {
-    expect([-8, -7, -6, -5, -4, -3, -2, -1].map((j) => chargeAt(j))).toEqual([0, 0.11, 0.16, 0.06, 0.06, 0.38, 0.82, 1]);
+    expect([-8, -7, -6, -5, -4, -3, -2, -1].map((j) => chargeAt(j))).toEqual([0, 0.11, 0.16, 0.06, 0.06, 0.38, 0.82, 0.5]); // S6 0.5 (1.0 measured): a white ball over the swell otherwise (round 5)
     expect([0, 1, 2, 3, 4].map((j) => chargeAt(j))).toEqual([0, 0, 0, 0, 0]);
     expect([0, 1, 2, 3, 4].map((j) => chargeAt(j, false))).toEqual([1, 1 - 1 / 3, 1 - 2 / 3, 0, 0]);
   });

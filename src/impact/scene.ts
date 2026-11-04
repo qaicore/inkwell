@@ -254,6 +254,7 @@ export interface ImpactScene {
   impact(o: number): ImpactFrame | null;
   render(ctx: BrushTarget, video: unknown, o: number): void; // video: the clip frame's image, or (clip) => it
   jobs(o: number): DrawingJob[];
+  missing(o: number): DrawingJob[]; // the drawings frame o itself still lacks (jobs(o) lists the frames after it); none = render(o) draws nothing on the page but the frame's own glows and cutout
   runJob(job: DrawingJob | string, make?: MakeScratch): DrawnLayer;
   put(layer: DrawnLayer): void;
   outputLength(): number;
@@ -1876,6 +1877,7 @@ function sceneOf(rig: Rig, step: number): ImpactScene {
       }
       if (now) times.total = now() - t0;
     },
+    missing: (o) => jobsAt(o),
     jobs(o) {
       const out = new Map<string, DrawingJob>();
       const visit = (f: number) => {

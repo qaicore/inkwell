@@ -58,12 +58,13 @@ import {
   type ImpactCue,
   type Step,
 } from './flow';
-import { PREVIEW_SIZE, startRenderAhead, type RenderAhead, type SceneData } from './render-worker';
-import { personAndFace, samTracking, type SamSource } from './pipeline';
+import { HOLD_MS, PREVIEW_SIZE, startRenderAhead, type RenderAhead, type SceneData } from './render-worker';
+import { personAndFace, samTrackingSliced, type SamSource } from './pipeline';
 import { applyOverride, applyPlan, isOverridden, OVERRIDE_FIELDS, type OverrideField } from './overrides';
 import { renderPlanPanel } from './plan-panel';
 import { cachedAnswer, sha256Hex } from '../sam/client';
-import { masksFromCache, samCacheFile, type SamMask } from '../sam/cache';
+import { samCacheFile, type SamMask } from '../sam/cache';
+import { maskReader } from '../sam/mask-worker';
 import { samShape } from '../track/anchor';
 import { planStrokes, type PlanInput, type PlanRequest, type PlanResult, type PlanTransport } from '../plan/plan';
 import { proxyTransport } from '../plan/request';
@@ -276,6 +277,7 @@ async function openClip(file: Blob, name: string) {
   setBusy(true);
   const startedAt = performance.now();
   let opened: Clip | null = null;
+  let cacheRead: Promise<void> = Promise.resolve();
   try {
     const next = await loadClip(file, name, (p) => setStatus(`Converting to H.264 at 30 fps… ${percent(p)}`));
     clip?.input.dispose();
@@ -313,7 +315,7 @@ async function openClip(file: Blob, name: string) {
     layout();
     await seek(0);
     setStatus(`Converted in ${seconds(startedAt)} s. Draw limbs to start the impact, or draw on any frame.`);
-    void connectSamCache(next, file);
+    cacheRead = connectSamCache(next, file);
     void decodeEnvelope(next.file, next.start).then((heard) => {
       if (clip === next) envelope = heard;
     });
@@ -324,8 +326,12 @@ async function openClip(file: Blob, name: string) {
   } finally {
     setBusy(false);
   }
-  // Dev only: the stand-in tracks every clip as it opens, no Track to press.
-  if (opened && trackStandIn) void trackStandIn(opened);
+  // Dev only: the stand-in tracks every clip as it opens, no Track to press,
+  // once the cache is read, so the two don't share the page's time.
+  if (opened && trackStandIn) {
+    const tracked = opened;
+    void cacheRead.then(() => trackStandIn?.(tracked));
+  }
 }
 
 // ---- Showing frames ------------------------------------------------------------
@@ -410,7 +416,12 @@ function pause() {
 // built here is drawn on the next frame, so building it and drawing it the
 // first time (its limbs and the other strokes, before the render-ahead has
 // them) are two tasks, not one long one (decision 20: none may hold the page
-// past 100 ms).
+// past 100 ms). Nor does the first paint of a rebuilt scene draw its limbs,
+// masses and posters here: it asks the render-ahead's worker for them and
+// holds the last frame on screen (or draws the plain frame, if the canvas
+// shows another) until they come (R5, S2).
+let shownImpact: number | null = null; // the output frame the canvas holds from the impact scene; null = the plain frame, or nothing
+let holdTimer = 0;
 function paint() {
   if (!clip) return;
   if (preview === undefined && previewScene()) {
@@ -420,12 +431,20 @@ function paint() {
   ctx.imageSmoothingQuality = 'high';
   const impact = previewScene();
   let drawn = false;
-  if (impact) {
+  let held = false;
+  if (impact && renderAhead && !renderAhead.ready(frame)) {
+    // Its drawings are on their way: keep the frame the canvas holds if it's
+    // this one, else the plain frame. The worker's arrival paints again.
+    held = shownImpact === frame;
+    drawn = held;
+    if (!holdTimer) holdTimer = window.setTimeout(() => ((holdTimer = 0), requestPaint()), HOLD_MS + 100);
+  } else if (impact) {
     try {
       ctx.setTransform(view.width / impact.width, 0, 0, view.height / impact.height, 0, 0);
       impact.render(ctx as unknown as BrushTarget, frameBuffer, frame);
       renderAhead?.ahead(frame);
       drawn = true;
+      shownImpact = frame;
     } catch (err) {
       console.error(err);
       setStatus(`The impact preview failed, so this is the plain frame: ${errorText(err)}`);
@@ -436,7 +455,10 @@ function paint() {
   // Width and height are scaled separately, the same way pointFrom maps the
   // pointer, so the frame fills the canvas exactly.
   ctx.setTransform(view.width / clip.width, 0, 0, view.height / clip.height, 0, 0);
-  if (!drawn) renderFrame(ctx, frameBuffer, frame, clip.width, clip.height, plainScene(), { make: browserScratch, drawStroke });
+  if (!drawn) {
+    renderFrame(ctx, frameBuffer, frame, clip.width, clip.height, plainScene(), { make: browserScratch, drawStroke });
+    shownImpact = null;
+  }
   if (showTracking.checked && tracking) paintTracking(clip);
   paintRootFlash(clip);
   if (live) drawLive(ctx, live);
@@ -541,7 +563,7 @@ function loadAnchorRuns() {
     if (!file || samRuns.has(file)) continue;
     samRuns.set(file, null);
     void Promise.resolve(sam(file))
-      .then((json) => (json ? masksFromCache(json, opened.frameCount) : null))
+      .then((json) => (json ? readMasks(json, opened.frameCount) : null))
       .then((masks) => {
         if (!masks || clip !== opened) return;
         samRuns.set(file, masks);
@@ -790,6 +812,9 @@ function paintRootFlash(c: Clip) {
 // Looks the clip up in the cache by its hashes. If SAM has been run on it
 // (and paid for once), its masks replace the stand-in: the person cutout and
 // what strokes follow.
+// A cached SAM run decoded off the page, a few workers at once (sam/mask-worker.ts).
+const readMasks = maskReader();
+
 async function connectSamCache(opened: Clip, source: Blob) {
   try {
     const hashes = [await sha256Hex(opened.file), await sha256Hex(source)];
@@ -797,11 +822,14 @@ async function connectSamCache(opened: Clip, source: Blob) {
     sourceSha = hashes[1];
     sam = (file) => cachedAnswer(hashes, file);
     const fromCache = { id: opened.name, sha256: hashes[0], frames: opened.frameCount, width: opened.width, height: opened.height, fps: FPS };
-    const { person, face } = await personAndFace(fromCache, sam);
+    const reading = (f: number) => clip === opened && setStatus(`Reading your clip… ${percent(f)}`);
+    const { person, face } = await personAndFace(fromCache, sam, (json, count) => (reading(0), readMasks(json, count, reading)));
     if (clip !== opened) return;
     samRuns.set('sam-person.json', person);
     samRuns.set('sam-face.json', face);
-    makeTracking = () => samTracking(person, opened.width, opened.height);
+    const cutouts = await samTrackingSliced(person, opened.width, opened.height, nextTask);
+    if (clip !== opened) return;
+    makeTracking = () => cutouts;
     useTracking();
     setStatus(`SAM 3.1 masks for this clip, from the cache: the person on ${person.filter(Boolean).length} of ${opened.frameCount} frames.`);
   } catch {
@@ -1010,6 +1038,7 @@ function layout() {
   const cssHeight = Math.max(1, Math.floor(clip.height * fit));
   view.style.width = `${cssWidth}px`;
   view.style.height = `${cssHeight}px`;
+  shownImpact = null; // resizing clears the canvas
   view.width = Math.round(cssWidth * devicePixelRatio);
   view.height = Math.round(cssHeight * devicePixelRatio);
   paint();
@@ -1371,11 +1400,7 @@ function useTracking() {
 // cache, stay what strokes follow.
 let trackStandIn: ((tracked: Clip) => Promise<void>) | null = null;
 if (import.meta.env.DEV) {
-  trackButton.hidden = false;
-  trackButton.title = 'Dev only: MediaPipe pose stands in for SAM 3.1';
-  trackButton.addEventListener('click', () => {
-    if (clip) void trackStandIn?.(clip);
-  });
+  // There is no Track button to press (R5, S2): index.html's stays hidden.
   trackStandIn = async (tracked) => {
     if (clip !== tracked || busy) return;
     pause();
@@ -1398,7 +1423,8 @@ if (import.meta.env.DEV) {
       );
     } catch (err) {
       console.error(err);
-      setStatus(`Tracking failed: ${errorText(err)}`);
+      // The effect still runs: on SAM's masks alone, with the egg for a body.
+      setStatus(`Tracking failed: ${errorText(err)}. ${samRuns.get('sam-person.json') ? 'The effect runs on the SAM masks alone.' : 'Without a tracker, the effect has nothing to follow.'}`);
     } finally {
       setBusy(false);
     }
@@ -1567,6 +1593,7 @@ updateSheet();
 // preview is built again at its size, and the worker gets the clip.
 void startRenderAhead().then((ahead) => {
   renderAhead = ahead;
+  ahead.arrived = requestPaint;
   if (clipData) ahead.clip(clipData);
   dropPreview();
   paint();
@@ -1644,4 +1671,5 @@ const percent = (p: number) => `${Math.round(p * 100)}%`;
 const seconds = (since: number) => ((performance.now() - since) / 1000).toFixed(1);
 const megabytes = (bytes: number) => `${(bytes / 1e6).toFixed(1)} MB`;
 const errorText = (err: unknown) => (err instanceof Error ? err.message : String(err));
+const nextTask = () => new Promise<void>((resume) => void setTimeout(resume, 0));
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
